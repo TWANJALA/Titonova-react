@@ -2697,8 +2697,18 @@ export default function App() {
     subhead: "",
     cta: "",
   });
+  const [quickEditBaseline, setQuickEditBaseline] = useState({
+    headline: "",
+    subhead: "",
+    cta: "",
+  });
+  const [quickRewriteTone, setQuickRewriteTone] = useState("Professional");
+  const [quickAiBusy, setQuickAiBusy] = useState(false);
+  const [quickAiSuggestion, setQuickAiSuggestion] = useState(null);
   const [quickApplyAllPages, setQuickApplyAllPages] = useState(false);
   const [quickEditStatus, setQuickEditStatus] = useState("");
+  const [quickEditStep, setQuickEditStep] = useState(1);
+  const [lastQuickEditUndo, setLastQuickEditUndo] = useState(null);
   const [showAdvancedEditor, setShowAdvancedEditor] = useState(false);
 
   const iframeRef = useRef(null);
@@ -2769,6 +2779,30 @@ export default function App() {
   const activeProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId) || null,
     [projects, activeProjectId]
+  );
+  const quickEditDiffRows = useMemo(
+    () => [
+      {
+        label: "Headline",
+        before: quickEditBaseline.headline || "(empty)",
+        after: quickEditFields.headline.trim() || "(empty)",
+      },
+      {
+        label: "Subhead",
+        before: quickEditBaseline.subhead || "(empty)",
+        after: quickEditFields.subhead.trim() || "(empty)",
+      },
+      {
+        label: "CTA",
+        before: quickEditBaseline.cta || "(empty)",
+        after: quickEditFields.cta.trim() || "(empty)",
+      },
+    ],
+    [quickEditBaseline, quickEditFields]
+  );
+  const quickEditHasChanges = useMemo(
+    () => quickEditDiffRows.some((row) => row.before !== row.after),
+    [quickEditDiffRows]
   );
 
   const pageSections = useMemo(() => {
@@ -3098,11 +3132,18 @@ export default function App() {
   useEffect(() => {
     if (!previewHtml) {
       setQuickEditFields({ headline: "", subhead: "", cta: "" });
+      setQuickEditBaseline({ headline: "", subhead: "", cta: "" });
+      setQuickAiSuggestion(null);
       return;
     }
-    setQuickEditFields(extractQuickEditFields(previewHtml));
+    const extracted = extractQuickEditFields(previewHtml);
+    setQuickEditFields(extracted);
+    setQuickEditBaseline(extracted);
+    setQuickRewriteTone(tone);
+    setQuickAiSuggestion(null);
     setQuickEditStatus("");
-  }, [previewHtml, previewPage, activeProjectId]);
+    setQuickEditStep(1);
+  }, [previewHtml, previewPage, activeProjectId, tone]);
 
   useEffect(() => {
     setShowAdvancedEditor(false);
@@ -3594,6 +3635,7 @@ export default function App() {
 
     if (activeFromLibrary) {
       let changedProject = null;
+      let undoPayload = null;
       const updated = projects.map((project) => {
         if (project.id !== activeProjectId) return project;
         const currentFiles = getProjectFiles(project);
@@ -3617,6 +3659,11 @@ export default function App() {
             ? "Quick edit applied to all pages"
             : `Quick edit • ${PAGE_CONFIG.find((page) => page.key === previewPage)?.label || previewPage}`;
         const snapshot = createVersionSnapshot(project, label);
+        undoPayload = {
+          projectId: project.id,
+          files: currentFiles,
+          page: previewPage,
+        };
         changedProject = {
           ...project,
           files: nextFiles,
@@ -3633,11 +3680,14 @@ export default function App() {
 
       persistProjects(updated);
       openProject(changedProject, previewPage);
+      setLastQuickEditUndo(undoPayload);
       setQuickEditStatus(
         quickApplyAllPages
           ? "Quick edits applied across all pages."
           : "Quick edits applied to this page."
       );
+      setQuickEditBaseline(extractQuickEditFields(changedProject.files[previewPage] || ""));
+      setQuickEditStep(1);
       return;
     }
 
@@ -3667,6 +3717,11 @@ export default function App() {
         files: nextFiles,
         html: nextFiles[DEFAULT_PAGE] || normalizedDraft.html,
       };
+      setLastQuickEditUndo({
+        projectId: normalizedDraft.id,
+        files: currentFiles,
+        page: previewPage,
+      });
       setDraftProject(updatedDraft);
       openProject(updatedDraft, previewPage);
       setQuickEditStatus(
@@ -3674,6 +3729,166 @@ export default function App() {
           ? "Quick edits applied across all pages."
           : "Quick edits applied to this page."
       );
+      setQuickEditBaseline(extractQuickEditFields(updatedDraft.files[previewPage] || ""));
+      setQuickEditStep(1);
+    }
+  };
+
+  const handleRewriteQuickEditWithAi = async () => {
+    const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+    if (!apiKey) {
+      setQuickEditStatus("Missing VITE_OPENAI_API_KEY for AI rewrite.");
+      return;
+    }
+
+    const pageLabel = PAGE_CONFIG.find((page) => page.key === previewPage)?.label || "Page";
+    const modelChain = dedupeModels([llmCustomModel, llmModel, ...(selectedLlmPreset.models || [])]);
+    if (modelChain.length === 0) {
+      setQuickEditStatus("No LLM model configured for rewrite.");
+      return;
+    }
+
+    setQuickAiBusy(true);
+    setQuickEditStatus("Generating AI rewrite...");
+
+    let lastError = null;
+    for (const model of modelChain) {
+      try {
+        const response = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            input: [
+              {
+                role: "system",
+                content:
+                  "You are a conversion-focused website copywriter. Return only valid JSON matching schema.",
+              },
+              {
+                role: "user",
+                content: `Rewrite this website page copy.
+Page: ${pageLabel}
+Tone: ${quickRewriteTone}
+Business: ${businessName}
+Industry: ${activeIndustry.label}
+Goal: ${goal}
+
+Current headline: ${quickEditFields.headline}
+Current subhead: ${quickEditFields.subhead}
+Current CTA: ${quickEditFields.cta}
+
+Rules:
+- Keep structure unchanged; only rewrite headline, subhead, and CTA.
+- Headline <= 65 chars, CTA <= 28 chars.
+- Keep concise and specific.`,
+              },
+            ],
+            text: {
+              format: {
+                type: "json_schema",
+                name: "quick_rewrite",
+                schema: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    headline: { type: "string" },
+                    subhead: { type: "string" },
+                    cta: { type: "string" },
+                  },
+                  required: ["headline", "subhead", "cta"],
+                },
+                strict: true,
+              },
+            },
+          }),
+        });
+
+        if (!response.ok) {
+          const details = await response.text();
+          lastError = new Error(`Rewrite failed for ${model} (${response.status}): ${details}`);
+          continue;
+        }
+
+        const payload = await response.json();
+        const outputText = extractResponseText(payload);
+        const parsed = parseJsonSafe(outputText);
+        if (!parsed) {
+          lastError = new Error(`Invalid rewrite JSON from ${model}.`);
+          continue;
+        }
+
+        setQuickAiSuggestion({
+          headline: String(parsed.headline || "").trim(),
+          subhead: String(parsed.subhead || "").trim(),
+          cta: String(parsed.cta || "").trim(),
+          model,
+        });
+        setQuickEditStatus(`AI rewrite ready (${model}). Review and click Accept.`);
+        setQuickAiBusy(false);
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    setQuickAiBusy(false);
+    setQuickEditStatus(`AI rewrite failed: ${String(lastError?.message || "Unknown error")}`);
+  };
+
+  const handleAcceptQuickAiRewrite = () => {
+    if (!quickAiSuggestion) return;
+    setQuickEditFields({
+      headline: quickAiSuggestion.headline,
+      subhead: quickAiSuggestion.subhead,
+      cta: quickAiSuggestion.cta,
+    });
+    setQuickAiSuggestion(null);
+    setQuickEditStatus("AI rewrite applied to fields. Continue to diff and apply.");
+  };
+
+  const handleUndoQuickEdit = () => {
+    if (!lastQuickEditUndo?.projectId || !lastQuickEditUndo?.files) return;
+    const targetId = lastQuickEditUndo.projectId;
+    const undoFiles = lastQuickEditUndo.files;
+
+    const inLibrary = projects.some((project) => project.id === targetId);
+    if (inLibrary) {
+      let restored = null;
+      const updated = projects.map((project) => {
+        if (project.id !== targetId) return project;
+        const snapshot = createVersionSnapshot(project, "Undo quick edit");
+        restored = {
+          ...project,
+          files: undoFiles,
+          html: undoFiles[DEFAULT_PAGE] || project.html,
+          versions: [snapshot, ...(project.versions || [])].slice(0, 30),
+        };
+        return restored;
+      });
+      persistProjects(updated);
+      if (restored) {
+        openProject(restored, lastQuickEditUndo.page || previewPage);
+      }
+      setQuickEditStatus("Last quick edit undone.");
+      setLastQuickEditUndo(null);
+      return;
+    }
+
+    if (draftProject?.id === targetId) {
+      const normalizedDraft = normalizeProject(draftProject);
+      const restoredDraft = {
+        ...normalizedDraft,
+        files: undoFiles,
+        html: undoFiles[DEFAULT_PAGE] || normalizedDraft.html,
+      };
+      setDraftProject(restoredDraft);
+      openProject(restoredDraft, lastQuickEditUndo.page || previewPage);
+      setQuickEditStatus("Last quick edit undone.");
+      setLastQuickEditUndo(null);
     }
   };
 
@@ -5654,43 +5869,137 @@ export default function App() {
           {activeProjectId && (
             <div className="tool-block quick-edit-flow">
               <h3>Quick Edit</h3>
-              <p className="muted">
-                1) Choose page 2) Update headline, subhead, CTA 3) Click Apply.
-              </p>
-              <div className="quick-edit-grid">
-                <input
-                  placeholder="Main headline"
-                  value={quickEditFields.headline}
-                  onChange={(event) =>
-                    setQuickEditFields((prev) => ({ ...prev, headline: event.target.value }))
-                  }
-                />
-                <textarea
-                  rows={3}
-                  placeholder="Supporting paragraph / subhead"
-                  value={quickEditFields.subhead}
-                  onChange={(event) =>
-                    setQuickEditFields((prev) => ({ ...prev, subhead: event.target.value }))
-                  }
-                />
-                <input
-                  placeholder="Primary button text (CTA)"
-                  value={quickEditFields.cta}
-                  onChange={(event) =>
-                    setQuickEditFields((prev) => ({ ...prev, cta: event.target.value }))
-                  }
-                />
-              </div>
-              <label className="mini-toggle">
-                <input
-                  type="checkbox"
-                  checked={quickApplyAllPages}
-                  onChange={(event) => setQuickApplyAllPages(event.target.checked)}
-                />
-                Apply same text to all pages
-              </label>
+              <p className="muted">Step {quickEditStep} of 3</p>
+              {quickEditStep === 1 && (
+                <div className="quick-step-block">
+                  <strong>Step 1: Choose page</strong>
+                  <div className="quick-page-pills">
+                    {PAGE_CONFIG.map((page) => (
+                      <button
+                        key={`quick-page-${page.key}`}
+                        type="button"
+                        className={`ghost small ${previewPage === page.key ? "active" : ""}`}
+                        onClick={() => setPreviewPage(page.key)}
+                      >
+                        {page.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {quickEditStep === 2 && (
+                <div className="quick-step-block">
+                  <strong>Step 2: Edit copy</strong>
+                  <div className="quick-ai-row">
+                    <select
+                      value={quickRewriteTone}
+                      onChange={(event) => setQuickRewriteTone(event.target.value)}
+                    >
+                      {TONES.map((item) => (
+                        <option key={`quick-tone-${item}`} value={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                    <button type="button" className="ghost" onClick={handleRewriteQuickEditWithAi} disabled={quickAiBusy}>
+                      {quickAiBusy ? "Rewriting..." : "Rewrite with AI"}
+                    </button>
+                  </div>
+                  <div className="quick-edit-grid">
+                    <div>
+                      <input
+                        placeholder="Main headline"
+                        value={quickEditFields.headline}
+                        onChange={(event) =>
+                          setQuickEditFields((prev) => ({ ...prev, headline: event.target.value }))
+                        }
+                      />
+                      <small className={`char-hint ${quickEditFields.headline.length > 65 ? "warn" : ""}`}>
+                        {quickEditFields.headline.length}/65 recommended
+                      </small>
+                    </div>
+                    <div>
+                      <textarea
+                        rows={3}
+                        placeholder="Supporting paragraph / subhead"
+                        value={quickEditFields.subhead}
+                        onChange={(event) =>
+                          setQuickEditFields((prev) => ({ ...prev, subhead: event.target.value }))
+                        }
+                      />
+                      <small className={`char-hint ${quickEditFields.subhead.length > 180 ? "warn" : ""}`}>
+                        {quickEditFields.subhead.length}/180 recommended
+                      </small>
+                    </div>
+                    <div>
+                      <input
+                        placeholder="Primary button text (CTA)"
+                        value={quickEditFields.cta}
+                        onChange={(event) =>
+                          setQuickEditFields((prev) => ({ ...prev, cta: event.target.value }))
+                        }
+                      />
+                      <small className={`char-hint ${quickEditFields.cta.length > 28 ? "warn" : ""}`}>
+                        {quickEditFields.cta.length}/28 recommended
+                      </small>
+                    </div>
+                  </div>
+                  {quickAiSuggestion && (
+                    <div className="quick-diff-item">
+                      <b>AI suggestion {quickAiSuggestion.model ? `(${quickAiSuggestion.model})` : ""}</b>
+                      <small>Headline: {quickAiSuggestion.headline || "(empty)"}</small>
+                      <small>Subhead: {quickAiSuggestion.subhead || "(empty)"}</small>
+                      <small>CTA: {quickAiSuggestion.cta || "(empty)"}</small>
+                      <button type="button" className="ghost small" onClick={handleAcceptQuickAiRewrite}>
+                        Accept AI Rewrite
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {quickEditStep === 3 && (
+                <div className="quick-step-block">
+                  <strong>Step 3: Preview diff and apply</strong>
+                  <div className="quick-diff-list">
+                    {quickEditDiffRows.map((row) => (
+                      <div key={`quick-diff-${row.label}`} className="quick-diff-item">
+                        <b>{row.label}</b>
+                        <small>Before: {row.before}</small>
+                        <small>After: {row.after}</small>
+                      </div>
+                    ))}
+                  </div>
+                  <label className="mini-toggle">
+                    <input
+                      type="checkbox"
+                      checked={quickApplyAllPages}
+                      onChange={(event) => setQuickApplyAllPages(event.target.checked)}
+                    />
+                    Apply same text to all pages
+                  </label>
+                </div>
+              )}
               <div className="quick-edit-actions">
-                <button onClick={handleApplyQuickEdits}>Apply Quick Edit</button>
+                {quickEditStep > 1 && (
+                  <button type="button" className="ghost" onClick={() => setQuickEditStep((prev) => prev - 1)}>
+                    Back
+                  </button>
+                )}
+                {quickEditStep < 3 && (
+                  <button type="button" onClick={() => setQuickEditStep((prev) => prev + 1)}>
+                    Next
+                  </button>
+                )}
+                {quickEditStep === 3 && (
+                  <button onClick={handleApplyQuickEdits} disabled={!quickEditHasChanges}>
+                    Apply Quick Edit
+                  </button>
+                )}
+                {lastQuickEditUndo && (
+                  <button type="button" className="ghost" onClick={handleUndoQuickEdit}>
+                    Undo last quick edit
+                  </button>
+                )}
               </div>
               {quickEditStatus && <div className="llm-status">{quickEditStatus}</div>}
             </div>
