@@ -536,6 +536,27 @@ const buildDefaultLlmContent = (safeName, safePrompt) => ({
     { question: "Do you support SEO?", answer: "Built-in semantic structure and metadata are included." },
   ],
   closingCtaHeadline: "Ready to turn your website into a predictable growth channel?",
+  pageCopy: {
+    about: {
+      heroTitle: `About ${safeName}`,
+      heroSubhead: safePrompt,
+      missionTitle: "Our Mission",
+      missionBody:
+        "We combine strategy, design, and execution to deliver practical business growth outcomes.",
+    },
+    services: {
+      heroTitle: "Solutions Designed for Measurable Growth",
+      heroSubhead:
+        "Flexible service packages designed for acquisition, retention, and operational efficiency.",
+      sectionTitle: "Service Packages",
+    },
+    contact: {
+      heroTitle: `Contact ${safeName}`,
+      heroSubhead:
+        "Tell us about your goals and timeline. We will share a tailored roadmap and proposal.",
+      contactTitle: "Let’s Talk",
+    },
+  },
 });
 
 const INDUSTRY_CONTACT_FORMS = {
@@ -744,6 +765,34 @@ const buildWebsiteFiles = ({
   const heroSubhead = escapeHtml(aiCopy.heroSubhead || fallbackLlm.heroSubhead);
   const brandPromise = escapeHtml(aiCopy.brandPromise || fallbackLlm.brandPromise);
   const closingCtaHeadline = escapeHtml(aiCopy.closingCtaHeadline || fallbackLlm.closingCtaHeadline);
+  const aboutCopy = {
+    heroTitle: escapeHtml(aiCopy?.pageCopy?.about?.heroTitle || fallbackLlm.pageCopy.about.heroTitle),
+    heroSubhead: escapeHtml(aiCopy?.pageCopy?.about?.heroSubhead || fallbackLlm.pageCopy.about.heroSubhead),
+    missionTitle: escapeHtml(aiCopy?.pageCopy?.about?.missionTitle || fallbackLlm.pageCopy.about.missionTitle),
+    missionBody: escapeHtml(aiCopy?.pageCopy?.about?.missionBody || fallbackLlm.pageCopy.about.missionBody),
+  };
+  const servicesCopy = {
+    heroTitle: escapeHtml(
+      aiCopy?.pageCopy?.services?.heroTitle || fallbackLlm.pageCopy.services.heroTitle
+    ),
+    heroSubhead: escapeHtml(
+      aiCopy?.pageCopy?.services?.heroSubhead || fallbackLlm.pageCopy.services.heroSubhead
+    ),
+    sectionTitle: escapeHtml(
+      aiCopy?.pageCopy?.services?.sectionTitle || fallbackLlm.pageCopy.services.sectionTitle
+    ),
+  };
+  const contactCopy = {
+    heroTitle: escapeHtml(
+      aiCopy?.pageCopy?.contact?.heroTitle || fallbackLlm.pageCopy.contact.heroTitle
+    ),
+    heroSubhead: escapeHtml(
+      aiCopy?.pageCopy?.contact?.heroSubhead || fallbackLlm.pageCopy.contact.heroSubhead
+    ),
+    contactTitle: escapeHtml(
+      aiCopy?.pageCopy?.contact?.contactTitle || fallbackLlm.pageCopy.contact.contactTitle
+    ),
+  };
 
   const aiServices =
     Array.isArray(aiCopy.services) && aiCopy.services.length >= 3
@@ -1534,18 +1583,18 @@ const buildWebsiteFiles = ({
     <section class="hero">
       <div>
         <span class="pill">${safeIndustry}</span>
-        <h1>About ${safeName}</h1>
-        <p class="sub">${heroSubhead}</p>
+        <h1>${aboutCopy.heroTitle}</h1>
+        <p class="sub">${aboutCopy.heroSubhead}</p>
       </div>
       <img src="${aboutImage}" alt="${safeIndustry} about" />
     </section>
 
     <section class="about">
       <div class="stack">
-        <h2 class="title">Our Mission</h2>
+        <h2 class="title">${aboutCopy.missionTitle}</h2>
         <p class="muted">${safePrompt}</p>
         <p class="muted">${brandPromise}</p>
-        <p class="muted">We combine strategy, design, and execution to deliver practical business growth with a ${safeGoal.toLowerCase()} focus.</p>
+        <p class="muted">${aboutCopy.missionBody}</p>
       </div>
       <div class="cards">${valuePropsMarkup}</div>
     </section>
@@ -1563,12 +1612,12 @@ const buildWebsiteFiles = ({
   const servicesHtml = `${sharedHead(`${safeName} | Services`, "services.html")}
     <section>
       <span class="pill">${safeIndustry} Services</span>
-      <h1>Solutions Built for ${safeGoal}</h1>
-      <p class="sub">Flexible service packages designed for acquisition, retention, and operational efficiency.</p>
+      <h1>${servicesCopy.heroTitle}</h1>
+      <p class="sub">${servicesCopy.heroSubhead}</p>
     </section>
 
     <section>
-      <h2 class="title">Service Packages</h2>
+      <h2 class="title">${servicesCopy.sectionTitle}</h2>
       <div class="cards">${serviceCardsMarkup}</div>
     </section>
 
@@ -1599,9 +1648,9 @@ const buildWebsiteFiles = ({
 
   const contactHtml = `${sharedHead(`${safeName} | Contact`, "contact.html")}
     <section>
-      <span class="pill">Let's Talk</span>
-      <h1>Contact ${safeName}</h1>
-      <p class="sub">Tell us about your goals and timeline. We will share a tailored roadmap and proposal.</p>
+      <span class="pill">${contactCopy.contactTitle}</span>
+      <h1>${contactCopy.heroTitle}</h1>
+      <p class="sub">${contactCopy.heroSubhead}</p>
       <a class="cta" data-next="Opening email draft..." href="mailto:${contactEmail}">${safeCta}</a>
     </section>
 
@@ -1677,7 +1726,7 @@ Primary goal: ${goal}
 Prompt: ${prompt}
 CTA: ${ctaText}
 
-Return concise, specific copy with no markdown. Focus on high-ticket positioning, trust signals, proof-driven language, and clear buying paths.`,
+Return concise, specific copy with no markdown. Generate distinct copy for Home/About/Services/Contact so each page has unique purpose and messaging. Focus on high-ticket positioning, trust signals, proof-driven language, and clear buying paths.`,
           },
         ],
         text: {
@@ -1777,6 +1826,44 @@ Return concise, specific copy with no markdown. Focus on high-ticket positioning
                   },
                 },
                 closingCtaHeadline: { type: "string" },
+                pageCopy: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    about: {
+                      type: "object",
+                      additionalProperties: false,
+                      properties: {
+                        heroTitle: { type: "string" },
+                        heroSubhead: { type: "string" },
+                        missionTitle: { type: "string" },
+                        missionBody: { type: "string" },
+                      },
+                      required: ["heroTitle", "heroSubhead", "missionTitle", "missionBody"],
+                    },
+                    services: {
+                      type: "object",
+                      additionalProperties: false,
+                      properties: {
+                        heroTitle: { type: "string" },
+                        heroSubhead: { type: "string" },
+                        sectionTitle: { type: "string" },
+                      },
+                      required: ["heroTitle", "heroSubhead", "sectionTitle"],
+                    },
+                    contact: {
+                      type: "object",
+                      additionalProperties: false,
+                      properties: {
+                        heroTitle: { type: "string" },
+                        heroSubhead: { type: "string" },
+                        contactTitle: { type: "string" },
+                      },
+                      required: ["heroTitle", "heroSubhead", "contactTitle"],
+                    },
+                  },
+                  required: ["about", "services", "contact"],
+                },
               },
               required: [
                 "heroHeadline",
@@ -1789,6 +1876,7 @@ Return concise, specific copy with no markdown. Focus on high-ticket positioning
                 "testimonials",
                 "faqs",
                 "closingCtaHeadline",
+                "pageCopy",
               ],
               },
             strict: true,
