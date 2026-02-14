@@ -68,6 +68,9 @@ textarea {
   max-width: 1540px;
   margin: 0 auto;
   padding: 24px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .builder-topbar {
@@ -134,7 +137,10 @@ textarea {
   display: grid;
   grid-template-columns: 320px minmax(460px, 1fr) 460px;
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+  height: calc(100vh - 130px);
 }
 
 .wizard-panel,
@@ -163,8 +169,8 @@ textarea {
 
 .wizard-panel {
   padding: 18px;
-  position: sticky;
-  top: 18px;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .wizard-panel h2 {
@@ -396,6 +402,9 @@ textarea:focus {
 .generator-panel {
   display: grid;
   gap: 14px;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 2px;
 }
 
 .panel-card {
@@ -1217,8 +1226,8 @@ button:disabled {
 
 .preview-panel {
   padding: 16px;
-  position: sticky;
-  top: 18px;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .preview-header h2 {
@@ -1784,11 +1793,11 @@ kbd {
 @media (max-width: 1380px) {
   .workspace-grid {
     grid-template-columns: 300px 1fr;
+    height: calc(100vh - 130px);
   }
 
   .preview-panel {
     grid-column: 1 / -1;
-    position: static;
   }
 
   .preview-frame,
@@ -1804,6 +1813,8 @@ kbd {
 @media (max-width: 920px) {
   .builder-shell {
     padding: 14px;
+    min-height: auto;
+    display: block;
   }
 
   .builder-topbar {
@@ -1813,10 +1824,18 @@ kbd {
 
   .workspace-grid {
     grid-template-columns: 1fr;
+    height: auto;
   }
 
   .wizard-panel {
-    position: static;
+    overflow: visible;
+    min-height: auto;
+  }
+
+  .generator-panel,
+  .preview-panel {
+    overflow: visible;
+    min-height: auto;
   }
 
   .advanced-grid,
