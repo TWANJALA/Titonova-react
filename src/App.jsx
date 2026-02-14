@@ -218,6 +218,7 @@ const IMAGE_UPLOAD_TARGETS = [
   { key: "gallery", label: "Gallery and portfolio images" },
   { key: "all", label: "All images on page" },
 ];
+const PUBLISH_STEPS = ["preparing", "uploading", "live"];
 
 const escapeHtml = (value) =>
   value
@@ -2138,6 +2139,8 @@ export default function App() {
   const [sellerMode, setSellerMode] = useState(false);
   const [resellerMargin, setResellerMargin] = useState(35);
   const [hostingMessage, setHostingMessage] = useState("");
+  const [hostingStep, setHostingStep] = useState("idle");
+  const [lastPublishProjectId, setLastPublishProjectId] = useState("");
   const [hostingBusyId, setHostingBusyId] = useState("");
   const [hostedSites, setHostedSites] = useState({});
 
@@ -2291,6 +2294,49 @@ export default function App() {
     }
     return list;
   }, [siteAudit]);
+
+  const namecheapDiagnostics = useMemo(() => {
+    if (registrarProvider !== "namecheap") return [];
+    const status = String(registrarHealthStatus || "").toLowerCase();
+    const hasConnectionFailure = status.includes("connection failed");
+    const connected = status.includes("connected:");
+    const apiKeyIssue =
+      status.includes("api key is invalid") || status.includes("api access has not been enabled");
+    const ipIssue = status.includes("whitelist") || status.includes("client ip") || status.includes("not allowed");
+    const modeIssue = status.includes("sandbox");
+
+    return [
+      {
+        label: "Live registrar mode",
+        state: liveRegistrarMode ? "ok" : "warn",
+        note: liveRegistrarMode ? "Enabled" : "Enable Live Registrar API before testing.",
+      },
+      {
+        label: "Gateway connectivity",
+        state: connected ? "ok" : hasConnectionFailure ? "fail" : "warn",
+        note: connected ? "Gateway reachable." : "Start gateway with `npm run dev:gateway`.",
+      },
+      {
+        label: "API credentials",
+        state: apiKeyIssue ? "fail" : connected ? "ok" : "warn",
+        note: apiKeyIssue
+          ? "Verify API key, API access enablement, and account username."
+          : "No API key error detected in latest check.",
+      },
+      {
+        label: "Whitelisted client IP",
+        state: ipIssue ? "fail" : "warn",
+        note: ipIssue ? "Whitelist NAMECHEAP_CLIENT_IP in Namecheap dashboard." : "Check whitelist if auth still fails.",
+      },
+      {
+        label: "Sandbox mode",
+        state: modeIssue ? "fail" : "warn",
+        note: modeIssue
+          ? "Sandbox mismatch detected."
+          : "If auth fails, try flipping NAMECHEAP_SANDBOX and retest.",
+      },
+    ];
+  }, [registrarProvider, registrarHealthStatus, liveRegistrarMode]);
 
   const readFromStorage = () => {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -3551,11 +3597,15 @@ export default function App() {
     const normalized = normalizeProject(project);
     const files = getProjectFiles(normalized);
     const safeSiteId = `${slugify(normalized.businessName || "site")}-${normalized.id.slice(0, 8)}`;
+    setLastPublishProjectId(normalized.id);
 
     setHostingBusyId(normalized.id);
-    setHostingMessage(`Publishing ${normalized.businessName}...`);
+    setHostingStep("preparing");
+    setHostingMessage(`Preparing ${normalized.businessName} for publish...`);
 
     try {
+      setHostingStep("uploading");
+      setHostingMessage(`Uploading ${normalized.businessName}...`);
       const payload = await publishProjectLive({
         siteId: safeSiteId,
         projectName: normalized.businessName,
@@ -3574,9 +3624,11 @@ export default function App() {
         ...prev,
         [safeSiteId]: payload,
       }));
+      setHostingStep("live");
       setHostingMessage(`Published: ${payload.url}`);
       return payload;
     } catch (error) {
+      setHostingStep("error");
       setHostingMessage(`Publish failed: ${error.message}`);
       return null;
     } finally {
@@ -3603,6 +3655,20 @@ export default function App() {
       return;
     }
 
+    const payload = await handlePublishProject(project);
+    if (payload?.url) {
+      window.open(payload.url, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const retryLastPublish = async () => {
+    const project =
+      projects.find((item) => item.id === lastPublishProjectId) ||
+      (draftProject?.id === lastPublishProjectId ? draftProject : null);
+    if (!project) {
+      setHostingMessage("No previous publish target found. Open a project and publish again.");
+      return;
+    }
     const payload = await handlePublishProject(project);
     if (payload?.url) {
       window.open(payload.url, "_blank", "noopener,noreferrer");
@@ -4186,6 +4252,22 @@ export default function App() {
               </p>
             </div>
             {registrarHealthStatus && <div className="llm-status">{registrarHealthStatus}</div>}
+            {registrarProvider === "namecheap" && (
+              <div className="diagnostics-card">
+                <strong>Namecheap Connection Diagnostics</strong>
+                <div className="diagnostics-list">
+                  {namecheapDiagnostics.map((item) => (
+                    <div key={item.label} className="diagnostics-item">
+                      <span className={`diag-badge ${item.state}`}>{item.state.toUpperCase()}</span>
+                      <div>
+                        <b>{item.label}</b>
+                        <small>{item.note}</small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="seller-row">
               <span className={`domain-status ${sellerMode ? "ok" : "taken"}`}>
                 {sellerMode ? "Seller Mode Active" : "Seller Mode Inactive"}
@@ -4430,7 +4512,37 @@ export default function App() {
                   })}
                 </div>
               )}
-              {hostingMessage && <div className="llm-status">{hostingMessage}</div>}
+              {hostingMessage && (
+                <div className="publish-status-wrap">
+                  <div className="publish-steps">
+                    {PUBLISH_STEPS.map((step) => {
+                      const active =
+                        hostingStep === step ||
+                        (hostingStep === "error" && step === "uploading");
+                      const done =
+                        step === "preparing"
+                          ? ["uploading", "live", "error"].includes(hostingStep)
+                          : step === "uploading"
+                            ? ["live", "error"].includes(hostingStep)
+                            : hostingStep === "live";
+                      return (
+                        <span
+                          key={step}
+                          className={`publish-step ${active ? "active" : ""} ${done ? "done" : ""}`}
+                        >
+                          {step.charAt(0).toUpperCase() + step.slice(1)}
+                        </span>
+                      );
+                    })}
+                  </div>
+                  <div className="llm-status">{hostingMessage}</div>
+                  {hostingStep === "error" && (
+                    <button className="ghost small" onClick={retryLastPublish}>
+                      Retry Publish
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </section>
