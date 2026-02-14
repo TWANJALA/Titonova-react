@@ -393,6 +393,54 @@ textarea:focus {
   line-height: 1.6;
 }
 
+.landing-hero {
+  background:
+    radial-gradient(circle at top right, rgba(82, 242, 255, 0.16), transparent 44%),
+    radial-gradient(circle at left bottom, rgba(36, 255, 164, 0.14), transparent 50%),
+    linear-gradient(145deg, rgba(10, 28, 20, 0.9), rgba(8, 22, 17, 0.84));
+}
+
+.landing-hero h1 {
+  margin-bottom: 10px;
+}
+
+.landing-hero p {
+  max-width: 72ch;
+}
+
+.landing-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+
+.landing-steps article {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(8, 22, 17, 0.84);
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.landing-steps strong {
+  font-size: 13px;
+  color: #90ffd0;
+}
+
+.landing-steps span {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.quick-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .muted {
   color: var(--muted);
   font-size: 12px;
@@ -484,6 +532,21 @@ button:disabled {
   border-color: rgba(124, 255, 197, 0.82);
   background: rgba(36, 255, 164, 0.2);
   color: #7dffc6;
+}
+
+.go-live-btn {
+  background: linear-gradient(135deg, #1cff9c, #00b86e);
+  color: #012414;
+  box-shadow: 0 12px 30px rgba(28, 255, 156, 0.3);
+}
+
+.go-live-btn:hover {
+  box-shadow: 0 14px 34px rgba(28, 255, 156, 0.38);
+}
+
+.go-live-btn:disabled {
+  background: rgba(19, 64, 47, 0.72);
+  color: #82c5a7;
 }
 
 .danger {
@@ -894,6 +957,38 @@ button:disabled {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px;
+}
+
+.upload-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.upload-grid input,
+.upload-grid select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(8, 22, 17, 0.9);
+  color: var(--ink);
+}
+
+.upload-dropzone {
+  border: 1px dashed rgba(124, 255, 197, 0.45);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+  color: var(--muted);
+  background: rgba(8, 22, 17, 0.74);
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.upload-dropzone.active {
+  border-color: rgba(82, 242, 255, 0.78);
+  background: rgba(10, 34, 25, 0.9);
+  transform: translateY(-1px);
+  color: #b4f2d4;
 }
 
 .mini-toggle {

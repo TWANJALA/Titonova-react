@@ -32,6 +32,41 @@ const INDUSTRIES = [
 
 const TONES = ["Professional", "Modern", "Bold", "Minimal", "Friendly"];
 const GOALS = ["Lead Generation", "Bookings", "Ecommerce", "Brand Awareness"];
+const QUICK_START_PRESETS = [
+  {
+    key: "local-services",
+    label: "Local Services",
+    businessName: "Northpoint Home Services",
+    industryKey: "construction",
+    goal: "Lead Generation",
+    tone: "Professional",
+    ctaText: "Request a free estimate",
+    prompt:
+      "Build a trustworthy local services website with service areas, customer reviews, clear pricing cues, and a quote request funnel.",
+  },
+  {
+    key: "saas-launch",
+    label: "SaaS Launch",
+    businessName: "Flowpilot",
+    industryKey: "finance",
+    goal: "Brand Awareness",
+    tone: "Modern",
+    ctaText: "Start free trial",
+    prompt:
+      "Create a modern SaaS website with product highlights, social proof, feature sections, and clear free-trial conversion paths.",
+  },
+  {
+    key: "restaurant-bookings",
+    label: "Restaurant Bookings",
+    businessName: "Harbor & Hearth",
+    industryKey: "restaurant",
+    goal: "Bookings",
+    tone: "Friendly",
+    ctaText: "Reserve a table",
+    prompt:
+      "Design a high-converting restaurant website with menu highlights, events, gallery, testimonials, and strong reservation calls to action.",
+  },
+];
 const FONT_THEMES = {
   sans: '"DM Sans", "Segoe UI", system-ui, sans-serif',
   serif: '"Merriweather", Georgia, "Times New Roman", serif',
@@ -176,6 +211,13 @@ const BLOCK_TEMPLATES = {
 </section>`,
   },
 };
+const IMAGE_UPLOAD_TARGETS = [
+  { key: "first", label: "First image on page" },
+  { key: "hero", label: "Hero image" },
+  { key: "about", label: "About section image" },
+  { key: "gallery", label: "Gallery and portfolio images" },
+  { key: "all", label: "All images on page" },
+];
 
 const escapeHtml = (value) =>
   value
@@ -208,18 +250,128 @@ const domainHash = (value) =>
 
 const isDomainLikelyAvailable = (domain) => domainHash(domain) % 5 !== 0;
 
-const buildDomainSuggestions = (seed) => {
+const DOMAIN_STOP_WORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "llc",
+  "inc",
+  "ltd",
+  "co",
+  "company",
+  "group",
+  "studio",
+  "agency",
+  "services",
+  "solutions",
+]);
+
+const toDomainKeyword = (value) => {
+  const compact = slugify(value || "").replaceAll("-", "");
+  return compact.slice(0, 28);
+};
+
+const PREFERRED_TLD_ORDER = [".com", ".co", ".io", ".ai", ".net", ".studio"];
+
+const tldRank = (tld) => {
+  const index = PREFERRED_TLD_ORDER.indexOf(String(tld || "").toLowerCase());
+  return index === -1 ? PREFERRED_TLD_ORDER.length : index;
+};
+
+const scoreDomainVariant = ({ variant, baseVariant, keywordVariants }) => {
+  let score = 0;
+  const clean = String(variant || "").toLowerCase();
+  const isExactBrand = clean === baseVariant;
+  const hasDigits = /\d/.test(clean);
+  const looksAlternate =
+    clean.includes("online") ||
+    clean.includes("hq") ||
+    clean.includes("app") ||
+    clean.includes("get");
+
+  if (isExactBrand) score += 180;
+  if (clean.length <= 10) score += 120;
+  else if (clean.length <= 14) score += 80;
+  else score += 30;
+
+  if (!hasDigits) score += 40;
+  if (!looksAlternate) score += 35;
+  if (keywordVariants.some((item) => item && clean.includes(item))) score += 45;
+  if (looksAlternate) score -= 70;
+  if (hasDigits) score -= 45;
+
+  return score;
+};
+
+const buildDomainSuggestions = (seed, options = {}) => {
   const base = slugify(seed || "");
   if (!base) return [];
 
-  return DOMAIN_TLDS.map(({ tld, price }, idx) => {
-    const name = `${base}${idx > 0 ? idx : ""}${tld}`;
-    return {
-      name,
-      price,
-      available: isDomainLikelyAvailable(name),
-    };
+  const businessTokens = slugify(options.businessName || "")
+    .split("-")
+    .filter((part) => part && !DOMAIN_STOP_WORDS.has(part));
+  const industryToken = slugify(options.industryLabel || "").replaceAll("-", "");
+  const compactBase = base.replaceAll("-", "");
+  const keywordVariants = [
+    toDomainKeyword(options.businessName || ""),
+    industryToken,
+  ].filter(Boolean);
+  const variants = [
+    compactBase,
+    base,
+    businessTokens.join(""),
+    businessTokens.slice(0, 2).join(""),
+    businessTokens[0] ? `${businessTokens[0]}hq` : "",
+    businessTokens[0] ? `${businessTokens[0]}online` : "",
+    compactBase && industryToken ? `${compactBase}${industryToken}` : "",
+    businessTokens[0] && industryToken ? `${businessTokens[0]}${industryToken}` : "",
+  ]
+    .map((item) => toDomainKeyword(item))
+    .filter(Boolean);
+
+  const uniqueVariants = [];
+  const seenVariants = new Set();
+  variants.forEach((item) => {
+    if (seenVariants.has(item)) return;
+    seenVariants.add(item);
+    uniqueVariants.push(item);
   });
+
+  const suggestions = [];
+  const seenDomains = new Set();
+
+  uniqueVariants.forEach((variant) => {
+    const variantQuality = scoreDomainVariant({
+      variant,
+      baseVariant: compactBase,
+      keywordVariants,
+    });
+    DOMAIN_TLDS.forEach(({ tld, price }) => {
+      const domain = `${variant}${tld}`;
+      if (seenDomains.has(domain)) return;
+      seenDomains.add(domain);
+      suggestions.push({
+        name: domain,
+        price,
+        available: isDomainLikelyAvailable(domain),
+        __score: variantQuality - tldRank(tld) * 12,
+      });
+    });
+  });
+
+  return suggestions
+    .sort((a, b) => {
+      if (b.__score !== a.__score) return b.__score - a.__score;
+      if (a.available !== b.available) return a.available ? -1 : 1;
+      if (a.price !== b.price) return a.price - b.price;
+      return a.name.localeCompare(b.name);
+    })
+    .slice(0, 18)
+    .map((domain) => ({
+      name: domain.name,
+      price: domain.price,
+      available: domain.available,
+    }));
 };
 
 const getDefaultSubstyle = (themePreset) => THEME_SUBSTYLES[themePreset]?.[0]?.key || "";
@@ -1783,6 +1935,68 @@ const appendSectionBeforeFooter = (html, marker, sectionHtml) =>
     return true;
   });
 
+const estimateDataUrlBytes = (dataUrl) => {
+  const raw = String(dataUrl || "").split(",")[1] || "";
+  return Math.floor((raw.length * 3) / 4);
+};
+
+const formatBytes = (bytes) => {
+  const value = Number(bytes || 0);
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+};
+
+const updatePageImages = (html, { target, src, alt }) =>
+  mutateHtmlDocument(html, (doc) => {
+    const allImages = Array.from(doc.querySelectorAll("img"));
+    if (allImages.length === 0) return false;
+
+    let candidates = [];
+    if (target === "hero") {
+      const hero = doc.querySelector(".hero img") || allImages[0];
+      if (hero) candidates = [hero];
+    } else if (target === "about") {
+      const about = doc.querySelector(".about img") || allImages[1] || allImages[0];
+      if (about) candidates = [about];
+    } else if (target === "gallery") {
+      candidates = Array.from(doc.querySelectorAll(".gallery img, .portfolio-grid img, .luxury-gallery img"));
+      if (candidates.length === 0) candidates = allImages.slice(1);
+    } else if (target === "all") {
+      candidates = allImages;
+    } else {
+      candidates = [allImages[0]];
+    }
+
+    const unique = [];
+    const seen = new Set();
+    candidates.forEach((node) => {
+      if (!node || seen.has(node)) return;
+      seen.add(node);
+      unique.push(node);
+    });
+    if (unique.length === 0) return false;
+
+    let changed = false;
+    unique.forEach((image) => {
+      if (image.getAttribute("src") !== src) {
+        image.setAttribute("src", src);
+        changed = true;
+      }
+      if (image.hasAttribute("srcset")) {
+        image.removeAttribute("srcset");
+        changed = true;
+      }
+      if (alt && image.getAttribute("alt") !== alt) {
+        image.setAttribute("alt", alt);
+        changed = true;
+      }
+      image.setAttribute("loading", "lazy");
+    });
+
+    return changed;
+  });
+
 const crc32Table = (() => {
   const table = new Uint32Array(256);
   for (let i = 0; i < 256; i += 1) {
@@ -1950,12 +2164,17 @@ export default function App() {
   const [replaceCaseSensitive, setReplaceCaseSensitive] = useState(false);
   const [versionNote, setVersionNote] = useState("");
   const [selectedBlockTemplate, setSelectedBlockTemplate] = useState("feature_grid");
+  const [imageUploadTarget, setImageUploadTarget] = useState("hero");
+  const [applyUploadToAllPages, setApplyUploadToAllPages] = useState(false);
+  const [imageUploadStatus, setImageUploadStatus] = useState("");
+  const [isImageDropActive, setIsImageDropActive] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState("");
   const [insightMessage, setInsightMessage] = useState("");
 
   const iframeRef = useRef(null);
   const iframeListenerRef = useRef(null);
   const projectImportRef = useRef(null);
+  const imageUploadInputRef = useRef(null);
   const shortcutHandlersRef = useRef({
     generateOne: () => {},
     generateAll: () => {},
@@ -2238,13 +2457,20 @@ export default function App() {
     let cancelled = false;
 
     const run = async () => {
-      if (!domainSearch.trim()) {
+      const derivedKeyword = toDomainKeyword(domainSearch.trim() || businessName || activeIndustry.label);
+
+      if (!derivedKeyword) {
         setDomainSuggestions([]);
         return;
       }
 
       if (!liveRegistrarMode) {
-        setDomainSuggestions(buildDomainSuggestions(domainSearch));
+        setDomainSuggestions(
+          buildDomainSuggestions(derivedKeyword, {
+            businessName,
+            industryLabel: activeIndustry.label,
+          })
+        );
         return;
       }
 
@@ -2252,13 +2478,18 @@ export default function App() {
         setRegistrarLoading(true);
         const liveResults = await searchDomainsLive({
           provider: registrarProvider,
-          keyword: domainSearch.trim(),
+          keyword: derivedKeyword,
           tlds: DOMAIN_TLDS.map((item) => item.tld),
         });
         if (cancelled) return;
 
         if (liveResults.length === 0) {
-          setDomainSuggestions(buildDomainSuggestions(domainSearch));
+          setDomainSuggestions(
+            buildDomainSuggestions(derivedKeyword, {
+              businessName,
+              industryLabel: activeIndustry.label,
+            })
+          );
         } else {
           setDomainSuggestions(
             liveResults.map((item) => ({
@@ -2270,7 +2501,12 @@ export default function App() {
         }
       } catch {
         if (!cancelled) {
-          setDomainSuggestions(buildDomainSuggestions(domainSearch));
+          setDomainSuggestions(
+            buildDomainSuggestions(derivedKeyword, {
+              businessName,
+              industryLabel: activeIndustry.label,
+            })
+          );
           setDomainMessage("Live registrar search unavailable. Using local marketplace mode.");
         }
       } finally {
@@ -2282,7 +2518,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [domainSearch, liveRegistrarMode, registrarProvider]);
+  }, [domainSearch, liveRegistrarMode, registrarProvider, businessName, activeIndustry.label]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2434,6 +2670,41 @@ export default function App() {
     return dedupeModels([config.llmCustomModel, config.llmModel, ...(preset.models || [])]);
   };
 
+  const generateSingleProject = async (industry) => {
+    let llmContent = null;
+    let llmResolvedModel = "";
+    const projectConfig = buildProjectConfig(industry);
+
+    if (projectConfig.useLlm) {
+      const llmResult = await generateLlmContent({
+        apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+        modelCandidates: getLlmModelChain(projectConfig),
+        businessName: projectConfig.businessName,
+        industry,
+        tone: projectConfig.tone,
+        goal: projectConfig.goal,
+        prompt: projectConfig.prompt,
+        ctaText: projectConfig.ctaText,
+        onModelAttempt: (model) => setLlmStatus(`Generating copy with ${model}...`),
+      });
+      llmContent = llmResult.content;
+      llmResolvedModel = llmResult.modelUsed;
+      setLlmStatus(`LLM complete using ${llmResolvedModel}.`);
+    }
+
+    const project = makeProject({ ...projectConfig, llmContent, llmResolvedModel });
+    openProject(project, DEFAULT_PAGE);
+
+    if (isSignedIn && email) {
+      addProjectsForUser(email, [project]);
+    } else {
+      setDraftProject(project);
+      setShowSignup(true);
+    }
+
+    return project;
+  };
+
   const handleGenerateOne = async () => {
     setLoading(true);
     setError("");
@@ -2441,37 +2712,29 @@ export default function App() {
 
     try {
       await new Promise((resolve) => setTimeout(resolve, 500));
-      let llmContent = null;
-      let llmResolvedModel = "";
-      const projectConfig = buildProjectConfig(activeIndustry);
-      if (projectConfig.useLlm) {
-        const llmResult = await generateLlmContent({
-          apiKey: import.meta.env.VITE_OPENAI_API_KEY,
-          modelCandidates: getLlmModelChain(projectConfig),
-          businessName: projectConfig.businessName,
-          industry: activeIndustry,
-          tone: projectConfig.tone,
-          goal: projectConfig.goal,
-          prompt: projectConfig.prompt,
-          ctaText: projectConfig.ctaText,
-          onModelAttempt: (model) => setLlmStatus(`Generating copy with ${model}...`),
-        });
-        llmContent = llmResult.content;
-        llmResolvedModel = llmResult.modelUsed;
-        setLlmStatus(`LLM complete using ${llmResolvedModel}.`);
-      }
-      const project = makeProject({ ...projectConfig, llmContent, llmResolvedModel });
-
-      openProject(project, DEFAULT_PAGE);
-
-      if (isSignedIn && email) {
-        addProjectsForUser(email, [project]);
-      } else {
-        setDraftProject(project);
-        setShowSignup(true);
-      }
+      await generateSingleProject(activeIndustry);
     } catch {
       setError("Failed to generate project. Check LLM key/model if AI mode is enabled.");
+    } finally {
+      setLlmStatus("");
+      setLoading(false);
+    }
+  };
+
+  const handleGenerateAndGoLive = async () => {
+    setLoading(true);
+    setError("");
+    setLlmStatus("");
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const project = await generateSingleProject(activeIndustry);
+      const payload = await handlePublishProject(project);
+      if (payload?.url) {
+        window.open(payload.url, "_blank", "noopener,noreferrer");
+      }
+    } catch {
+      setError("Generate + Go Live failed. Check LLM settings and gateway connection.");
     } finally {
       setLlmStatus("");
       setLoading(false);
@@ -2738,6 +3001,136 @@ export default function App() {
         return next;
       })
     );
+  };
+
+  const readFileAsDataUrl = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Failed to read image file."));
+      reader.readAsDataURL(file);
+    });
+
+  const compressImageFile = async (file) => {
+    if (typeof document === "undefined") {
+      const dataUrl = await readFileAsDataUrl(file);
+      return { dataUrl, inputBytes: file.size, outputBytes: file.size };
+    }
+
+    const sourceUrl = URL.createObjectURL(file);
+    try {
+      const image = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("Failed to decode image."));
+        img.src = sourceUrl;
+      });
+
+      const maxSide = 1920;
+      const sourceWidth = Number(image.naturalWidth || image.width || 0);
+      const sourceHeight = Number(image.naturalHeight || image.height || 0);
+      const ratio = Math.min(1, maxSide / Math.max(sourceWidth || 1, sourceHeight || 1));
+      const width = Math.max(1, Math.round(sourceWidth * ratio));
+      const height = Math.max(1, Math.round(sourceHeight * ratio));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        const fallback = await readFileAsDataUrl(file);
+        return { dataUrl: fallback, inputBytes: file.size, outputBytes: file.size };
+      }
+      ctx.drawImage(image, 0, 0, width, height);
+
+      const preferredType = file.type === "image/png" ? "image/webp" : "image/jpeg";
+      const compressedUrl = canvas.toDataURL(preferredType, 0.82);
+      const compressedBytes = estimateDataUrlBytes(compressedUrl);
+
+      if (!compressedUrl || compressedBytes >= file.size) {
+        const fallback = await readFileAsDataUrl(file);
+        return { dataUrl: fallback, inputBytes: file.size, outputBytes: file.size };
+      }
+
+      return { dataUrl: compressedUrl, inputBytes: file.size, outputBytes: compressedBytes };
+    } finally {
+      URL.revokeObjectURL(sourceUrl);
+    }
+  };
+
+  const applyUploadedImageFile = async (file) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setImageUploadStatus("Please choose an image file.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setImageUploadStatus("Image is too large. Use a file under 10MB.");
+      return;
+    }
+
+    try {
+      setImageUploadStatus("Compressing and applying image...");
+      const compressed = await compressImageFile(file);
+      const src = compressed.dataUrl;
+      const altText = `${businessName || "Website"} image`;
+      const note = `Upload image (${imageUploadTarget})`;
+
+      const applied = applyUploadToAllPages
+        ? mutateActiveProjectFiles(note, (files) => {
+            const next = { ...files };
+            PAGE_CONFIG.forEach((page) => {
+              const key = page.key;
+              next[key] = updatePageImages(next[key], {
+                target: imageUploadTarget,
+                src,
+                alt: altText,
+              });
+            });
+            return next;
+          })
+        : (() => {
+            let didApply = false;
+            mutateActivePage(note, (html) => {
+              const next = updatePageImages(html, {
+                target: imageUploadTarget,
+                src,
+                alt: altText,
+              });
+              didApply = next !== html;
+              return next;
+            });
+            return didApply;
+          })();
+
+      if (!applied) {
+        setImageUploadStatus("No matching image slot found for this target.");
+        return;
+      }
+
+      setImageUploadStatus(
+        `Uploaded ${file.name} (${formatBytes(compressed.inputBytes)} -> ${formatBytes(
+          compressed.outputBytes
+        )}) to ${applyUploadToAllPages ? "all pages" : "this page"}.`
+      );
+    } catch {
+      setImageUploadStatus("Image upload failed. Try a different file.");
+    }
+  };
+
+  const handleUploadImage = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = "";
+    await applyUploadedImageFile(file);
+  };
+
+  const handleUploadDrop = async (event) => {
+    event.preventDefault();
+    setIsImageDropActive(false);
+    const file = event.dataTransfer?.files?.[0];
+    if (!file) return;
+    await applyUploadedImageFile(file);
   };
 
   const applyInsight = (insightKey) => {
@@ -3151,6 +3544,10 @@ export default function App() {
   };
 
   const handlePublishProject = async (project) => {
+    if (!project) {
+      setHostingMessage("No project selected for publish.");
+      return null;
+    }
     const normalized = normalizeProject(project);
     const files = getProjectFiles(normalized);
     const safeSiteId = `${slugify(normalized.businessName || "site")}-${normalized.id.slice(0, 8)}`;
@@ -3178,10 +3575,37 @@ export default function App() {
         [safeSiteId]: payload,
       }));
       setHostingMessage(`Published: ${payload.url}`);
+      return payload;
     } catch (error) {
       setHostingMessage(`Publish failed: ${error.message}`);
+      return null;
     } finally {
       setHostingBusyId("");
+    }
+  };
+
+  const getPublishableProject = () => {
+    if (activeProjectId) {
+      const activeFromLibrary = projects.find((item) => item.id === activeProjectId);
+      if (activeFromLibrary) return activeFromLibrary;
+      if (draftProject?.id === activeProjectId) return draftProject;
+    }
+
+    if (draftProject) return draftProject;
+    if (projects.length > 0) return projects[0];
+    return null;
+  };
+
+  const handleQuickPublishActive = async () => {
+    const project = getPublishableProject();
+    if (!project) {
+      setHostingMessage("Generate or open a project first, then click Go Live.");
+      return;
+    }
+
+    const payload = await handlePublishProject(project);
+    if (payload?.url) {
+      window.open(payload.url, "_blank", "noopener,noreferrer");
     }
   };
 
@@ -3289,6 +3713,20 @@ export default function App() {
     setDomainCart([]);
     setSellerMode(false);
     setResellerMargin(35);
+  };
+
+  const applyQuickStartPreset = (presetKey) => {
+    const preset = QUICK_START_PRESETS.find((item) => item.key === presetKey);
+    if (!preset) return;
+    setBusinessName(preset.businessName);
+    setIndustryKey(preset.industryKey);
+    setGoal(preset.goal);
+    setTone(preset.tone);
+    setCtaText(preset.ctaText);
+    setPrompt(preset.prompt);
+    setSeoTitle(`${preset.businessName} | ${preset.goal}`);
+    setDomainSearch("");
+    setDomainMessage(`Applied ${preset.label} preset. Review and generate.`);
   };
 
   shortcutHandlersRef.current.generateOne = handleGenerateOne;
@@ -3551,6 +3989,48 @@ export default function App() {
         </aside>
 
         <section className="generator-panel">
+          <div className="panel-card landing-hero">
+            <h1>Launch a website in minutes</h1>
+            <p>
+              Start with your business name, choose a quick preset, then generate and publish.
+              The builder will auto-create pages, copy, SEO data, and domain suggestions.
+            </p>
+            <div className="landing-steps">
+              <article>
+                <strong>1. Set business profile</strong>
+                <span>Business name, industry, and primary goal.</span>
+              </article>
+              <article>
+                <strong>2. Generate website</strong>
+                <span>Create full multi-page drafts with conversion-focused structure.</span>
+              </article>
+              <article>
+                <strong>3. Pick domain and publish</strong>
+                <span>Use ranked domain options and push live from Project Library.</span>
+              </article>
+            </div>
+            <div className="quick-preset-row">
+              {QUICK_START_PRESETS.map((preset) => (
+                <button
+                  key={preset.key}
+                  type="button"
+                  className="ghost small"
+                  onClick={() => applyQuickStartPreset(preset.key)}
+                >
+                  {preset.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="go-live-btn"
+                onClick={handleGenerateAndGoLive}
+                disabled={loading}
+              >
+                {loading ? "Working..." : "Generate + Go Live"}
+              </button>
+            </div>
+          </div>
+
           <div className="panel-card">
             <h1>Describe the website you want</h1>
             <p>
@@ -3607,7 +4087,15 @@ export default function App() {
               <button className="ghost" onClick={handleGenerateAll} disabled={loading}>
                 {loading ? "Generating..." : "Generate All Industries"}
               </button>
+              <button
+                className="go-live-btn"
+                onClick={handleQuickPublishActive}
+                disabled={!activeProjectId || hostingBusyId === activeProjectId}
+              >
+                {hostingBusyId === activeProjectId ? "Publishing..." : "Go Live Now"}
+              </button>
             </div>
+            <p className="muted">Go Live publishes the opened project and opens its live URL automatically.</p>
 
             <div className="command-center">
               <div className="command-row">
@@ -3723,6 +4211,9 @@ export default function App() {
                 onChange={(event) => setDomainSearch(event.target.value)}
               />
             </div>
+            <p className="muted">
+              Auto suggestions use your business name when search is empty.
+            </p>
             {domainMessage && <div className="llm-status">{domainMessage}</div>}
             <div className="domain-suggestion-grid">
               {domainSuggestions.slice(0, 8).map((domain) => (
@@ -3746,7 +4237,7 @@ export default function App() {
                 </article>
               ))}
               {domainSuggestions.length === 0 && (
-                <div className="empty">Enter a keyword to discover domain options.</div>
+                <div className="empty">Add a business name or domain keyword to discover domain options.</div>
               )}
             </div>
 
@@ -3904,11 +4395,20 @@ export default function App() {
                           Duplicate
                         </button>
                         <button
-                          className="ghost"
-                          onClick={() => handlePublishProject(project)}
+                          className="go-live-btn"
+                          onClick={async () => {
+                            const payload = await handlePublishProject(project);
+                            if (payload?.url) {
+                              window.open(payload.url, "_blank", "noopener,noreferrer");
+                            }
+                          }}
                           disabled={hostingBusyId === project.id}
                         >
-                          {hostingBusyId === project.id ? "Publishing..." : "Publish Live"}
+                          {hostingBusyId === project.id
+                            ? "Publishing..."
+                            : hosted?.url
+                              ? "Update Live"
+                              : "Go Live"}
                         </button>
                         {hosted?.url && (
                           <>
@@ -4073,6 +4573,66 @@ export default function App() {
                     <div className="empty-mini">No editable sections found on this page.</div>
                   )}
                 </div>
+              </div>
+
+              <div className="tool-block">
+                <h3>Image Uploads</h3>
+                <div className="upload-grid">
+                  <select
+                    value={imageUploadTarget}
+                    onChange={(event) => setImageUploadTarget(event.target.value)}
+                  >
+                    {IMAGE_UPLOAD_TARGETS.map((item) => (
+                      <option key={item.key} value={item.key}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+                  <label className="mini-toggle">
+                    <input
+                      type="checkbox"
+                      checked={applyUploadToAllPages}
+                      onChange={(event) => setApplyUploadToAllPages(event.target.checked)}
+                    />
+                    Apply to all pages
+                  </label>
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => imageUploadInputRef.current?.click()}
+                  >
+                    Choose image file
+                  </button>
+                  <input
+                    ref={imageUploadInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden-input"
+                    onChange={handleUploadImage}
+                  />
+                  <div
+                    className={`upload-dropzone ${isImageDropActive ? "active" : ""}`}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setIsImageDropActive(true);
+                    }}
+                    onDragEnter={(event) => {
+                      event.preventDefault();
+                      setIsImageDropActive(true);
+                    }}
+                    onDragLeave={(event) => {
+                      event.preventDefault();
+                      setIsImageDropActive(false);
+                    }}
+                    onDrop={handleUploadDrop}
+                  >
+                    Drag and drop image here
+                  </div>
+                </div>
+                <small className="muted">
+                  Images are compressed in-browser, embedded into page HTML, and included in export/publish.
+                </small>
+                {imageUploadStatus && <div className="llm-status">{imageUploadStatus}</div>}
               </div>
 
               <div className="tool-block">

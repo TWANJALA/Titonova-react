@@ -17,14 +17,19 @@ const parseJsonSafe = async (response) => {
 };
 
 const postHosting = async (path, body) => {
-  const response = await fetch(buildUrl(path), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(HOSTING_GATEWAY_TOKEN ? { "x-registrar-token": HOSTING_GATEWAY_TOKEN } : {}),
-    },
-    body: JSON.stringify(body || {}),
-  });
+  let response;
+  try {
+    response = await fetch(buildUrl(path), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(HOSTING_GATEWAY_TOKEN ? { "x-registrar-token": HOSTING_GATEWAY_TOKEN } : {}),
+      },
+      body: JSON.stringify(body || {}),
+    });
+  } catch {
+    throw new Error("Hosting gateway unreachable. Start `npm run dev:gateway` and retry.");
+  }
 
   const payload = await parseJsonSafe(response);
   if (!response.ok) {

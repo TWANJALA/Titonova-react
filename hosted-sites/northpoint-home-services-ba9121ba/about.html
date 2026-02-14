@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Northpoint Home Services | About</title>
+  <meta name="description" content="Build a trustworthy local services website with service areas, customer reviews, clear pricing cues, and a quote request funnel." />
+  <meta property="og:title" content="Northpoint Home Services | Lead Generation" />
+  <meta property="og:description" content="Build a trustworthy local services website with service areas, customer reviews, clear pricing cues, and a quote request funnel." />
+  <meta property="og:url" content="https://healthcare/about.html" />
+  <link rel="canonical" href="https://healthcare/about.html" />
+  <style>
+    :root {
+      --bg: #f3f8ff;
+      --ink: #102038;
+      --muted: #55657f;
+      --primary: #14b987;
+      --card: rgba(255,255,255,0.8);
+      --line: rgba(151, 173, 207, 0.42);
+      --theme-mode: "corporate";
+      --style-mode: "glass";
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "DM Sans", "Segoe UI", system-ui, sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at 12% 10%, rgba(20, 185, 135, 0.22), transparent 35%), radial-gradient(circle at 88% 6%, rgba(24, 255, 156, 0.18), transparent 30%), var(--bg);
+    }
+    .container { width: min(1120px, 92%); margin: 0 auto; }
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 18px 0;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 12px;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .nav strong { font-size: 1.05rem; }
+    .nav .menu { display: flex; gap: 12px; color: var(--muted); font-size: 14px; flex-wrap: wrap; }
+    .nav .menu a { color: inherit; text-decoration: none; }
+    .hero {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 28px;
+      align-items: center;
+      padding: 34px 0;
+      position: relative;
+    }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--primary) 18%, white);
+      color: color-mix(in srgb, var(--primary) 75%, black);
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0 0 12px; font-size: clamp(2rem, 5vw, 3.3rem); line-height: 1.06; }
+    .sub { color: var(--muted); line-height: 1.7; margin-bottom: 18px; }
+    .cta {
+      display: inline-block;
+      text-decoration: none;
+      color: white;
+      background: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 65%, black));
+      border-radius: 999px;
+      padding: 12px 20px;
+      font-weight: 700;
+    }
+    .hero img, .about img, .gallery img {
+      width: 100%;
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      object-fit: cover;
+    }
+    .hero img { min-height: 320px; }
+    section { padding: 20px 0; }
+    .title { margin: 0 0 14px; font-size: 1.8rem; }
+    .muted { color: var(--muted); }
+    .stats, .cards, .gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      padding: 16px;
+      box-shadow: 0 12px 30px rgba(15, 32, 60, 0.08);
+    }
+    .card h3 { margin: 0 0 8px; }
+    .card p { margin: 0; color: var(--muted); line-height: 1.6; }
+    .card strong { display: block; margin-top: 10px; }
+    .stats .card strong { font-size: 1.6rem; margin-top: 0; }
+    .about {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      align-items: center;
+    }
+    .pages {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .pages span {
+      font-size: 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: #fbfdff;
+      color: #3d4f6b;
+    }
+    .stack { display: grid; gap: 14px; }
+    .contact-list { display: grid; gap: 10px; }
+    .contact-form-card { border: 1px solid var(--line); border-radius: 20px; padding: 18px; background: var(--card); }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 10px; }
+    .form-field { display: grid; gap: 6px; }
+    .form-field span { font-size: 12px; color: var(--muted); font-weight: 700; letter-spacing: 0.02em; }
+    .form-field input,
+    .form-field select,
+    .form-field textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font: inherit;
+      color: var(--ink);
+      background: color-mix(in srgb, var(--card) 82%, white);
+    }
+    .form-field textarea { resize: vertical; min-height: 110px; }
+    .form-field-full { grid-column: 1 / -1; }
+    .form-check { display: flex; align-items: center; gap: 8px; }
+    .form-check input { width: auto; margin: 0; }
+    .form-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .contact-item {
+      border: 1px solid var(--line);
+      background: var(--card);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    footer {
+      margin-top: 28px;
+      border-top: 1px solid var(--line);
+      padding: 22px 0 36px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .metrics-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .metrics-strip article {
+      border: 1px solid var(--line);
+      background: var(--card);
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .metrics-strip strong { display: block; font-size: 1.7rem; }
+    .metrics-strip span { color: var(--muted); font-size: 13px; }
+    .split-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; align-items: center; }
+    .split-panel img { width: 100%; border-radius: 14px; border: 1px solid var(--line); }
+    .bullet-list { margin: 0; padding-left: 18px; color: var(--muted); display: grid; gap: 6px; }
+    .feature-matrix { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    .startup-roadmap { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    .dev-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    .matrix-card { border: 1px solid var(--line); border-radius: 14px; padding: 14px; background: var(--card); }
+    .logo-ribbon { border: 1px solid var(--line); border-radius: 14px; padding: 14px; background: var(--card); display: grid; gap: 10px; }
+    .logo-ribbon div { display: flex; flex-wrap: wrap; gap: 10px; color: var(--muted); }
+    .luxury-quote { border: 1px solid var(--line); background: var(--card); border-radius: 14px; padding: 24px; font-size: 1.15rem; line-height: 1.8; }
+    .luxury-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .luxury-gallery img { width: 100%; border-radius: 14px; border: 1px solid var(--line); min-height: 320px; object-fit: cover; }
+    .editorial-headline { border-left: 4px solid var(--primary); padding-left: 14px; }
+    .editorial-headline h2 { margin: 0 0 8px; font-size: clamp(1.5rem, 3.4vw, 2.2rem); }
+    .editorial-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+    .editorial-columns article { border-top: 2px solid var(--line); padding-top: 10px; }
+    .contact-note { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--card); }
+    .logo-cloud { border: 1px solid var(--line); border-radius: 20px; padding: 14px; background: var(--card); display: grid; gap: 10px; }
+    .logo-cloud div { display: flex; flex-wrap: wrap; gap: 10px; color: var(--muted); }
+    .logo-cloud b { padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: color-mix(in srgb, var(--card) 70%, white); }
+    .portfolio-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .portfolio-grid article { border: 1px solid var(--line); border-radius: 20px; padding: 12px; background: var(--card); }
+    .portfolio-grid img { width: 100%; height: 160px; object-fit: cover; border-radius: 20px; border: 1px solid var(--line); }
+    .portfolio-grid h3 { margin: 10px 0 6px; }
+    .portfolio-grid p { margin: 0; color: var(--muted); }
+    .cta-band { border: 1px solid var(--line); border-radius: 20px; background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 22%, var(--card)), var(--card)); padding: 20px; display: flex; gap: 14px; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+    .cta-band h2 { margin: 0; font-size: clamp(1.3rem, 2.2vw, 2rem); }
+    .action-feedback {
+      position: fixed;
+      left: 14px;
+      bottom: 14px;
+      z-index: 30;
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--card) 88%, white);
+      color: var(--ink);
+      border-radius: 10px;
+      padding: 10px 12px;
+      max-width: min(92vw, 380px);
+      box-shadow: 0 10px 24px rgba(12, 24, 42, 0.16);
+      font-size: 12px;
+      line-height: 1.4;
+      opacity: 0;
+      transform: translateY(6px);
+      transition: opacity 180ms ease, transform 180ms ease;
+      pointer-events: none;
+    }
+    .action-feedback.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .connection-dock {
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      display: grid;
+      gap: 8px;
+      z-index: 30;
+    }
+    .connection-btn {
+      text-decoration: none;
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--card) 84%, white);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 10px 20px rgba(12, 24, 42, 0.14);
+      transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .connection-btn::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--primary);
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 36%, transparent);
+      animation: ping 2.4s ease infinite;
+    }
+    .connection-btn:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--primary) 42%, var(--line)); box-shadow: 0 14px 22px rgba(12, 24, 42, 0.18); }
+    .connection-btn.active { transform: scale(0.98); }
+    .connection-btn.whatsapp { background: color-mix(in srgb, var(--primary) 18%, var(--card)); }
+    .connection-btn.contact { background: color-mix(in srgb, var(--primary) 24%, var(--card)); }
+    @keyframes ping {
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 36%, transparent); }
+      70% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--primary) 0%, transparent); }
+      100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 0%, transparent); }
+    }
+    
+    .card, .matrix-card, .portfolio-grid article, .logo-cloud, .cta-band { transition: transform 220ms ease, box-shadow 220ms ease; }
+    .card:hover, .matrix-card:hover, .portfolio-grid article:hover { transform: translateY(-3px); }
+    .hero, section { animation: fadeUp 520ms ease both; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    
+    body.theme-corporate { background: #f3f6fb; }
+    body.theme-corporate .hero { border: 1px solid var(--line); border-radius: 16px; padding: 24px; background: var(--card); }
+    body.theme-saas { background: radial-gradient(circle at top, #eef8f6, #f7f9fc 42%); }
+    body.theme-saas .hero { position: relative; overflow: hidden; border-radius: 18px; padding: 30px; border: 1px solid var(--line); background: var(--card); }
+    body.theme-saas .hero::after { content: ""; position: absolute; width: 160px; height: 160px; border-radius: 50%; right: -40px; top: -40px; background: color-mix(in srgb, var(--primary) 24%, white); }
+    body.theme-luxury { background: #f8f6f2; color: #231d14; }
+    body.theme-luxury .container { width: min(1040px, 90%); }
+    body.theme-luxury .hero { border-bottom: 1px solid #e5dbca; padding-bottom: 30px; }
+    body.theme-luxury .card { border-color: #e5dbca; background: #fffcf6; }
+    body.theme-luxury .nav { border-color: #e5dbca; }
+    body.theme-editorial { background: #f6f8fb; }
+    body.theme-editorial .container { width: min(980px, 90%); }
+    body.theme-editorial .hero { grid-template-columns: 1fr; gap: 14px; }
+    body.theme-editorial .hero img { min-height: 360px; }
+    body.theme-editorial .cards { grid-template-columns: 1fr; }
+    @media (max-width: 760px) { .form-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body class="theme-corporate substyle-enterprise">
+  <main class="container">
+    <nav class="nav">
+      <strong>Northpoint Home Services</strong>
+      <div class="menu"><a href="index.html">Home</a><a href="about.html">About</a><a href="services.html">Services</a><a href="contact.html">Contact</a></div>
+    </nav>
+    <section class="hero">
+      <div>
+        <span class="pill">Construction</span>
+        <h1>About Northpoint Home Services</h1>
+        <p class="sub">Serving Your Community with Precision, Integrity, and Unmatched Craftsmanship</p>
+      </div>
+      <img src="https://source.unsplash.com/1600x900/?construction%20company%20office&sig=northpoint-home-services-about" alt="Construction about" />
+    </section>
+
+    <section class="about">
+      <div class="stack">
+        <h2 class="title">Our Mission</h2>
+        <p class="muted">Build a trustworthy local services website with service areas, customer reviews, clear pricing cues, and a quote request funnel.</p>
+        <p class="muted">Northpoint Home Services delivers high-end construction and home improvement services you can rely on—tailored to your needs, transparent in our pricing, and proven to exceed expectations.</p>
+        <p class="muted">We combine strategy, design, and execution to deliver practical business growth with a lead generation focus.</p>
+      </div>
+      <div class="cards"><article class="card"><h3>Trusted Local Experts</h3><p>Fully licensed, insured, and rooted in the community—count on Northpoint for reliable and honest service.</p></article><article class="card"><h3>Transparent, Upfront Pricing</h3><p>No hidden fees—get a detailed estimate outlining every cost before work begins.</p></article><article class="card"><h3>High-Ticket Quality Standards</h3><p>We use only premium materials and experienced craftspeople to ensure lasting results worth your investment.</p></article></div>
+    </section>
+
+    <section>
+      <h2 class="title">How We Deliver</h2>
+      <div class="startup-roadmap"><article class="matrix-card"><h3>1 • Consult &amp; Quote</h3><p>Schedule your free site visit. We’ll assess your project and provide a clear, all-inclusive estimate.</p></article><article class="matrix-card"><h3>2 • Design &amp; Plan</h3><p>Work with our design specialists to finalize plans, materials, and project timelines.</p></article><article class="matrix-card"><h3>3 • Build &amp; Deliver</h3><p>Your dedicated project manager oversees every phase, ensuring superior quality and on-schedule completion.</p></article></div>
+    </section>
+    <section class="org-structure"><h2 class="title">Leadership & Governance</h2><div class="cards"><article class="card"><h3>Client Success</h3><p>Dedicated account leadership and KPI ownership.</p></article><article class="card"><h3>Delivery Office</h3><p>Program oversight with standardized quality controls.</p></article><article class="card"><h3>Specialist Bench</h3><p>Domain experts engaged by initiative complexity.</p></article></div></section>
+    <section class="portfolio-grid">
+        <article><img src="https://source.unsplash.com/1600x900/?construction%20company%20commercial&sig=northpoint-home-services-1" alt="Portfolio one" /><h3>Launch System</h3><p>Positioning, pages, and conversion journey.</p></article>
+        <article><img src="https://source.unsplash.com/1600x900/?construction%20company%20commercial&sig=northpoint-home-services-2" alt="Portfolio two" /><h3>Growth Site</h3><p>Offer architecture and demand capture.</p></article>
+        <article><img src="https://source.unsplash.com/1600x900/?construction%20company%20commercial&sig=northpoint-home-services-3" alt="Portfolio three" /><h3>Brand Refresh</h3><p>Narrative update with modern UX direction.</p></article>
+      </section>
+    <section>
+        <h2 class="title">Client Results</h2>
+        <div class="cards"><article class="card"><p>"Northpoint exceeded our expectations from start to finish. The team was professional, punctual, and delivered a flawless renovation."</p><h3>— J. Michaels – Kingswood Heights</h3></article><article class="card"><p>"We finally found a construction firm we can trust. The transparency and workmanship are second to none."</p><h3>— L. Nguyen – Pinecrest</h3></article><article class="card"><p>"Everything was clear from the beginning. Highly recommend for anyone seeking quality results."</p><h3>— R. Smith – Northbrook</h3></article></div>
+      </section>
+    <section class="cta-band"><h2>Ready to Build? Request Your Free, No-Obligation Estimate Today</h2><a class="cta" data-next="Opening contact page..." href="contact.html">Request a free estimate</a></section>
+    
+    <aside class="connection-dock" aria-label="Connection actions">
+      <a class="connection-btn call" data-conn data-next="Opening phone dialer..." href="tel:+15552468100">Call</a>
+      <a class="connection-btn email" data-conn data-next="Opening email draft..." href="mailto:hello@northpoint-home-services.com">Email</a>
+      <a class="connection-btn whatsapp" data-conn data-next="Opening WhatsApp chat..." href="https://wa.me/15552468100?text=Hi%20Northpoint%20Home%20Services%2C%20I%20want%20to%20discuss%20construction%20website%20services." target="_blank" rel="noreferrer">WhatsApp</a>
+      <a class="connection-btn contact" data-conn data-next="Taking you to contact options..." href="contact.html#connect">Connect</a>
+    </aside>
+    <div id="action-feedback" class="action-feedback" role="status" aria-live="polite"></div>
+    <footer>Northpoint Home Services • Corporate / Enterprise • Goal: Lead Generation • AI website generated by TitoNova Builder</footer>
+  </main>
+  <script>
+    (() => {
+      const feedback = document.getElementById("action-feedback");
+      let clearTimer = null;
+
+      const getDefaultNextAction = (href) => {
+        if (!href) return "Processing action...";
+        if (href.startsWith("tel:")) return "Opening phone dialer...";
+        if (href.startsWith("mailto:")) return "Opening email draft...";
+        if (href.includes("wa.me")) return "Opening WhatsApp chat...";
+        if (href.includes("#connect")) return "Jumping to contact section...";
+        if (href.endsWith(".html")) return "Opening next page...";
+        return "Processing action...";
+      };
+
+      const showFeedback = (message) => {
+        if (!feedback) return;
+        feedback.textContent = message;
+        feedback.classList.add("show");
+        if (clearTimer) window.clearTimeout(clearTimer);
+        clearTimer = window.setTimeout(() => feedback.classList.remove("show"), 2200);
+      };
+
+      const links = Array.from(document.querySelectorAll("a, button"));
+      links.forEach((link) => {
+        link.addEventListener("click", () => {
+          const next = link.getAttribute("data-next") || getDefaultNextAction(link.getAttribute("href"));
+          showFeedback(next);
+          link.classList.add("active");
+          window.setTimeout(() => link.classList.remove("active"), 180);
+        });
+      });
+
+      const forms = Array.from(document.querySelectorAll("[data-lead-form]"));
+      forms.forEach((form) => {
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const data = new FormData(form);
+          const name = data.get("fullName");
+          showFeedback(
+            "Thanks " +
+              (name || "there") +
+              " - your Construction request was received. We will contact you shortly."
+          );
+          form.reset();
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

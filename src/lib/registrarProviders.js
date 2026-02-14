@@ -3,8 +3,8 @@ export const REGISTRAR_PROVIDERS = [
     key: "namecheap",
     label: "Namecheap",
     requirements: [
-      "Server-side API key and username",
-      "Provider adapter for search/purchase/listing",
+      "Gateway env: NAMECHEAP_API_USER, NAMECHEAP_API_KEY, NAMECHEAP_USERNAME, NAMECHEAP_CLIENT_IP",
+      "Contact profile env vars required for live purchases",
     ],
   },
   {

@@ -17,6 +17,28 @@ const BRIDGE_URLS = {
   cloudflare: process.env.CLOUDFLARE_ADAPTER_URL || "",
 };
 
+const NAMECHEAP_CONFIG = {
+  apiUser: process.env.NAMECHEAP_API_USER || "",
+  apiKey: process.env.NAMECHEAP_API_KEY || "",
+  userName: process.env.NAMECHEAP_USERNAME || "",
+  clientIp: process.env.NAMECHEAP_CLIENT_IP || "",
+  sandbox: String(process.env.NAMECHEAP_SANDBOX || "").toLowerCase() === "true",
+  years: Number(process.env.NAMECHEAP_DEFAULT_YEARS || 1),
+};
+
+const NAMECHEAP_CONTACT_PROFILE = {
+  firstName: process.env.NAMECHEAP_CONTACT_FIRST_NAME || "",
+  lastName: process.env.NAMECHEAP_CONTACT_LAST_NAME || "",
+  address1: process.env.NAMECHEAP_CONTACT_ADDRESS1 || "",
+  city: process.env.NAMECHEAP_CONTACT_CITY || "",
+  stateProvince: process.env.NAMECHEAP_CONTACT_STATE || "",
+  postalCode: process.env.NAMECHEAP_CONTACT_POSTAL_CODE || "",
+  country: process.env.NAMECHEAP_CONTACT_COUNTRY || "",
+  phone: process.env.NAMECHEAP_CONTACT_PHONE || "",
+  emailAddress: process.env.NAMECHEAP_CONTACT_EMAIL || "",
+  organizationName: process.env.NAMECHEAP_CONTACT_ORG || "",
+};
+
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -70,6 +92,255 @@ const readJsonBody = async (req) => {
 
 const hash = (value) =>
   [...String(value || "")].reduce((acc, ch) => acc + ch.charCodeAt(0) * 17, 13);
+
+const hasNamecheapCredentials = () =>
+  Boolean(
+    NAMECHEAP_CONFIG.apiUser &&
+      NAMECHEAP_CONFIG.apiKey &&
+      NAMECHEAP_CONFIG.userName &&
+      NAMECHEAP_CONFIG.clientIp
+  );
+
+const hasNamecheapContactProfile = () =>
+  Boolean(
+    NAMECHEAP_CONTACT_PROFILE.firstName &&
+      NAMECHEAP_CONTACT_PROFILE.lastName &&
+      NAMECHEAP_CONTACT_PROFILE.address1 &&
+      NAMECHEAP_CONTACT_PROFILE.city &&
+      NAMECHEAP_CONTACT_PROFILE.stateProvince &&
+      NAMECHEAP_CONTACT_PROFILE.postalCode &&
+      NAMECHEAP_CONTACT_PROFILE.country &&
+      NAMECHEAP_CONTACT_PROFILE.phone &&
+      NAMECHEAP_CONTACT_PROFILE.emailAddress
+  );
+
+const NAMECHEAP_PRICE_BY_TLD = {
+  ".com": 14.99,
+  ".net": 16.49,
+  ".org": 15.99,
+  ".io": 39,
+  ".co": 24,
+  ".ai": 79,
+  ".app": 18.49,
+  ".dev": 14.99,
+  ".studio": 29,
+};
+
+const priceForDomain = (domain) => {
+  const tld = `.${String(domain || "").split(".").pop() || ""}`.toLowerCase();
+  return NAMECHEAP_PRICE_BY_TLD[tld] || 19.99;
+};
+
+const decodeXml = (value) =>
+  String(value || "")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&apos;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
+
+const parseXmlAttributes = (raw) => {
+  const attrs = {};
+  const regex = /([A-Za-z0-9:_-]+)="([^"]*)"/g;
+  let match;
+  while ((match = regex.exec(raw))) {
+    attrs[match[1]] = decodeXml(match[2]);
+  }
+  return attrs;
+};
+
+const extractApiErrors = (xml) => {
+  const errors = [];
+  const regex = /<Error\b[^>]*>([\s\S]*?)<\/Error>/g;
+  let match;
+  while ((match = regex.exec(xml))) {
+    const value = decodeXml(match[1]).trim();
+    if (value) errors.push(value);
+  }
+  return errors;
+};
+
+const extractTextTag = (xml, tagName) => {
+  const regex = new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "i");
+  const match = xml.match(regex);
+  return match ? decodeXml(match[1]).trim() : "";
+};
+
+const namecheapApiUrl = () =>
+  NAMECHEAP_CONFIG.sandbox
+    ? "https://api.sandbox.namecheap.com/xml.response"
+    : "https://api.namecheap.com/xml.response";
+
+const callNamecheap = async (command, extraParams = {}) => {
+  if (!hasNamecheapCredentials()) {
+    const error = new Error(
+      "Namecheap credentials are missing. Set NAMECHEAP_API_USER, NAMECHEAP_API_KEY, NAMECHEAP_USERNAME, NAMECHEAP_CLIENT_IP."
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const params = new URLSearchParams({
+    ApiUser: NAMECHEAP_CONFIG.apiUser,
+    ApiKey: NAMECHEAP_CONFIG.apiKey,
+    UserName: NAMECHEAP_CONFIG.userName,
+    ClientIp: NAMECHEAP_CONFIG.clientIp,
+    Command: command,
+    ...Object.fromEntries(
+      Object.entries(extraParams)
+        .filter(([, value]) => value !== undefined && value !== null)
+        .map(([key, value]) => [key, String(value)])
+    ),
+  });
+
+  const response = await fetch(`${namecheapApiUrl()}?${params.toString()}`);
+  const xml = await response.text();
+
+  if (!response.ok) {
+    const error = new Error(`Namecheap API HTTP ${response.status}`);
+    error.statusCode = response.status;
+    throw error;
+  }
+
+  const statusAttr = (xml.match(/<ApiResponse\b[^>]*Status="([^"]+)"/i) || [])[1] || "";
+  if (statusAttr.toUpperCase() !== "OK") {
+    const errors = extractApiErrors(xml);
+    const error = new Error(errors[0] || "Namecheap API returned non-OK status");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return xml;
+};
+
+const buildNamecheapContactParams = () => {
+  if (!hasNamecheapContactProfile()) {
+    const error = new Error(
+      "Namecheap contact profile is incomplete. Set NAMECHEAP_CONTACT_FIRST_NAME, LAST_NAME, ADDRESS1, CITY, STATE, POSTAL_CODE, COUNTRY, PHONE, EMAIL."
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const contactKeys = ["Registrant", "Tech", "Admin", "AuxBilling"];
+  const params = {};
+
+  contactKeys.forEach((prefix) => {
+    params[`${prefix}FirstName`] = NAMECHEAP_CONTACT_PROFILE.firstName;
+    params[`${prefix}LastName`] = NAMECHEAP_CONTACT_PROFILE.lastName;
+    params[`${prefix}Address1`] = NAMECHEAP_CONTACT_PROFILE.address1;
+    params[`${prefix}City`] = NAMECHEAP_CONTACT_PROFILE.city;
+    params[`${prefix}StateProvince`] = NAMECHEAP_CONTACT_PROFILE.stateProvince;
+    params[`${prefix}PostalCode`] = NAMECHEAP_CONTACT_PROFILE.postalCode;
+    params[`${prefix}Country`] = NAMECHEAP_CONTACT_PROFILE.country;
+    params[`${prefix}Phone`] = NAMECHEAP_CONTACT_PROFILE.phone;
+    params[`${prefix}EmailAddress`] = NAMECHEAP_CONTACT_PROFILE.emailAddress;
+    if (NAMECHEAP_CONTACT_PROFILE.organizationName) {
+      params[`${prefix}OrganizationName`] = NAMECHEAP_CONTACT_PROFILE.organizationName;
+    }
+  });
+
+  return params;
+};
+
+const namecheapActions = {
+  health: async () => {
+    const xml = await callNamecheap("namecheap.users.getBalances");
+    const available = extractTextTag(xml, "AvailableBalance");
+    return {
+      provider: "namecheap",
+      sandbox: NAMECHEAP_CONFIG.sandbox,
+      availableBalance: available || "unknown",
+    };
+  },
+
+  search: async ({ keyword, tlds }) => {
+    if (!keyword) throw new Error("keyword is required");
+    const safeTlds = Array.isArray(tlds) && tlds.length > 0 ? tlds : [".com", ".net"];
+    const domainList = safeTlds.map((tld) => `${keyword}${tld}`).join(",");
+
+    const xml = await callNamecheap("namecheap.domains.check", {
+      DomainList: domainList,
+    });
+
+    const matches = [...xml.matchAll(/<DomainCheckResult\b([^>]*)\/>/g)];
+    const byDomain = new Map();
+
+    matches.forEach((match) => {
+      const attrs = parseXmlAttributes(match[1] || "");
+      const domain = String(attrs.Domain || "").toLowerCase();
+      if (!domain) return;
+      const premiumPrice = Number(attrs.PremiumRegistrationPrice || 0);
+      byDomain.set(domain, {
+        name: domain,
+        available: String(attrs.Available || "").toLowerCase() === "true",
+        price: premiumPrice > 0 ? premiumPrice : priceForDomain(domain),
+        currency: "USD",
+      });
+    });
+
+    const fallback = safeTlds.map((tld) => {
+      const domain = `${String(keyword || "").toLowerCase()}${String(tld || "").toLowerCase()}`;
+      return (
+        byDomain.get(domain) || {
+          name: domain,
+          available: false,
+          price: priceForDomain(domain),
+          currency: "USD",
+        }
+      );
+    });
+
+    return { domains: fallback };
+  },
+
+  purchase: async ({ domains }) => {
+    if (!Array.isArray(domains) || domains.length === 0) {
+      throw new Error("domains must be a non-empty array");
+    }
+
+    const years = Number.isFinite(NAMECHEAP_CONFIG.years) && NAMECHEAP_CONFIG.years > 0
+      ? Math.floor(NAMECHEAP_CONFIG.years)
+      : 1;
+    const contact = buildNamecheapContactParams();
+    const purchased = [];
+
+    for (const domainName of domains) {
+      const xml = await callNamecheap("namecheap.domains.create", {
+        DomainName: domainName,
+        Years: years,
+        ...contact,
+      });
+
+      const charged = Number(extractTextTag(xml, "ChargedAmount") || 0);
+      purchased.push({
+        name: String(domainName || "").toLowerCase(),
+        price: charged > 0 ? charged : Number((priceForDomain(domainName) * years).toFixed(2)),
+        available: false,
+        currency: "USD",
+      });
+    }
+
+    return { purchased };
+  },
+
+  "seller/activate": async ({ margin }) => ({
+    ok: true,
+    provider: "namecheap",
+    margin: Number(margin || 0),
+    message: "Seller mode is managed by TitoNova inventory settings.",
+  }),
+
+  "seller/listing": async ({ domain, listed, resalePrice }) => ({
+    ok: true,
+    provider: "namecheap",
+    listing: {
+      domain,
+      listed: Boolean(listed),
+      resalePrice: Number(resalePrice || 0),
+    },
+  }),
+};
 
 const buildMockDomains = (keyword, tlds) => {
   const base = String(keyword || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -242,6 +513,11 @@ const registrarActions = {
       return { ok: true, mode: "mock" };
     }
 
+    if (provider === "namecheap" && hasNamecheapCredentials()) {
+      const data = await namecheapActions.health();
+      return { ok: true, mode: "native", ...data };
+    }
+
     if (!BRIDGE_URLS[provider]) {
       return { ok: false, mode: "unconfigured", message: `${provider} adapter URL missing` };
     }
@@ -257,6 +533,10 @@ const registrarActions = {
 
     if (provider === "mock") {
       return { domains: buildMockDomains(keyword, safeTlds) };
+    }
+
+    if (provider === "namecheap" && hasNamecheapCredentials()) {
+      return namecheapActions.search({ keyword, tlds: safeTlds });
     }
 
     return callBridge(provider, "search", { keyword, tlds: safeTlds });
@@ -279,6 +559,10 @@ const registrarActions = {
       };
     }
 
+    if (provider === "namecheap" && hasNamecheapCredentials()) {
+      return namecheapActions.purchase({ domains });
+    }
+
     return callBridge(provider, "purchase", { domains });
   },
 
@@ -286,6 +570,10 @@ const registrarActions = {
     if (!provider) throw new Error("provider is required");
     if (provider === "mock") {
       return { ok: true, provider, margin: Number(margin || 0) };
+    }
+
+    if (provider === "namecheap" && hasNamecheapCredentials()) {
+      return namecheapActions["seller/activate"]({ margin });
     }
 
     return callBridge(provider, "seller/activate", { margin: Number(margin || 0) });
@@ -304,6 +592,10 @@ const registrarActions = {
           resalePrice: Number(resalePrice || 0),
         },
       };
+    }
+
+    if (provider === "namecheap" && hasNamecheapCredentials()) {
+      return namecheapActions["seller/listing"]({ domain, listed, resalePrice });
     }
 
     return callBridge(provider, "seller/listing", {

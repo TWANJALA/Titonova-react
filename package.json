@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:gateway": "node server/registrarGateway.mjs",
+    "dev:gateway": "node --env-file=.env.local server/registrarGateway.mjs",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"

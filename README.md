@@ -40,13 +40,38 @@ Published files are stored locally in:
 A gateway scaffold is included at `server/registrarGateway.mjs`.
 
 - `mock` provider works immediately for local development.
-- `namecheap`, `godaddy`, and `cloudflare` route through adapter URLs so secrets stay server-side.
+- `namecheap` supports native gateway integration (no separate adapter required) when credentials are set.
+- `godaddy` and `cloudflare` route through adapter URLs so secrets stay server-side.
 
 Set adapter URLs in your server environment:
 
 - `NAMECHEAP_ADAPTER_URL`
 - `GODADDY_ADAPTER_URL`
 - `CLOUDFLARE_ADAPTER_URL`
+
+### Native Namecheap setup
+
+If these are configured, Namecheap calls go directly from `registrarGateway.mjs` to Namecheap XML API:
+
+- `NAMECHEAP_API_USER`
+- `NAMECHEAP_API_KEY`
+- `NAMECHEAP_USERNAME`
+- `NAMECHEAP_CLIENT_IP`
+- `NAMECHEAP_SANDBOX` (`true` for sandbox, `false` for production)
+- `NAMECHEAP_DEFAULT_YEARS` (optional, default `1`)
+
+For purchases, contact fields are required and are reused for Registrant/Admin/Tech/AuxBilling:
+
+- `NAMECHEAP_CONTACT_FIRST_NAME`
+- `NAMECHEAP_CONTACT_LAST_NAME`
+- `NAMECHEAP_CONTACT_ADDRESS1`
+- `NAMECHEAP_CONTACT_CITY`
+- `NAMECHEAP_CONTACT_STATE`
+- `NAMECHEAP_CONTACT_POSTAL_CODE`
+- `NAMECHEAP_CONTACT_COUNTRY`
+- `NAMECHEAP_CONTACT_PHONE`
+- `NAMECHEAP_CONTACT_EMAIL`
+- `NAMECHEAP_CONTACT_ORG` (optional)
 
 Optional gateway auth:
 
