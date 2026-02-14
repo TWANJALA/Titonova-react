@@ -1,0 +1,4202 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import "./App.css";
+import {
+  activateSellerLive,
+  checkRegistrarHealth,
+  purchaseDomainsLive,
+  searchDomainsLive,
+  updateListingLive,
+} from "./lib/registrarClient";
+import {
+  listHostedProjects,
+  publishProjectLive,
+  unpublishProjectLive,
+} from "./lib/hostingClient";
+import {
+  getRegistrarProviderByKey,
+  REGISTRAR_PROVIDERS,
+} from "./lib/registrarProviders";
+
+const INDUSTRIES = [
+  { key: "agency", label: "Digital Agency", query: "creative agency team" },
+  { key: "restaurant", label: "Restaurant", query: "modern restaurant interior" },
+  { key: "healthcare", label: "Healthcare", query: "modern healthcare clinic" },
+  { key: "real-estate", label: "Real Estate", query: "luxury real estate" },
+  { key: "legal", label: "Law Firm", query: "law office professionals" },
+  { key: "construction", label: "Construction", query: "construction company" },
+  { key: "education", label: "Education", query: "education campus students" },
+  { key: "fitness", label: "Fitness", query: "fitness studio training" },
+  { key: "travel", label: "Travel", query: "travel destination" },
+  { key: "finance", label: "Finance", query: "finance consulting team" },
+];
+
+const TONES = ["Professional", "Modern", "Bold", "Minimal", "Friendly"];
+const GOALS = ["Lead Generation", "Bookings", "Ecommerce", "Brand Awareness"];
+const FONT_THEMES = {
+  sans: '"DM Sans", "Segoe UI", system-ui, sans-serif',
+  serif: '"Merriweather", Georgia, "Times New Roman", serif',
+  mono: '"IBM Plex Mono", "JetBrains Mono", monospace',
+};
+const THEME_PRESETS = [
+  { key: "corporate", label: "Corporate" },
+  { key: "saas", label: "SaaS" },
+  { key: "luxury", label: "Luxury" },
+  { key: "editorial", label: "Editorial" },
+];
+const THEME_SUBSTYLES = {
+  corporate: [
+    { key: "enterprise", label: "Enterprise" },
+    { key: "startup", label: "Startup" },
+  ],
+  saas: [
+    { key: "product-led", label: "Product-led" },
+    { key: "developer", label: "Developer-first" },
+  ],
+  luxury: [
+    { key: "hotel", label: "Hotel" },
+    { key: "jewelry", label: "Jewelry" },
+  ],
+  editorial: [
+    { key: "magazine", label: "Magazine" },
+    { key: "journal", label: "Journal" },
+  ],
+};
+const VISUAL_STYLES = [
+  { key: "glass", label: "Glass Gradient" },
+  { key: "vibrant", label: "Vibrant Neon" },
+  { key: "editorial", label: "Soft Editorial" },
+];
+const LLM_MODEL_PRESETS = [
+  {
+    key: "flagship",
+    label: "Flagship Quality",
+    description: "Highest quality for conversion copy and brand voice.",
+    models: ["gpt-4.1", "gpt-4o"],
+  },
+  {
+    key: "reasoning",
+    label: "Reasoning Focus",
+    description: "Stronger structured planning and strategy language.",
+    models: ["o4-mini", "gpt-4.1"],
+  },
+  {
+    key: "balanced",
+    label: "Balanced",
+    description: "Best cost/performance for most website generation.",
+    models: ["gpt-4.1-mini", "gpt-4o-mini", "gpt-4o"],
+  },
+  {
+    key: "speed",
+    label: "Fast Drafting",
+    description: "Fastest generation for rapid iteration.",
+    models: ["gpt-4o-mini", "gpt-4.1-mini"],
+  },
+];
+
+const getLlmPresetByKey = (key) =>
+  LLM_MODEL_PRESETS.find((preset) => preset.key === key) || LLM_MODEL_PRESETS[0];
+
+const dedupeModels = (values) => {
+  const seen = new Set();
+  return values.filter((value) => {
+    const key = String(value || "").trim();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const DEFAULT_INDUSTRY = INDUSTRIES[0];
+const STORAGE_KEY = "titonova_ai_projects";
+const DRAFT_STORAGE_KEY = "titonova_builder_draft_v1";
+const DEFAULT_PAGE = "index.html";
+
+const PAGE_CONFIG = [
+  { key: "index.html", label: "Home" },
+  { key: "about.html", label: "About" },
+  { key: "services.html", label: "Services" },
+  { key: "contact.html", label: "Contact" },
+];
+const DOMAIN_STORAGE_KEY = "titonova_domain_store";
+const DOMAIN_TLDS = [
+  { tld: ".com", price: 14.99 },
+  { tld: ".io", price: 39.0 },
+  { tld: ".ai", price: 79.0 },
+  { tld: ".co", price: 24.0 },
+  { tld: ".net", price: 16.0 },
+  { tld: ".studio", price: 29.0 },
+];
+const BLOCK_TEMPLATES = {
+  feature_grid: {
+    label: "Feature Grid",
+    html: `<section>
+  <h2 class="title">Feature Highlights</h2>
+  <div class="cards">
+    <article class="card"><h3>Fast Launch</h3><p>Ship quickly with conversion-focused structure.</p></article>
+    <article class="card"><h3>Clear Messaging</h3><p>Position your value in language customers understand.</p></article>
+    <article class="card"><h3>Growth Ready</h3><p>Designed for scaling traffic and lead capture.</p></article>
+  </div>
+</section>`,
+  },
+  trust_metrics: {
+    label: "Trust Metrics",
+    html: `<section class="metrics-strip">
+  <article><strong>1,200+</strong><span>Projects launched</span></article>
+  <article><strong>96%</strong><span>Retention rate</span></article>
+  <article><strong>4.9/5</strong><span>Client satisfaction</span></article>
+</section>`,
+  },
+  cta_band: {
+    label: "CTA Band",
+    html: `<section class="cta-band">
+  <h2>Ready to grow faster?</h2>
+  <a class="cta" href="contact.html">Start your project</a>
+</section>`,
+  },
+  testimonial_row: {
+    label: "Testimonial Row",
+    html: `<section>
+  <h2 class="title">Testimonials</h2>
+  <div class="cards">
+    <article class="card"><p>"The new site transformed our lead quality."</p><h3>— Growth Lead</h3></article>
+    <article class="card"><p>"Clean execution, clear strategy, measurable results."</p><h3>— Founder</h3></article>
+    <article class="card"><p>"Best redesign decision we made this year."</p><h3>— Operations Manager</h3></article>
+  </div>
+</section>`,
+  },
+  faq_block: {
+    label: "FAQ Block",
+    html: `<section>
+  <h2 class="title">Frequently Asked Questions</h2>
+  <div class="cards">
+    <article class="card"><h3>How long does this take?</h3><p>Most launches complete within 1-2 weeks.</p></article>
+    <article class="card"><h3>Can we edit later?</h3><p>Yes, every section can be updated anytime.</p></article>
+    <article class="card"><h3>Do you support SEO?</h3><p>Yes, metadata and structure are built for discoverability.</p></article>
+  </div>
+</section>`,
+  },
+};
+
+const escapeHtml = (value) =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+
+const slugify = (value) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 70);
+
+const imageFor = (query, seed) =>
+  `https://source.unsplash.com/1600x900/?${encodeURIComponent(query)}&sig=${seed}`;
+
+const normalizeDomain = (value) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/.*$/, "")
+    .replace(/\s+/g, "");
+
+const domainHash = (value) =>
+  value.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
+
+const isDomainLikelyAvailable = (domain) => domainHash(domain) % 5 !== 0;
+
+const buildDomainSuggestions = (seed) => {
+  const base = slugify(seed || "");
+  if (!base) return [];
+
+  return DOMAIN_TLDS.map(({ tld, price }, idx) => {
+    const name = `${base}${idx > 0 ? idx : ""}${tld}`;
+    return {
+      name,
+      price,
+      available: isDomainLikelyAvailable(name),
+    };
+  });
+};
+
+const getDefaultSubstyle = (themePreset) => THEME_SUBSTYLES[themePreset]?.[0]?.key || "";
+
+const getSubstyleLabel = (themePreset, substylePreset) =>
+  THEME_SUBSTYLES[themePreset]?.find((item) => item.key === substylePreset)?.label || "";
+
+const scoreBrief = ({ businessName, prompt, seoTitle, ctaText, includeFaq, includePricing }) => {
+  let score = 40;
+  if (businessName.trim().length >= 3) score += 10;
+  if (prompt.trim().length >= 80) score += 20;
+  if (prompt.trim().length >= 150) score += 10;
+  if (seoTitle.trim().length >= 20) score += 8;
+  if (ctaText.trim().length >= 8) score += 6;
+  if (includeFaq) score += 3;
+  if (includePricing) score += 3;
+  return Math.min(score, 100);
+};
+
+const parseJsonSafe = (value) => {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+const extractResponseText = (payload) => {
+  if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text;
+  }
+
+  const contentBlocks = payload?.output?.flatMap((item) => item.content || []) || [];
+  const textParts = contentBlocks
+    .map((block) => block?.text || block?.output_text || "")
+    .filter(Boolean);
+
+  return textParts.join("\n").trim();
+};
+
+const buildDefaultLlmContent = (safeName, safePrompt) => ({
+  heroHeadline: `${safeName} that converts visitors into clients`,
+  heroSubhead: safePrompt,
+  brandPromise:
+    "A conversion-focused digital experience designed to communicate value fast and move buyers to action.",
+  services: [
+    { title: "Strategy", description: "Clear growth roadmap tailored for your audience and market." },
+    { title: "Execution", description: "End-to-end project delivery with measurable milestones." },
+    { title: "Optimization", description: "Continuous improvements for conversion, speed, and SEO." },
+  ],
+  valueProps: [
+    { title: "Positioning Clarity", description: "Messaging framework aligned to buyer intent and market context." },
+    { title: "Conversion Architecture", description: "Every section is designed to guide visitors toward high-intent actions." },
+    { title: "Scale-Ready Foundation", description: "SEO, analytics, and reusable blocks prepared for growth iterations." },
+  ],
+  process: [
+    { step: "01", title: "Discover", description: "Map audience pain points, offers, and competitive gaps." },
+    { step: "02", title: "Build", description: "Develop conversion-first pages with persuasive structure and UX." },
+    { step: "03", title: "Optimize", description: "Track outcomes, refine messaging, and improve funnel performance." },
+  ],
+  stats: [
+    { value: "46%", label: "Average lift in qualified inquiries" },
+    { value: "2.1x", label: "Faster lead-response cycle after launch" },
+    { value: "96%", label: "Client retention in long-term engagements" },
+  ],
+  testimonials: [
+    { quote: "The new site increased qualified inquiries by 46%.", author: "Operations Director" },
+    { quote: "Fast delivery and clear ROI from day one.", author: "Marketing Lead" },
+    { quote: "Our conversion funnel is finally predictable.", author: "Founder" },
+  ],
+  faqs: [
+    { question: "How quickly can we launch?", answer: "Most projects go live in 1-2 weeks." },
+    { question: "Can we edit content ourselves?", answer: "Yes, every page is structured for easy updates." },
+    { question: "Do you support SEO?", answer: "Built-in semantic structure and metadata are included." },
+  ],
+  closingCtaHeadline: "Ready to turn your website into a predictable growth channel?",
+});
+
+const INDUSTRY_CONTACT_FORMS = {
+  agency: {
+    title: "Start Your Agency Growth Project",
+    serviceLabel: "Primary need",
+    serviceOptions: ["Website redesign", "Lead generation funnel", "Brand positioning", "Retainer support"],
+    priorityLabel: "Top priority",
+    priorityOptions: ["Increase qualified leads", "Improve conversion rate", "Launch faster", "Raise average deal size"],
+  },
+  restaurant: {
+    title: "Plan Your Restaurant Growth",
+    serviceLabel: "What do you need?",
+    serviceOptions: ["Reservations website", "Menu + ordering flow", "Local SEO setup", "Event promotions"],
+    priorityLabel: "Primary outcome",
+    priorityOptions: ["More bookings", "More online orders", "Better local visibility", "Higher repeat customers"],
+  },
+  healthcare: {
+    title: "Request a Healthcare Website Consultation",
+    serviceLabel: "Project type",
+    serviceOptions: ["Clinic website", "Appointment flow", "Patient education pages", "Practice rebrand"],
+    priorityLabel: "Compliance focus",
+    priorityOptions: ["Privacy-first UX", "Trust and credibility", "Accessible patient journey", "Provider profile optimization"],
+  },
+  "real-estate": {
+    title: "Launch Your Real Estate Lead Engine",
+    serviceLabel: "Campaign focus",
+    serviceOptions: ["Agent site", "Property showcase pages", "Lead capture funnels", "Brokerage rebrand"],
+    priorityLabel: "Lead source",
+    priorityOptions: ["Buyer leads", "Seller leads", "Investor inquiries", "Luxury segment clients"],
+  },
+  legal: {
+    title: "Start Your Law Firm Intake Upgrade",
+    serviceLabel: "Practice area focus",
+    serviceOptions: ["Personal injury", "Corporate law", "Family law", "Criminal defense"],
+    priorityLabel: "Business goal",
+    priorityOptions: ["More consultations", "Higher-value cases", "Better trust signals", "Stronger local rankings"],
+  },
+  construction: {
+    title: "Build a Construction Lead Pipeline",
+    serviceLabel: "Service line",
+    serviceOptions: ["Residential projects", "Commercial projects", "Remodeling", "General contracting"],
+    priorityLabel: "Project objective",
+    priorityOptions: ["More quote requests", "Higher project value", "Faster sales cycle", "Regional expansion"],
+  },
+  education: {
+    title: "Create an Education Enrollment Experience",
+    serviceLabel: "Institution type",
+    serviceOptions: ["School website", "Course catalog", "Admissions flow", "Learning portal landing pages"],
+    priorityLabel: "Enrollment goal",
+    priorityOptions: ["More applications", "Better parent communication", "Program awareness", "Higher student retention"],
+  },
+  fitness: {
+    title: "Scale Your Fitness Studio Online",
+    serviceLabel: "Program focus",
+    serviceOptions: ["Studio website", "Class schedule booking", "Trainer profiles", "Membership sales pages"],
+    priorityLabel: "Growth goal",
+    priorityOptions: ["More memberships", "More class bookings", "Better retention", "Premium package sales"],
+  },
+  travel: {
+    title: "Design a Travel Booking Experience",
+    serviceLabel: "Travel product",
+    serviceOptions: ["Tour packages", "Destination pages", "Booking funnels", "Luxury travel offers"],
+    priorityLabel: "Commercial goal",
+    priorityOptions: ["More inquiries", "Higher booking volume", "Higher booking value", "Stronger repeat bookings"],
+  },
+  finance: {
+    title: "Launch a Finance Conversion Website",
+    serviceLabel: "Financial service",
+    serviceOptions: ["Advisory website", "Wealth management pages", "Consultation funnels", "Compliance-first content"],
+    priorityLabel: "Revenue objective",
+    priorityOptions: ["More qualified appointments", "Higher trust and authority", "Upsell premium services", "Improve conversion quality"],
+  },
+};
+
+const getIndustryContactFormConfig = (industryKey, industryLabel) =>
+  INDUSTRY_CONTACT_FORMS[industryKey] || {
+    title: `Start Your ${industryLabel} Project`,
+    serviceLabel: "Service needed",
+    serviceOptions: ["Consultation", "Website build", "Growth strategy", "Ongoing support"],
+    priorityLabel: "Primary goal",
+    priorityOptions: ["More leads", "More sales", "Faster launch", "Brand growth"],
+  };
+
+const buildWebsiteFiles = ({
+  businessName,
+  industry,
+  tone,
+  prompt,
+  goal,
+  themePreset,
+  substylePreset,
+  brandColor,
+  fontTheme,
+  ctaText,
+  seoTitle,
+  customDomain,
+  includePricing,
+  includeTestimonials,
+  includeFaq,
+  includeBlog,
+  visualStyle,
+  includePortfolio,
+  includeLogoCloud,
+  enableMotion,
+  llmContent,
+}) => {
+  const rawName = businessName || "Your Business";
+  const safeName = escapeHtml(rawName);
+  const safeIndustry = escapeHtml(industry.label);
+  const safeTone = escapeHtml(tone);
+  const safeGoal = escapeHtml(goal);
+  const safeTheme = escapeHtml(
+    THEME_PRESETS.find((preset) => preset.key === themePreset)?.label || "Corporate"
+  );
+  const defaultSubstyle = getDefaultSubstyle(themePreset || "corporate");
+  const activeSubstyle = THEME_SUBSTYLES[themePreset || "corporate"]?.some(
+    (item) => item.key === substylePreset
+  )
+    ? substylePreset
+    : defaultSubstyle;
+  const safeSubstyle = escapeHtml(
+    getSubstyleLabel(themePreset || "corporate", activeSubstyle) || "Standard"
+  );
+  const safePrompt = escapeHtml(prompt || `Trusted ${industry.label.toLowerCase()} services.`);
+  const safeCta = escapeHtml(ctaText || "Book a strategy call");
+  const safeSeoTitle = escapeHtml(seoTitle || `${rawName} | ${industry.label} Services`);
+  const brandSlug = slugify(rawName || industry.label || "website");
+  const normalizedDomain = normalizeDomain(customDomain || "");
+  const domainHost = normalizedDomain || `${brandSlug || "example"}.com`;
+  const domainUrl = `https://${domainHost}`;
+  const safeBrandColor = /^#[0-9A-Fa-f]{6}$/.test(brandColor) ? brandColor : "#14b987";
+  const safeFontStack = FONT_THEMES[fontTheme] || FONT_THEMES.sans;
+  const safeVisualStyle = VISUAL_STYLES.some((style) => style.key === visualStyle)
+    ? visualStyle
+    : "glass";
+  const activeTheme = THEME_PRESETS.some((preset) => preset.key === themePreset)
+    ? themePreset
+    : "corporate";
+  const variantKey = `${activeTheme}:${activeSubstyle}`;
+
+  const heroImage = imageFor(`${industry.query} website hero`, `${brandSlug}-hero`);
+  const aboutImage = imageFor(`${industry.query} office`, `${brandSlug}-about`);
+  const gallery = [1, 2, 3].map((index) =>
+    imageFor(`${industry.query} commercial`, `${brandSlug}-${index}`)
+  );
+
+  const pageLinks = PAGE_CONFIG.map((page) => `<a href="${page.key}">${page.label}</a>`).join("");
+  const pageChips = PAGE_CONFIG.map((page) => `<span>${page.label}</span>`).join("");
+  const contactEmail = `hello@${slugify(rawName) || "business"}.com`;
+  const contactPhone = "+1 (555) 246-8100";
+  const contactPhoneHref = "+15552468100";
+  const whatsappHref = `https://wa.me/15552468100?text=${encodeURIComponent(
+    `Hi ${rawName}, I want to discuss ${industry.label.toLowerCase()} website services.`
+  )}`;
+
+  const stylePalette = {
+    glass: {
+      bg: "#f3f8ff",
+      card: "rgba(255,255,255,0.8)",
+      line: "rgba(151, 173, 207, 0.42)",
+      heroFx: "radial-gradient(circle at 12% 10%, rgba(20, 185, 135, 0.22), transparent 35%), radial-gradient(circle at 88% 6%, rgba(24, 255, 156, 0.18), transparent 30%)",
+      radius: "20px",
+    },
+    vibrant: {
+      bg: "#0d1220",
+      card: "rgba(20, 28, 48, 0.88)",
+      line: "rgba(130, 232, 192, 0.32)",
+      heroFx: "radial-gradient(circle at 6% 10%, rgba(20, 185, 135, 0.36), transparent 34%), radial-gradient(circle at 96% 12%, rgba(70, 130, 255, 0.34), transparent 38%)",
+      radius: "18px",
+    },
+    editorial: {
+      bg: "#fbfaf7",
+      card: "#ffffff",
+      line: "rgba(190, 177, 156, 0.38)",
+      heroFx: "radial-gradient(circle at 20% 12%, rgba(232, 220, 196, 0.45), transparent 35%), radial-gradient(circle at 80% 6%, rgba(212, 230, 225, 0.42), transparent 36%)",
+      radius: "12px",
+    },
+  }[safeVisualStyle];
+  const fallbackLlm = buildDefaultLlmContent(safeName, safePrompt);
+  const aiCopy = llmContent || fallbackLlm;
+
+  const heroHeadline = escapeHtml(aiCopy.heroHeadline || fallbackLlm.heroHeadline);
+  const heroSubhead = escapeHtml(aiCopy.heroSubhead || fallbackLlm.heroSubhead);
+  const brandPromise = escapeHtml(aiCopy.brandPromise || fallbackLlm.brandPromise);
+  const closingCtaHeadline = escapeHtml(aiCopy.closingCtaHeadline || fallbackLlm.closingCtaHeadline);
+
+  const aiServices =
+    Array.isArray(aiCopy.services) && aiCopy.services.length >= 3
+      ? aiCopy.services
+      : fallbackLlm.services;
+  const serviceCardsMarkup = aiServices
+    .slice(0, 3)
+    .map(
+      (item) =>
+        `<article class="card"><h3>${escapeHtml(item.title || "Service")}</h3><p>${escapeHtml(
+          item.description || "Service description"
+        )}</p></article>`
+    )
+    .join("");
+
+  const aiValueProps =
+    Array.isArray(aiCopy.valueProps) && aiCopy.valueProps.length >= 3
+      ? aiCopy.valueProps
+      : fallbackLlm.valueProps;
+  const valuePropsMarkup = aiValueProps
+    .slice(0, 3)
+    .map(
+      (item) =>
+        `<article class="card"><h3>${escapeHtml(item.title || "Value pillar")}</h3><p>${escapeHtml(
+          item.description || "Value proposition details."
+        )}</p></article>`
+    )
+    .join("");
+
+  const aiProcess =
+    Array.isArray(aiCopy.process) && aiCopy.process.length >= 3 ? aiCopy.process : fallbackLlm.process;
+  const processMarkup = aiProcess
+    .slice(0, 3)
+    .map(
+      (item) =>
+        `<article class="matrix-card"><h3>${escapeHtml(item.step || "01")} • ${escapeHtml(
+          item.title || "Phase"
+        )}</h3><p>${escapeHtml(item.description || "Execution step details.")}</p></article>`
+    )
+    .join("");
+
+  const aiStats =
+    Array.isArray(aiCopy.stats) && aiCopy.stats.length >= 3 ? aiCopy.stats : fallbackLlm.stats;
+  const statsMarkup = aiStats
+    .slice(0, 3)
+    .map(
+      (item) =>
+        `<article class="card"><strong>${escapeHtml(item.value || "0%")}</strong><p>${escapeHtml(
+          item.label || "Performance metric"
+        )}</p></article>`
+    )
+    .join("");
+
+  const aiTestimonials =
+    Array.isArray(aiCopy.testimonials) && aiCopy.testimonials.length >= 3
+      ? aiCopy.testimonials
+      : fallbackLlm.testimonials;
+  const testimonialsMarkup = aiTestimonials
+    .slice(0, 3)
+    .map(
+      (item) =>
+        `<article class="card"><p>"${escapeHtml(item.quote || "")}"</p><h3>— ${escapeHtml(
+          item.author || "Client"
+        )}</h3></article>`
+    )
+    .join("");
+
+  const aiFaqs =
+    Array.isArray(aiCopy.faqs) && aiCopy.faqs.length >= 3 ? aiCopy.faqs : fallbackLlm.faqs;
+  const faqMarkup = aiFaqs
+    .slice(0, 3)
+    .map(
+      (item) =>
+        `<article class="card"><h3>${escapeHtml(item.question || "Question")}</h3><p>${escapeHtml(
+          item.answer || "Answer"
+        )}</p></article>`
+    )
+    .join("");
+  const contactFormConfig = getIndustryContactFormConfig(industry.key, industry.label);
+  const contactServiceOptions = contactFormConfig.serviceOptions
+    .map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`)
+    .join("");
+  const contactPriorityOptions = contactFormConfig.priorityOptions
+    .map((option) => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`)
+    .join("");
+  const detailedContactForm = `
+    <section class="contact-form-card">
+      <h2 class="title">${escapeHtml(contactFormConfig.title)}</h2>
+      <p class="muted">Share your goals and requirements. We will send a tailored plan and next steps.</p>
+      <form data-lead-form class="form-grid">
+        <label class="form-field">
+          <span>Full name *</span>
+          <input name="fullName" required placeholder="Jane Doe" />
+        </label>
+        <label class="form-field">
+          <span>Work email *</span>
+          <input type="email" name="email" required placeholder="you@company.com" />
+        </label>
+        <label class="form-field">
+          <span>Phone number</span>
+          <input type="tel" name="phone" placeholder="+1 555 555 5555" />
+        </label>
+        <label class="form-field">
+          <span>Company / Organization</span>
+          <input name="company" placeholder="${safeName}" />
+        </label>
+        <label class="form-field">
+          <span>${escapeHtml(contactFormConfig.serviceLabel)} *</span>
+          <select name="serviceNeed" required>
+            <option value="">Select one</option>
+            ${contactServiceOptions}
+          </select>
+        </label>
+        <label class="form-field">
+          <span>${escapeHtml(contactFormConfig.priorityLabel)} *</span>
+          <select name="priority" required>
+            <option value="">Select one</option>
+            ${contactPriorityOptions}
+          </select>
+        </label>
+        <label class="form-field">
+          <span>Budget range *</span>
+          <select name="budget" required>
+            <option value="">Select one</option>
+            <option value="$2k-$5k">$2k-$5k</option>
+            <option value="$5k-$15k">$5k-$15k</option>
+            <option value="$15k-$40k">$15k-$40k</option>
+            <option value="$40k+">$40k+</option>
+          </select>
+        </label>
+        <label class="form-field">
+          <span>Timeline *</span>
+          <select name="timeline" required>
+            <option value="">Select one</option>
+            <option value="Immediate (0-2 weeks)">Immediate (0-2 weeks)</option>
+            <option value="Soon (2-6 weeks)">Soon (2-6 weeks)</option>
+            <option value="Planned (1-3 months)">Planned (1-3 months)</option>
+            <option value="Exploring options">Exploring options</option>
+          </select>
+        </label>
+        <label class="form-field form-field-full">
+          <span>Project details *</span>
+          <textarea name="details" required rows="5" placeholder="Tell us current challenges, goals, and what success looks like."></textarea>
+        </label>
+        <label class="form-field form-field-full form-check">
+          <input type="checkbox" name="consent" required />
+          <span>I agree to be contacted about this request.</span>
+        </label>
+        <div class="form-actions form-field-full">
+          <button class="cta" data-next="Submitting your request..." type="submit">Submit Request</button>
+          <small class="muted">You should hear from us within 1 business day.</small>
+        </div>
+      </form>
+    </section>`;
+
+  const pricingGrid = includePricing
+    ? `<section>
+        <h2 class="title">Pricing</h2>
+        <div class="cards">
+          <article class="card"><h3>Starter</h3><p>For new teams launching quickly.</p><strong>$499/mo</strong></article>
+          <article class="card"><h3>Growth</h3><p>For teams scaling lead volume.</p><strong>$1,250/mo</strong></article>
+          <article class="card"><h3>Enterprise</h3><p>Advanced workflows and priority support.</p><strong>Custom</strong></article>
+        </div>
+      </section>`
+    : "";
+
+  const testimonialsGrid = includeTestimonials
+    ? `<section>
+        <h2 class="title">Client Results</h2>
+        <div class="cards">${testimonialsMarkup}</div>
+      </section>`
+    : "";
+
+  const faqGrid = includeFaq
+    ? `<section>
+        <h2 class="title">FAQ</h2>
+        <div class="cards">${faqMarkup}</div>
+      </section>`
+    : "";
+
+  const blogGrid = includeBlog
+    ? `<section>
+        <h2 class="title">Insights</h2>
+        <div class="cards">
+          <article class="card"><h3>Industry Trends</h3><p>What is shaping ${safeIndustry.toLowerCase()} performance this quarter.</p></article>
+          <article class="card"><h3>Execution Playbook</h3><p>How teams deploy high-performing websites faster.</p></article>
+          <article class="card"><h3>Conversion Systems</h3><p>Frameworks that turn traffic into consistent leads.</p></article>
+        </div>
+      </section>`
+    : "";
+
+  const logoCloudBlock = includeLogoCloud
+    ? `<section class="logo-cloud">
+        <span>Trusted by teams at</span>
+        <div><b>Northline</b><b>BlueHarbor</b><b>VerdeLabs</b><b>Axiom</b><b>UrbanLeaf</b></div>
+      </section>`
+    : "";
+
+  const portfolioBlock = includePortfolio
+    ? `<section class="portfolio-grid">
+        <article><img src="${gallery[0]}" alt="Portfolio one" /><h3>Launch System</h3><p>Positioning, pages, and conversion journey.</p></article>
+        <article><img src="${gallery[1]}" alt="Portfolio two" /><h3>Growth Site</h3><p>Offer architecture and demand capture.</p></article>
+        <article><img src="${gallery[2]}" alt="Portfolio three" /><h3>Brand Refresh</h3><p>Narrative update with modern UX direction.</p></article>
+      </section>`
+    : "";
+
+  const ctaBandBlock = `<section class="cta-band"><h2>${closingCtaHeadline}</h2><a class="cta" data-next="Opening contact page..." href="contact.html">${safeCta}</a></section>`;
+
+  const themeHomeBlocks = {
+    "corporate:enterprise": `
+      <section class="metrics-strip">
+        <article><strong>1.2k+</strong><span>Projects delivered</span></article>
+        <article><strong>96%</strong><span>Retention rate</span></article>
+        <article><strong>4.9/5</strong><span>Client satisfaction</span></article>
+      </section>
+      <section class="split-panel">
+        <div class="panel-copy">
+          <h2 class="title">Operationally Reliable Delivery</h2>
+          <p class="muted">Built for teams that value governance, scale, and predictable outcomes.</p>
+          <ul class="bullet-list">
+            <li>Executive-ready reporting</li>
+            <li>Milestone-based execution model</li>
+            <li>Cross-functional implementation support</li>
+          </ul>
+        </div>
+        <img src="${aboutImage}" alt="${safeIndustry} operations" />
+      </section>
+    `,
+    "corporate:startup": `
+      <section class="startup-roadmap">
+        <article class="matrix-card"><h3>Launch Fast</h3><p>Lean setup and clear go-to-market priorities.</p></article>
+        <article class="matrix-card"><h3>Validate Fit</h3><p>Rapid feedback loops and message testing.</p></article>
+        <article class="matrix-card"><h3>Scale Smart</h3><p>High-impact improvements every sprint.</p></article>
+      </section>
+      <section class="logo-ribbon">
+        <span>Backed by startup teams from</span>
+        <div><b>Seedline</b><b>NorthStack</b><b>Pulsebase</b><b>Launchdock</b></div>
+      </section>
+    `,
+    "saas:product-led": `
+      <section class="feature-matrix">
+        <article class="matrix-card"><h3>Onboarding</h3><p>Conversion-first user journey from signup to activation.</p></article>
+        <article class="matrix-card"><h3>Automation</h3><p>Workflow templates and AI assistants to accelerate output.</p></article>
+        <article class="matrix-card"><h3>Analytics</h3><p>Live dashboards focused on usage and revenue health.</p></article>
+      </section>
+      <section class="logo-ribbon">
+        <span>Trusted by product teams at</span>
+        <div><b>NorthGrid</b><b>Flowpilot</b><b>Shiftbase</b><b>NexaOS</b></div>
+      </section>
+    `,
+    "saas:developer": `
+      <section class="dev-grid">
+        <article class="matrix-card"><h3>APIs First</h3><p>Composable integration strategy with clear docs and SDKs.</p></article>
+        <article class="matrix-card"><h3>CLI Workflows</h3><p>Automation paths designed for engineering velocity.</p></article>
+        <article class="matrix-card"><h3>Observability</h3><p>Telemetry and reliability guardrails by default.</p></article>
+      </section>
+      <section class="contact-note"><p class="muted">Developer-first stack with production-grade patterns and docs.</p></section>
+    `,
+    "luxury:hotel": `
+      <section class="luxury-quote">
+        <p>Curated hospitality experiences for guests who value privacy, comfort, and impeccable service.</p>
+      </section>
+      <section class="luxury-gallery">
+        <img src="${gallery[0]}" alt="Suite showcase" />
+        <img src="${gallery[1]}" alt="Lobby showcase" />
+      </section>
+    `,
+    "luxury:jewelry": `
+      <section class="luxury-quote">
+        <p>Fine craftsmanship, rare materials, and timeless silhouettes designed as heirloom pieces.</p>
+      </section>
+      <section class="luxury-gallery">
+        <img src="${gallery[1]}" alt="Jewelry showcase one" />
+        <img src="${gallery[2]}" alt="Jewelry showcase two" />
+      </section>
+    `,
+    "editorial:magazine": `
+      <section class="editorial-headline">
+        <h2>A magazine-style perspective on modern ${safeIndustry.toLowerCase()} strategy</h2>
+        <p class="muted">Feature-led storytelling designed for broad audience readability.</p>
+      </section>
+      <section class="editorial-columns">
+        <article><h3>Cover Story</h3><p>Macro shifts shaping next-quarter performance.</p></article>
+        <article><h3>Interviews</h3><p>Operator insights from leaders in the space.</p></article>
+        <article><h3>Field Notes</h3><p>Practical moves teams can execute this week.</p></article>
+      </section>
+    `,
+    "editorial:journal": `
+      <section class="editorial-headline">
+        <h2>A journal-style framework for rigorous decision-making</h2>
+        <p class="muted">Research-forward narrative intended for specialist audiences.</p>
+      </section>
+      <section class="editorial-columns">
+        <article><h3>Method</h3><p>Approach, assumptions, and analytical framing.</p></article>
+        <article><h3>Findings</h3><p>Signal patterns and validated insights.</p></article>
+        <article><h3>Implications</h3><p>Where teams should invest and why.</p></article>
+      </section>
+    `,
+  };
+
+  const themeAboutBlocks = {
+    "corporate:enterprise": `<section class="org-structure"><h2 class="title">Leadership & Governance</h2><div class="cards"><article class="card"><h3>Client Success</h3><p>Dedicated account leadership and KPI ownership.</p></article><article class="card"><h3>Delivery Office</h3><p>Program oversight with standardized quality controls.</p></article><article class="card"><h3>Specialist Bench</h3><p>Domain experts engaged by initiative complexity.</p></article></div></section>`,
+    "corporate:startup": `<section class="timeline"><h2 class="title">Startup Operating Rhythm</h2><div class="cards"><article class="card"><h3>Weekly Sprints</h3><p>Rapid experimentation cycles.</p></article><article class="card"><h3>Monthly Reviews</h3><p>Outcome tracking against traction goals.</p></article><article class="card"><h3>Quarterly Bets</h3><p>Focused investments for growth inflection.</p></article></div></section>`,
+    "saas:product-led": `<section class="timeline"><h2 class="title">Product Journey</h2><div class="cards"><article class="card"><h3>v1</h3><p>Core launch with validated onboarding loops.</p></article><article class="card"><h3>v2</h3><p>Expanded integrations and lifecycle automation.</p></article><article class="card"><h3>v3</h3><p>Predictive intelligence and deeper reporting.</p></article></div></section>`,
+    "saas:developer": `<section class="timeline"><h2 class="title">Engineering Evolution</h2><div class="cards"><article class="card"><h3>Stable Core</h3><p>Solid API contract and versioning policy.</p></article><article class="card"><h3>Extensibility</h3><p>Plugin architecture for custom workflows.</p></article><article class="card"><h3>Scale Readiness</h3><p>Performance and reliability benchmarks.</p></article></div></section>`,
+    "luxury:hotel": `<section class="atelier"><h2 class="title">Hospitality Philosophy</h2><p class="muted">Every stay is choreographed to deliver comfort, privacy, and enduring impressions.</p></section>`,
+    "luxury:jewelry": `<section class="atelier"><h2 class="title">House of Craft</h2><p class="muted">Design language rooted in artisanal precision, rare materials, and bespoke finishing.</p></section>`,
+    "editorial:magazine": `<section class="manifesto"><h2 class="title">Editorial Manifesto</h2><p class="muted">We translate complexity into engaging, human-centered narratives with broad accessibility.</p></section>`,
+    "editorial:journal": `<section class="manifesto"><h2 class="title">Research Manifesto</h2><p class="muted">We prioritize methodological clarity, evidence discipline, and citation-ready storytelling.</p></section>`,
+  };
+
+  const themeServicesBlocks = {
+    "corporate:enterprise": `<section class="service-table"><h2 class="title">Service Portfolio</h2><div class="cards"><article class="card"><h3>Advisory</h3><p>Executive planning, governance, and roadmap design.</p></article><article class="card"><h3>Implementation</h3><p>Cross-team execution with delivery assurance.</p></article><article class="card"><h3>Optimization</h3><p>Continuous improvement and operational uplift.</p></article></div></section>`,
+    "corporate:startup": `<section class="service-pipeline"><h2 class="title">Startup Service Stack</h2><div class="cards"><article class="card"><h3>MVP Acceleration</h3><p>Fast launch and feedback instrumentation.</p></article><article class="card"><h3>Growth Loops</h3><p>Acquisition and retention mechanics.</p></article><article class="card"><h3>Scale Ops</h3><p>Process upgrades as complexity grows.</p></article></div></section>`,
+    "saas:product-led": `<section class="service-pipeline"><h2 class="title">Growth Pipeline</h2><div class="cards"><article class="card"><h3>Acquire</h3><p>Demand capture and acquisition funnel tuning.</p></article><article class="card"><h3>Activate</h3><p>User onboarding and product adoption playbooks.</p></article><article class="card"><h3>Expand</h3><p>Retention and expansion revenue mechanics.</p></article></div></section>`,
+    "saas:developer": `<section class="service-pipeline"><h2 class="title">Developer Experience Stack</h2><div class="cards"><article class="card"><h3>API Platform</h3><p>Design, docs, and sandbox environment strategy.</p></article><article class="card"><h3>SDK Tooling</h3><p>Frictionless integration across key languages.</p></article><article class="card"><h3>Support Ops</h3><p>Issue triage and reliability runbooks.</p></article></div></section>`,
+    "luxury:hotel": `<section class="concierge"><h2 class="title">Concierge Services</h2><div class="cards"><article class="card"><h3>Private Stays</h3><p>Tailored accommodation and itinerary curation.</p></article><article class="card"><h3>Events</h3><p>High-touch hosting for intimate gatherings.</p></article><article class="card"><h3>Member Privileges</h3><p>Priority access and seasonal experiences.</p></article></div></section>`,
+    "luxury:jewelry": `<section class="concierge"><h2 class="title">Atelier Services</h2><div class="cards"><article class="card"><h3>Custom Design</h3><p>Bespoke concepting and gemstone sourcing.</p></article><article class="card"><h3>Private Appointments</h3><p>One-to-one consultation with master artisans.</p></article><article class="card"><h3>Lifetime Care</h3><p>Restoration and authentication support.</p></article></div></section>`,
+    "editorial:magazine": `<section class="story-services"><h2 class="title">Feature-Led Services</h2><div class="cards"><article class="card"><h3>Editorial Planning</h3><p>Issue architecture and content sequencing.</p></article><article class="card"><h3>Contributor Network</h3><p>Specialist writers and domain voices.</p></article><article class="card"><h3>Audience Distribution</h3><p>Reach optimization across owned channels.</p></article></div></section>`,
+    "editorial:journal": `<section class="story-services"><h2 class="title">Research Services</h2><div class="cards"><article class="card"><h3>Knowledge Mapping</h3><p>Landscape analysis and source triangulation.</p></article><article class="card"><h3>Argument Design</h3><p>Structured claims backed by evidence.</p></article><article class="card"><h3>Publication Systems</h3><p>Review workflows and long-term archives.</p></article></div></section>`,
+  };
+
+  const themeContactBlocks = {
+    "corporate:enterprise": `<section class="contact-note"><p class="muted">For enterprise requests, include expected timeline, stakeholders, and decision process.</p></section>`,
+    "corporate:startup": `<section class="contact-note"><p class="muted">Share your current growth stage, runway goals, and top bottleneck.</p></section>`,
+    "saas:product-led": `<section class="contact-note"><p class="muted">Share your current funnel metrics and product stage for a tailored growth teardown.</p></section>`,
+    "saas:developer": `<section class="contact-note"><p class="muted">Include API architecture, stack constraints, and DX priorities for best recommendations.</p></section>`,
+    "luxury:hotel": `<section class="contact-note"><p class="muted">Private consultations are scheduled by invitation and referral priority.</p></section>`,
+    "luxury:jewelry": `<section class="contact-note"><p class="muted">For bespoke commissions, include preferred metals, stones, and milestone dates.</p></section>`,
+    "editorial:magazine": `<section class="contact-note"><p class="muted">We welcome publisher briefs with audience profile and editorial objectives.</p></section>`,
+    "editorial:journal": `<section class="contact-note"><p class="muted">Please include your research scope, methodological constraints, and intended readership.</p></section>`,
+  };
+
+  const sharedHead = (title, pagePath) => `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${title}</title>
+  <meta name="description" content="${safePrompt}" />
+  <meta property="og:title" content="${safeSeoTitle}" />
+  <meta property="og:description" content="${safePrompt}" />
+  <meta property="og:url" content="${domainUrl}/${pagePath}" />
+  <link rel="canonical" href="${domainUrl}/${pagePath}" />
+  <style>
+    :root {
+      --bg: ${stylePalette.bg};
+      --ink: ${safeVisualStyle === "vibrant" ? "#e8f3ff" : "#102038"};
+      --muted: ${safeVisualStyle === "vibrant" ? "rgba(232, 243, 255, 0.78)" : "#55657f"};
+      --primary: ${safeBrandColor};
+      --card: ${stylePalette.card};
+      --line: ${stylePalette.line};
+      --theme-mode: "${activeTheme}";
+      --style-mode: "${safeVisualStyle}";
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ${safeFontStack};
+      color: var(--ink);
+      background: ${stylePalette.heroFx}, var(--bg);
+    }
+    .container { width: min(1120px, 92%); margin: 0 auto; }
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 18px 0;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 12px;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .nav strong { font-size: 1.05rem; }
+    .nav .menu { display: flex; gap: 12px; color: var(--muted); font-size: 14px; flex-wrap: wrap; }
+    .nav .menu a { color: inherit; text-decoration: none; }
+    .hero {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 28px;
+      align-items: center;
+      padding: 34px 0;
+      position: relative;
+    }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--primary) 18%, white);
+      color: color-mix(in srgb, var(--primary) 75%, black);
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0 0 12px; font-size: clamp(2rem, 5vw, 3.3rem); line-height: 1.06; }
+    .sub { color: var(--muted); line-height: 1.7; margin-bottom: 18px; }
+    .cta {
+      display: inline-block;
+      text-decoration: none;
+      color: white;
+      background: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 65%, black));
+      border-radius: 999px;
+      padding: 12px 20px;
+      font-weight: 700;
+    }
+    .hero img, .about img, .gallery img {
+      width: 100%;
+      border-radius: ${stylePalette.radius};
+      border: 1px solid var(--line);
+      object-fit: cover;
+    }
+    .hero img { min-height: 320px; }
+    section { padding: 20px 0; }
+    .title { margin: 0 0 14px; font-size: 1.8rem; }
+    .muted { color: var(--muted); }
+    .stats, .cards, .gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: ${stylePalette.radius};
+      padding: 16px;
+      box-shadow: ${safeVisualStyle === "vibrant" ? "0 16px 40px rgba(0,0,0,0.35)" : "0 12px 30px rgba(15, 32, 60, 0.08)"};
+    }
+    .card h3 { margin: 0 0 8px; }
+    .card p { margin: 0; color: var(--muted); line-height: 1.6; }
+    .card strong { display: block; margin-top: 10px; }
+    .stats .card strong { font-size: 1.6rem; margin-top: 0; }
+    .about {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      align-items: center;
+    }
+    .pages {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .pages span {
+      font-size: 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: #fbfdff;
+      color: #3d4f6b;
+    }
+    .stack { display: grid; gap: 14px; }
+    .contact-list { display: grid; gap: 10px; }
+    .contact-form-card { border: 1px solid var(--line); border-radius: ${stylePalette.radius}; padding: 18px; background: var(--card); }
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 10px; }
+    .form-field { display: grid; gap: 6px; }
+    .form-field span { font-size: 12px; color: var(--muted); font-weight: 700; letter-spacing: 0.02em; }
+    .form-field input,
+    .form-field select,
+    .form-field textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font: inherit;
+      color: var(--ink);
+      background: color-mix(in srgb, var(--card) 82%, white);
+    }
+    .form-field textarea { resize: vertical; min-height: 110px; }
+    .form-field-full { grid-column: 1 / -1; }
+    .form-check { display: flex; align-items: center; gap: 8px; }
+    .form-check input { width: auto; margin: 0; }
+    .form-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .contact-item {
+      border: 1px solid var(--line);
+      background: var(--card);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    footer {
+      margin-top: 28px;
+      border-top: 1px solid var(--line);
+      padding: 22px 0 36px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .metrics-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .metrics-strip article {
+      border: 1px solid var(--line);
+      background: var(--card);
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .metrics-strip strong { display: block; font-size: 1.7rem; }
+    .metrics-strip span { color: var(--muted); font-size: 13px; }
+    .split-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; align-items: center; }
+    .split-panel img { width: 100%; border-radius: 14px; border: 1px solid var(--line); }
+    .bullet-list { margin: 0; padding-left: 18px; color: var(--muted); display: grid; gap: 6px; }
+    .feature-matrix { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    .startup-roadmap { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    .dev-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    .matrix-card { border: 1px solid var(--line); border-radius: 14px; padding: 14px; background: var(--card); }
+    .logo-ribbon { border: 1px solid var(--line); border-radius: 14px; padding: 14px; background: var(--card); display: grid; gap: 10px; }
+    .logo-ribbon div { display: flex; flex-wrap: wrap; gap: 10px; color: var(--muted); }
+    .luxury-quote { border: 1px solid var(--line); background: var(--card); border-radius: 14px; padding: 24px; font-size: 1.15rem; line-height: 1.8; }
+    .luxury-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .luxury-gallery img { width: 100%; border-radius: 14px; border: 1px solid var(--line); min-height: 320px; object-fit: cover; }
+    .editorial-headline { border-left: 4px solid var(--primary); padding-left: 14px; }
+    .editorial-headline h2 { margin: 0 0 8px; font-size: clamp(1.5rem, 3.4vw, 2.2rem); }
+    .editorial-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+    .editorial-columns article { border-top: 2px solid var(--line); padding-top: 10px; }
+    .contact-note { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--card); }
+    .logo-cloud { border: 1px solid var(--line); border-radius: ${stylePalette.radius}; padding: 14px; background: var(--card); display: grid; gap: 10px; }
+    .logo-cloud div { display: flex; flex-wrap: wrap; gap: 10px; color: var(--muted); }
+    .logo-cloud b { padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: color-mix(in srgb, var(--card) 70%, white); }
+    .portfolio-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .portfolio-grid article { border: 1px solid var(--line); border-radius: ${stylePalette.radius}; padding: 12px; background: var(--card); }
+    .portfolio-grid img { width: 100%; height: 160px; object-fit: cover; border-radius: ${stylePalette.radius}; border: 1px solid var(--line); }
+    .portfolio-grid h3 { margin: 10px 0 6px; }
+    .portfolio-grid p { margin: 0; color: var(--muted); }
+    .cta-band { border: 1px solid var(--line); border-radius: ${stylePalette.radius}; background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 22%, var(--card)), var(--card)); padding: 20px; display: flex; gap: 14px; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+    .cta-band h2 { margin: 0; font-size: clamp(1.3rem, 2.2vw, 2rem); }
+    .action-feedback {
+      position: fixed;
+      left: 14px;
+      bottom: 14px;
+      z-index: 30;
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--card) 88%, white);
+      color: var(--ink);
+      border-radius: 10px;
+      padding: 10px 12px;
+      max-width: min(92vw, 380px);
+      box-shadow: 0 10px 24px rgba(12, 24, 42, 0.16);
+      font-size: 12px;
+      line-height: 1.4;
+      opacity: 0;
+      transform: translateY(6px);
+      transition: opacity 180ms ease, transform 180ms ease;
+      pointer-events: none;
+    }
+    .action-feedback.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .connection-dock {
+      position: fixed;
+      right: 14px;
+      bottom: 14px;
+      display: grid;
+      gap: 8px;
+      z-index: 30;
+    }
+    .connection-btn {
+      text-decoration: none;
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--card) 84%, white);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 10px 20px rgba(12, 24, 42, 0.14);
+      transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .connection-btn::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--primary);
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 36%, transparent);
+      animation: ping 2.4s ease infinite;
+    }
+    .connection-btn:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--primary) 42%, var(--line)); box-shadow: 0 14px 22px rgba(12, 24, 42, 0.18); }
+    .connection-btn.active { transform: scale(0.98); }
+    .connection-btn.whatsapp { background: color-mix(in srgb, var(--primary) 18%, var(--card)); }
+    .connection-btn.contact { background: color-mix(in srgb, var(--primary) 24%, var(--card)); }
+    @keyframes ping {
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 36%, transparent); }
+      70% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--primary) 0%, transparent); }
+      100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 0%, transparent); }
+    }
+    ${enableMotion ? `
+    .card, .matrix-card, .portfolio-grid article, .logo-cloud, .cta-band { transition: transform 220ms ease, box-shadow 220ms ease; }
+    .card:hover, .matrix-card:hover, .portfolio-grid article:hover { transform: translateY(-3px); }
+    .hero, section { animation: fadeUp 520ms ease both; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    ` : ""}
+    body.theme-corporate { background: #f3f6fb; }
+    body.theme-corporate .hero { border: 1px solid var(--line); border-radius: 16px; padding: 24px; background: var(--card); }
+    body.theme-saas { background: radial-gradient(circle at top, #eef8f6, #f7f9fc 42%); }
+    body.theme-saas .hero { position: relative; overflow: hidden; border-radius: 18px; padding: 30px; border: 1px solid var(--line); background: var(--card); }
+    body.theme-saas .hero::after { content: ""; position: absolute; width: 160px; height: 160px; border-radius: 50%; right: -40px; top: -40px; background: color-mix(in srgb, var(--primary) 24%, white); }
+    body.theme-luxury { background: #f8f6f2; color: #231d14; }
+    body.theme-luxury .container { width: min(1040px, 90%); }
+    body.theme-luxury .hero { border-bottom: 1px solid #e5dbca; padding-bottom: 30px; }
+    body.theme-luxury .card { border-color: #e5dbca; background: #fffcf6; }
+    body.theme-luxury .nav { border-color: #e5dbca; }
+    body.theme-editorial { background: #f6f8fb; }
+    body.theme-editorial .container { width: min(980px, 90%); }
+    body.theme-editorial .hero { grid-template-columns: 1fr; gap: 14px; }
+    body.theme-editorial .hero img { min-height: 360px; }
+    body.theme-editorial .cards { grid-template-columns: 1fr; }
+    @media (max-width: 760px) { .form-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body class="theme-${activeTheme} substyle-${activeSubstyle}">
+  <main class="container">
+    <nav class="nav">
+      <strong>${safeName}</strong>
+      <div class="menu">${pageLinks}</div>
+    </nav>`;
+
+  const footer = `
+    <aside class="connection-dock" aria-label="Connection actions">
+      <a class="connection-btn call" data-conn data-next="Opening phone dialer..." href="tel:${contactPhoneHref}">Call</a>
+      <a class="connection-btn email" data-conn data-next="Opening email draft..." href="mailto:${contactEmail}">Email</a>
+      <a class="connection-btn whatsapp" data-conn data-next="Opening WhatsApp chat..." href="${whatsappHref}" target="_blank" rel="noreferrer">WhatsApp</a>
+      <a class="connection-btn contact" data-conn data-next="Taking you to contact options..." href="contact.html#connect">Connect</a>
+    </aside>
+    <div id="action-feedback" class="action-feedback" role="status" aria-live="polite"></div>
+    <footer>${safeName} • ${safeTheme} / ${safeSubstyle} • Goal: ${safeGoal} • AI website generated by TitoNova Builder</footer>
+  </main>
+  <script>
+    (() => {
+      const feedback = document.getElementById("action-feedback");
+      let clearTimer = null;
+
+      const getDefaultNextAction = (href) => {
+        if (!href) return "Processing action...";
+        if (href.startsWith("tel:")) return "Opening phone dialer...";
+        if (href.startsWith("mailto:")) return "Opening email draft...";
+        if (href.includes("wa.me")) return "Opening WhatsApp chat...";
+        if (href.includes("#connect")) return "Jumping to contact section...";
+        if (href.endsWith(".html")) return "Opening next page...";
+        return "Processing action...";
+      };
+
+      const showFeedback = (message) => {
+        if (!feedback) return;
+        feedback.textContent = message;
+        feedback.classList.add("show");
+        if (clearTimer) window.clearTimeout(clearTimer);
+        clearTimer = window.setTimeout(() => feedback.classList.remove("show"), 2200);
+      };
+
+      const links = Array.from(document.querySelectorAll("a, button"));
+      links.forEach((link) => {
+        link.addEventListener("click", () => {
+          const next = link.getAttribute("data-next") || getDefaultNextAction(link.getAttribute("href"));
+          showFeedback(next);
+          link.classList.add("active");
+          window.setTimeout(() => link.classList.remove("active"), 180);
+        });
+      });
+
+      const forms = Array.from(document.querySelectorAll("[data-lead-form]"));
+      forms.forEach((form) => {
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const data = new FormData(form);
+          const name = data.get("fullName");
+          showFeedback(
+            "Thanks " +
+              (name || "there") +
+              " - your ${industry.label} request was received. We will contact you shortly."
+          );
+          form.reset();
+        });
+      });
+    })();
+  </script>
+</body>
+</html>`;
+
+  const indexHtml = `${sharedHead(`${safeName} | Home`, "index.html")}
+    <section class="hero">
+      <div>
+        <span class="pill">${safeIndustry} • ${safeTone}</span>
+        <h1>${heroHeadline}</h1>
+        <p class="sub">${heroSubhead}</p>
+        <a class="cta" data-next="Opening contact page..." href="contact.html">${safeCta}</a>
+        <div class="pages">${pageChips}</div>
+      </div>
+      <img src="${heroImage}" alt="${safeIndustry} hero" />
+    </section>
+
+    <section>
+      <h2 class="title">Services</h2>
+      <div class="cards">${serviceCardsMarkup}</div>
+    </section>
+
+    <section>
+      <h2 class="title">Why ${safeName}</h2>
+      <p class="muted">${brandPromise}</p>
+      <div class="cards">${valuePropsMarkup}</div>
+    </section>
+
+    <section>
+      <h2 class="title">Performance</h2>
+      <div class="stats">${statsMarkup}</div>
+    </section>
+
+    <section>
+      <h2 class="title">Implementation Roadmap</h2>
+      <div class="startup-roadmap">${processMarkup}</div>
+    </section>
+
+    ${themeHomeBlocks[variantKey] || themeHomeBlocks[`${activeTheme}:${defaultSubstyle}`]}
+    ${logoCloudBlock}
+    ${portfolioBlock}
+    ${pricingGrid}
+    ${testimonialsGrid}
+    ${faqGrid}
+    ${blogGrid}
+    ${ctaBandBlock}
+    ${footer}`;
+
+  const aboutHtml = `${sharedHead(`${safeName} | About`, "about.html")}
+    <section class="hero">
+      <div>
+        <span class="pill">${safeIndustry}</span>
+        <h1>About ${safeName}</h1>
+        <p class="sub">${heroSubhead}</p>
+      </div>
+      <img src="${aboutImage}" alt="${safeIndustry} about" />
+    </section>
+
+    <section class="about">
+      <div class="stack">
+        <h2 class="title">Our Mission</h2>
+        <p class="muted">${safePrompt}</p>
+        <p class="muted">${brandPromise}</p>
+        <p class="muted">We combine strategy, design, and execution to deliver practical business growth with a ${safeGoal.toLowerCase()} focus.</p>
+      </div>
+      <div class="cards">${valuePropsMarkup}</div>
+    </section>
+
+    <section>
+      <h2 class="title">How We Deliver</h2>
+      <div class="startup-roadmap">${processMarkup}</div>
+    </section>
+    ${themeAboutBlocks[variantKey] || themeAboutBlocks[`${activeTheme}:${defaultSubstyle}`]}
+    ${portfolioBlock}
+    ${testimonialsGrid}
+    ${ctaBandBlock}
+    ${footer}`;
+
+  const servicesHtml = `${sharedHead(`${safeName} | Services`, "services.html")}
+    <section>
+      <span class="pill">${safeIndustry} Services</span>
+      <h1>Solutions Built for ${safeGoal}</h1>
+      <p class="sub">Flexible service packages designed for acquisition, retention, and operational efficiency.</p>
+    </section>
+
+    <section>
+      <h2 class="title">Service Packages</h2>
+      <div class="cards">${serviceCardsMarkup}</div>
+    </section>
+
+    <section>
+      <h2 class="title">Engagement Model</h2>
+      <div class="startup-roadmap">${processMarkup}</div>
+    </section>
+
+    <section>
+      <h2 class="title">Expected Outcomes</h2>
+      <div class="stats">${statsMarkup}</div>
+    </section>
+
+    ${themeServicesBlocks[variantKey] || themeServicesBlocks[`${activeTheme}:${defaultSubstyle}`]}
+    ${pricingGrid}
+    ${logoCloudBlock}
+
+    <section>
+      <h2 class="title">Recent Work</h2>
+      <div class="gallery">
+        <img src="${gallery[0]}" alt="Service gallery one" />
+        <img src="${gallery[1]}" alt="Service gallery two" />
+        <img src="${gallery[2]}" alt="Service gallery three" />
+      </div>
+    </section>
+    ${ctaBandBlock}
+    ${footer}`;
+
+  const contactHtml = `${sharedHead(`${safeName} | Contact`, "contact.html")}
+    <section>
+      <span class="pill">Let's Talk</span>
+      <h1>Contact ${safeName}</h1>
+      <p class="sub">Tell us about your goals and timeline. We will share a tailored roadmap and proposal.</p>
+      <a class="cta" data-next="Opening email draft..." href="mailto:${contactEmail}">${safeCta}</a>
+    </section>
+
+    ${detailedContactForm}
+
+    <section id="connect" class="contact-list">
+      <article class="contact-item"><strong>Email</strong><p class="muted">${contactEmail}</p></article>
+      <article class="contact-item"><strong>Phone</strong><p class="muted">${contactPhone}</p></article>
+      <article class="contact-item"><strong>Office</strong><p class="muted">120 Market Street, Suite 400</p></article>
+    </section>
+    ${themeContactBlocks[variantKey] || themeContactBlocks[`${activeTheme}:${defaultSubstyle}`]}
+    ${faqGrid}
+    ${ctaBandBlock}
+    ${footer}`;
+
+  return {
+    "index.html": indexHtml,
+    "about.html": aboutHtml,
+    "services.html": servicesHtml,
+    "contact.html": contactHtml,
+    "sitemap.xml": `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url><loc>${domainUrl}/index.html</loc></url>\n  <url><loc>${domainUrl}/about.html</loc></url>\n  <url><loc>${domainUrl}/services.html</loc></url>\n  <url><loc>${domainUrl}/contact.html</loc></url>\n</urlset>`,
+    "robots.txt": `User-agent: *\nAllow: /\nSitemap: ${domainUrl}/sitemap.xml\n`,
+    ...(normalizedDomain ? { CNAME: domainHost } : {}),
+    "DOMAIN_SETUP.md": `# Domain Setup\n\nTarget domain: ${domainHost}\n\n## DNS\n- Use A/ALIAS/CNAME records based on your hosting provider.\n- Point apex/root domain and www (if used) to your host.\n\n## Site files\n- Sitemap is pre-configured: ${domainUrl}/sitemap.xml\n- Canonical URLs and OG URLs are pre-configured in page head tags.\n${normalizedDomain ? `- CNAME file included for providers that support it.` : "- Add your domain in the builder and re-export to include provider-specific domain file."}\n\n## SSL\n- Enable HTTPS in your host dashboard before going live.\n`,
+  };
+};
+
+const generateLlmContent = async ({
+  apiKey,
+  modelCandidates,
+  businessName,
+  industry,
+  tone,
+  goal,
+  prompt,
+  ctaText,
+  onModelAttempt,
+}) => {
+  if (!apiKey) {
+    throw new Error("Missing VITE_OPENAI_API_KEY");
+  }
+
+  const modelChain = dedupeModels(modelCandidates || []);
+  if (modelChain.length === 0) {
+    throw new Error("No LLM models configured.");
+  }
+
+  let lastError = null;
+  for (const model of modelChain) {
+    onModelAttempt?.(model);
+
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model,
+        input: [
+          {
+            role: "system",
+            content:
+              "You are a conversion-focused website strategist and copywriter. Return only valid JSON that matches the required schema.",
+          },
+          {
+            role: "user",
+            content: `Create website copy for:
+Business: ${businessName}
+Industry: ${industry.label}
+Tone: ${tone}
+Primary goal: ${goal}
+Prompt: ${prompt}
+CTA: ${ctaText}
+
+Return concise, specific copy with no markdown. Focus on high-ticket positioning, trust signals, proof-driven language, and clear buying paths.`,
+          },
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "site_copy",
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                heroHeadline: { type: "string" },
+                heroSubhead: { type: "string" },
+                brandPromise: { type: "string" },
+                services: {
+                  type: "array",
+                  minItems: 3,
+                  maxItems: 3,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      title: { type: "string" },
+                      description: { type: "string" },
+                    },
+                    required: ["title", "description"],
+                  },
+                },
+                valueProps: {
+                  type: "array",
+                  minItems: 3,
+                  maxItems: 3,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      title: { type: "string" },
+                      description: { type: "string" },
+                    },
+                    required: ["title", "description"],
+                  },
+                },
+                process: {
+                  type: "array",
+                  minItems: 3,
+                  maxItems: 3,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      step: { type: "string" },
+                      title: { type: "string" },
+                      description: { type: "string" },
+                    },
+                    required: ["step", "title", "description"],
+                  },
+                },
+                stats: {
+                  type: "array",
+                  minItems: 3,
+                  maxItems: 3,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      value: { type: "string" },
+                      label: { type: "string" },
+                    },
+                    required: ["value", "label"],
+                  },
+                },
+                testimonials: {
+                  type: "array",
+                  minItems: 3,
+                  maxItems: 3,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      quote: { type: "string" },
+                      author: { type: "string" },
+                    },
+                    required: ["quote", "author"],
+                  },
+                },
+                faqs: {
+                  type: "array",
+                  minItems: 3,
+                  maxItems: 3,
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      question: { type: "string" },
+                      answer: { type: "string" },
+                    },
+                    required: ["question", "answer"],
+                  },
+                },
+                closingCtaHeadline: { type: "string" },
+              },
+              required: [
+                "heroHeadline",
+                "heroSubhead",
+                "brandPromise",
+                "services",
+                "valueProps",
+                "process",
+                "stats",
+                "testimonials",
+                "faqs",
+                "closingCtaHeadline",
+              ],
+              },
+            strict: true,
+          },
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const details = await response.text();
+      lastError = new Error(`LLM request failed for ${model} (${response.status}): ${details}`);
+      continue;
+    }
+
+    const payload = await response.json();
+    const outputText = extractResponseText(payload);
+    const parsed = parseJsonSafe(outputText);
+
+    if (!parsed) {
+      lastError = new Error(`LLM returned invalid JSON content for ${model}.`);
+      continue;
+    }
+
+    return { content: parsed, modelUsed: model };
+  }
+
+  throw lastError || new Error("LLM generation failed across all selected models.");
+};
+
+const makeProject = (config) => {
+  const files = buildWebsiteFiles(config);
+  const qualityScore = scoreBrief(config);
+  return {
+    id: crypto.randomUUID(),
+    businessName: config.businessName.trim() || `${config.industry.label} Studio`,
+    industry: config.industry.key,
+    industryLabel: config.industry.label,
+    tone: config.tone,
+    goal: config.goal,
+    prompt: config.prompt.trim(),
+    options: {
+      themePreset: config.themePreset,
+      substylePreset: config.substylePreset,
+      brandColor: config.brandColor,
+      fontTheme: config.fontTheme,
+      ctaText: config.ctaText,
+      seoTitle: config.seoTitle,
+      customDomain: config.customDomain,
+      includePricing: config.includePricing,
+      includeTestimonials: config.includeTestimonials,
+      includeFaq: config.includeFaq,
+      includeBlog: config.includeBlog,
+      visualStyle: config.visualStyle,
+      includePortfolio: config.includePortfolio,
+      includeLogoCloud: config.includeLogoCloud,
+      enableMotion: config.enableMotion,
+      useLlm: Boolean(config.useLlm),
+      llmPreset: config.llmPreset || "flagship",
+      llmModel: config.llmModel || "gpt-4.1",
+      llmResolvedModel: config.llmResolvedModel || "",
+    },
+    qualityScore,
+    isFavorite: false,
+    pages: PAGE_CONFIG.map((page) => page.label),
+    files,
+    html: files[DEFAULT_PAGE],
+    createdAt: new Date().toISOString(),
+  };
+};
+
+const buildLegacyPage = (businessName, pageTitle, copy) => `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(businessName)} | ${escapeHtml(pageTitle)}</title>
+  <style>
+    body { margin: 0; padding: 40px; font-family: Arial, sans-serif; color: #0f1e36; background: #f7f9fc; }
+    .nav { display: flex; gap: 10px; margin-bottom: 20px; }
+    .nav a { color: #0f7a56; text-decoration: none; }
+    .box { background: #fff; border: 1px solid #d9e1ef; border-radius: 12px; padding: 20px; max-width: 760px; }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <a href="index.html">Home</a><a href="about.html">About</a><a href="services.html">Services</a><a href="contact.html">Contact</a>
+  </div>
+  <div class="box">
+    <h1>${escapeHtml(pageTitle)}</h1>
+    <p>${escapeHtml(copy)}</p>
+  </div>
+</body>
+</html>`;
+
+const getProjectFiles = (project) => {
+  if (project.files && project.files[DEFAULT_PAGE]) {
+    return project.files;
+  }
+
+  const business = project.businessName || "Business";
+  return {
+    "index.html": project.html || buildLegacyPage(business, "Home", "Website homepage."),
+    "about.html": buildLegacyPage(business, "About", "Information about our team and company values."),
+    "services.html": buildLegacyPage(business, "Services", "Overview of services and solutions."),
+    "contact.html": buildLegacyPage(business, "Contact", "Contact details and next steps."),
+    "sitemap.xml": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"></urlset>",
+    "robots.txt": "User-agent: *\\nAllow: /\\n",
+  };
+};
+
+const normalizeProject = (project) => {
+  const files = getProjectFiles(project);
+  return {
+    ...project,
+    files,
+    html: files[DEFAULT_PAGE],
+    pages: project.pages || PAGE_CONFIG.map((page) => page.label),
+    qualityScore: project.qualityScore || 70,
+    isFavorite: Boolean(project.isFavorite),
+    versions: Array.isArray(project.versions) ? project.versions : [],
+    goal: project.goal || GOALS[0],
+    options: {
+      themePreset: project.options?.themePreset || "corporate",
+      substylePreset:
+        project.options?.substylePreset ||
+        getDefaultSubstyle(project.options?.themePreset || "corporate"),
+      brandColor: project.options?.brandColor || "#14b987",
+      fontTheme: project.options?.fontTheme || "sans",
+      ctaText: project.options?.ctaText || "Book a strategy call",
+      seoTitle: project.options?.seoTitle || "",
+      customDomain: project.options?.customDomain || "",
+      includePricing: project.options?.includePricing ?? true,
+      includeTestimonials: project.options?.includeTestimonials ?? true,
+      includeFaq: project.options?.includeFaq ?? true,
+      includeBlog: project.options?.includeBlog ?? false,
+      visualStyle: project.options?.visualStyle || "glass",
+      includePortfolio: project.options?.includePortfolio ?? true,
+      includeLogoCloud: project.options?.includeLogoCloud ?? true,
+      enableMotion: project.options?.enableMotion ?? true,
+      useLlm: project.options?.useLlm ?? false,
+      llmPreset: project.options?.llmPreset || "flagship",
+      llmModel: project.options?.llmModel || "gpt-4.1",
+      llmResolvedModel: project.options?.llmResolvedModel || "",
+    },
+  };
+};
+
+const createVersionSnapshot = (project, note = "Snapshot") => ({
+  id: crypto.randomUUID(),
+  note,
+  createdAt: new Date().toISOString(),
+  files: getProjectFiles(project),
+});
+
+const replaceInContent = (content, from, to, caseSensitive) => {
+  if (!from) return content;
+  const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const flags = caseSensitive ? "g" : "gi";
+  return content.replace(new RegExp(escaped, flags), to);
+};
+
+const parsePageSections = (html) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  const main = doc.querySelector("main");
+  if (!main) return [];
+
+  const sections = Array.from(main.children).filter((node) => node.tagName === "SECTION");
+  return sections.map((section, index) => {
+    const heading = section.querySelector("h1, h2, h3");
+    const title = heading?.textContent?.trim() || `Section ${index + 1}`;
+    return {
+      index,
+      title: title.slice(0, 80),
+      html: section.outerHTML,
+    };
+  });
+};
+
+const rewritePageSections = (html, sectionUpdater) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  const main = doc.querySelector("main");
+  if (!main) return html;
+
+  const sectionNodes = Array.from(main.children).filter((node) => node.tagName === "SECTION");
+  const sectionHtml = sectionNodes.map((node) => node.outerHTML);
+  const nextSections = sectionUpdater(sectionHtml);
+  if (!Array.isArray(nextSections) || nextSections.length === 0) return html;
+
+  sectionNodes.forEach((node) => node.remove());
+  const footer = Array.from(main.children).find((node) => node.tagName === "FOOTER");
+
+  if (footer) {
+    nextSections
+      .slice()
+      .reverse()
+      .forEach((section) => footer.insertAdjacentHTML("beforebegin", section));
+  } else {
+    nextSections.forEach((section) => main.insertAdjacentHTML("beforeend", section));
+  }
+
+  return "<!doctype html>\n" + doc.documentElement.outerHTML;
+};
+
+const analyzeProjectFiles = (files) => {
+  const pageKeys = ["index.html", "about.html", "services.html", "contact.html"];
+  let score = 100;
+  let missingMeta = 0;
+  let headingIssues = 0;
+  let missingAlt = 0;
+  let totalWords = 0;
+  let totalLinks = 0;
+  let ctaCount = 0;
+
+  pageKeys.forEach((key) => {
+    const html = files[key] || "";
+    if (!/<meta[^>]+name=["']description["'][^>]*>/i.test(html)) {
+      missingMeta += 1;
+      score -= 6;
+    }
+
+    const h1Matches = html.match(/<h1\b/gi) || [];
+    if (h1Matches.length !== 1) {
+      headingIssues += 1;
+      score -= 8;
+    }
+
+    const imgTags = html.match(/<img\b[^>]*>/gi) || [];
+    imgTags.forEach((tag) => {
+      if (!/\balt=["'][^"']*["']/i.test(tag)) {
+        missingAlt += 1;
+        score -= 2;
+      }
+    });
+
+    const textOnly = html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    totalWords += textOnly ? textOnly.split(" ").length : 0;
+
+    totalLinks += (html.match(/<a\b/gi) || []).length;
+    ctaCount += (html.match(/book|start|get|schedule|consult|request/gi) || []).length;
+  });
+
+  if (totalWords < 900) score -= 8;
+  if (totalLinks < 12) score -= 6;
+  if (ctaCount < 8) score -= 5;
+
+  return {
+    score: Math.max(0, Math.min(100, score)),
+    metrics: {
+      totalWords,
+      totalLinks,
+      ctaCount,
+      missingMeta,
+      headingIssues,
+      missingAlt,
+    },
+  };
+};
+
+const mutateHtmlDocument = (html, mutator) => {
+  if (!html) return html;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  const changed = Boolean(mutator(doc));
+  if (!changed) return html;
+  return "<!doctype html>\n" + doc.documentElement.outerHTML;
+};
+
+const ensureMetaDescription = (html, description) =>
+  mutateHtmlDocument(html, (doc) => {
+    const head = doc.querySelector("head");
+    if (!head) return false;
+    const existing = head.querySelector('meta[name="description"]');
+    if (existing) return false;
+    const tag = doc.createElement("meta");
+    tag.setAttribute("name", "description");
+    tag.setAttribute("content", description);
+    head.appendChild(tag);
+    return true;
+  });
+
+const ensureImageAltAttributes = (html) =>
+  mutateHtmlDocument(html, (doc) => {
+    const images = Array.from(doc.querySelectorAll("img"));
+    let changed = false;
+    images.forEach((image, index) => {
+      const alt = image.getAttribute("alt");
+      if (typeof alt === "string" && alt.trim()) return;
+      image.setAttribute("alt", `Website image ${index + 1}`);
+      changed = true;
+    });
+    return changed;
+  });
+
+const appendSectionBeforeFooter = (html, marker, sectionHtml) =>
+  mutateHtmlDocument(html, (doc) => {
+    if (doc.querySelector(`[data-optimizer="${marker}"]`)) return false;
+    const main = doc.querySelector("main");
+    if (!main) return false;
+    const footer = main.querySelector("footer");
+    if (footer) {
+      footer.insertAdjacentHTML("beforebegin", sectionHtml);
+    } else {
+      main.insertAdjacentHTML("beforeend", sectionHtml);
+    }
+    return true;
+  });
+
+const crc32Table = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i += 1) {
+    let c = i;
+    for (let j = 0; j < 8; j += 1) {
+      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+const crc32 = (bytes) => {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i += 1) {
+    crc = crc32Table[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+};
+
+const toDosDateTime = (date) => {
+  const year = Math.min(Math.max(date.getFullYear(), 1980), 2107);
+  const dosTime = (date.getSeconds() >> 1) | (date.getMinutes() << 5) | (date.getHours() << 11);
+  const dosDate = date.getDate() | ((date.getMonth() + 1) << 5) | ((year - 1980) << 9);
+  return { dosDate, dosTime };
+};
+
+const createZipBlob = (namedFiles) => {
+  const encoder = new TextEncoder();
+  const now = toDosDateTime(new Date());
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+
+  namedFiles.forEach(({ name, content }) => {
+    const nameBytes = encoder.encode(name);
+    const dataBytes = encoder.encode(content);
+    const checksum = crc32(dataBytes);
+
+    const localHeader = new ArrayBuffer(30);
+    const localView = new DataView(localHeader);
+    localView.setUint32(0, 0x04034b50, true);
+    localView.setUint16(4, 20, true);
+    localView.setUint16(6, 0, true);
+    localView.setUint16(8, 0, true);
+    localView.setUint16(10, now.dosTime, true);
+    localView.setUint16(12, now.dosDate, true);
+    localView.setUint32(14, checksum, true);
+    localView.setUint32(18, dataBytes.length, true);
+    localView.setUint32(22, dataBytes.length, true);
+    localView.setUint16(26, nameBytes.length, true);
+    localView.setUint16(28, 0, true);
+
+    localParts.push(localHeader, nameBytes, dataBytes);
+
+    const centralHeader = new ArrayBuffer(46);
+    const centralView = new DataView(centralHeader);
+    centralView.setUint32(0, 0x02014b50, true);
+    centralView.setUint16(4, 20, true);
+    centralView.setUint16(6, 20, true);
+    centralView.setUint16(8, 0, true);
+    centralView.setUint16(10, 0, true);
+    centralView.setUint16(12, now.dosTime, true);
+    centralView.setUint16(14, now.dosDate, true);
+    centralView.setUint32(16, checksum, true);
+    centralView.setUint32(20, dataBytes.length, true);
+    centralView.setUint32(24, dataBytes.length, true);
+    centralView.setUint16(28, nameBytes.length, true);
+    centralView.setUint16(30, 0, true);
+    centralView.setUint16(32, 0, true);
+    centralView.setUint16(34, 0, true);
+    centralView.setUint16(36, 0, true);
+    centralView.setUint32(38, 0, true);
+    centralView.setUint32(42, offset, true);
+
+    centralParts.push(centralHeader, nameBytes);
+    offset += 30 + nameBytes.length + dataBytes.length;
+  });
+
+  const centralSize = centralParts.reduce((sum, part) => sum + part.byteLength, 0);
+  const endRecord = new ArrayBuffer(22);
+  const endView = new DataView(endRecord);
+  endView.setUint32(0, 0x06054b50, true);
+  endView.setUint16(4, 0, true);
+  endView.setUint16(6, 0, true);
+  endView.setUint16(8, namedFiles.length, true);
+  endView.setUint16(10, namedFiles.length, true);
+  endView.setUint32(12, centralSize, true);
+  endView.setUint32(16, offset, true);
+  endView.setUint16(20, 0, true);
+
+  return new Blob([...localParts, ...centralParts, endRecord], { type: "application/zip" });
+};
+
+export default function App() {
+  const [businessName, setBusinessName] = useState("Nova Studio");
+  const [prompt, setPrompt] = useState(
+    "Build a high-converting website with clear service sections, trust signals, and lead capture."
+  );
+  const [industryKey, setIndustryKey] = useState(DEFAULT_INDUSTRY.key);
+  const [tone, setTone] = useState(TONES[0]);
+  const [goal, setGoal] = useState(GOALS[0]);
+  const [themePreset, setThemePreset] = useState("corporate");
+  const [substylePreset, setSubstylePreset] = useState(
+    getDefaultSubstyle("corporate")
+  );
+
+  const [brandColor, setBrandColor] = useState("#14b987");
+  const [fontTheme, setFontTheme] = useState("sans");
+  const [ctaText, setCtaText] = useState("Book a strategy call");
+  const [seoTitle, setSeoTitle] = useState("");
+  const [customDomain, setCustomDomain] = useState("");
+  const [useLlm, setUseLlm] = useState(true);
+  const [llmPreset, setLlmPreset] = useState("flagship");
+  const [llmModel, setLlmModel] = useState("gpt-4.1");
+  const [llmCustomModel, setLlmCustomModel] = useState("");
+  const [llmStatus, setLlmStatus] = useState("");
+  const [visualStyle, setVisualStyle] = useState("glass");
+  const [includePricing, setIncludePricing] = useState(true);
+  const [includeTestimonials, setIncludeTestimonials] = useState(true);
+  const [includeFaq, setIncludeFaq] = useState(true);
+  const [includeBlog, setIncludeBlog] = useState(false);
+  const [includePortfolio, setIncludePortfolio] = useState(true);
+  const [includeLogoCloud, setIncludeLogoCloud] = useState(true);
+  const [enableMotion, setEnableMotion] = useState(true);
+
+  const [projectSearch, setProjectSearch] = useState("");
+  const [sortMode, setSortMode] = useState("newest");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [domainSearch, setDomainSearch] = useState("");
+  const [domainSuggestions, setDomainSuggestions] = useState([]);
+  const [domainCart, setDomainCart] = useState([]);
+  const [ownedDomains, setOwnedDomains] = useState([]);
+  const [domainMessage, setDomainMessage] = useState("");
+  const [registrarProvider, setRegistrarProvider] = useState(REGISTRAR_PROVIDERS[0].key);
+  const [liveRegistrarMode, setLiveRegistrarMode] = useState(false);
+  const [registrarLoading, setRegistrarLoading] = useState(false);
+  const [registrarHealthStatus, setRegistrarHealthStatus] = useState("");
+  const [sellerMode, setSellerMode] = useState(false);
+  const [resellerMargin, setResellerMargin] = useState(35);
+  const [hostingMessage, setHostingMessage] = useState("");
+  const [hostingBusyId, setHostingBusyId] = useState("");
+  const [hostedSites, setHostedSites] = useState({});
+
+  const [previewPage, setPreviewPage] = useState(DEFAULT_PAGE);
+  const [previewDevice, setPreviewDevice] = useState("desktop");
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const [showSignup, setShowSignup] = useState(false);
+  const [isSignedIn, setIsSignedIn] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [projects, setProjects] = useState([]);
+  const [draftProject, setDraftProject] = useState(null);
+
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [editableHtml, setEditableHtml] = useState("");
+  const [activeProjectId, setActiveProjectId] = useState(null);
+  const [isInlineEditing, setIsInlineEditing] = useState(false);
+  const [replaceFrom, setReplaceFrom] = useState("");
+  const [replaceTo, setReplaceTo] = useState("");
+  const [replaceCaseSensitive, setReplaceCaseSensitive] = useState(false);
+  const [versionNote, setVersionNote] = useState("");
+  const [selectedBlockTemplate, setSelectedBlockTemplate] = useState("feature_grid");
+  const [draftSavedAt, setDraftSavedAt] = useState("");
+  const [insightMessage, setInsightMessage] = useState("");
+
+  const iframeRef = useRef(null);
+  const iframeListenerRef = useRef(null);
+  const projectImportRef = useRef(null);
+  const shortcutHandlersRef = useRef({
+    generateOne: () => {},
+    generateAll: () => {},
+    saveInlineEdits: () => {},
+  });
+
+  const activeIndustry = INDUSTRIES.find((item) => item.key === industryKey) || DEFAULT_INDUSTRY;
+
+  const qualityScore = useMemo(
+    () =>
+      scoreBrief({
+        businessName,
+        prompt,
+        seoTitle,
+        ctaText,
+        includeFaq,
+        includePricing,
+      }),
+    [businessName, prompt, seoTitle, ctaText, includeFaq, includePricing]
+  );
+
+  const projectCount = useMemo(() => projects.length, [projects.length]);
+  const availableSubstyles = useMemo(
+    () => THEME_SUBSTYLES[themePreset] || [],
+    [themePreset]
+  );
+  const selectedRegistrar = useMemo(
+    () => getRegistrarProviderByKey(registrarProvider),
+    [registrarProvider]
+  );
+  const selectedLlmPreset = useMemo(() => getLlmPresetByKey(llmPreset), [llmPreset]);
+  const llmModelOptions = useMemo(
+    () => dedupeModels([llmModel, ...(selectedLlmPreset.models || [])]),
+    [llmModel, selectedLlmPreset]
+  );
+
+  const filteredProjects = useMemo(() => {
+    let list = [...projects];
+
+    if (favoritesOnly) {
+      list = list.filter((project) => project.isFavorite);
+    }
+
+    if (projectSearch.trim()) {
+      const needle = projectSearch.toLowerCase();
+      list = list.filter((project) =>
+        `${project.businessName} ${project.industryLabel} ${project.tone} ${project.goal} ${project.options?.themePreset || ""} ${project.options?.substylePreset || ""} ${project.options?.visualStyle || ""} ${project.options?.customDomain || ""}`
+          .toLowerCase()
+          .includes(needle)
+      );
+    }
+
+    list.sort((a, b) => {
+      if (sortMode === "score") return (b.qualityScore || 0) - (a.qualityScore || 0);
+      if (sortMode === "name") return a.businessName.localeCompare(b.businessName);
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+
+    return list;
+  }, [projects, projectSearch, favoritesOnly, sortMode]);
+
+  const activeProject = useMemo(
+    () => projects.find((project) => project.id === activeProjectId) || null,
+    [projects, activeProjectId]
+  );
+
+  const pageSections = useMemo(() => {
+    if (!previewHtml) return [];
+    return parsePageSections(previewHtml);
+  }, [previewHtml]);
+
+  const siteAudit = useMemo(() => {
+    if (!activeProject) return null;
+    return analyzeProjectFiles(getProjectFiles(activeProject));
+  }, [activeProject]);
+
+  const smartInsights = useMemo(() => {
+    if (!siteAudit) return [];
+    const list = [];
+    if (siteAudit.metrics.missingMeta > 0) {
+      list.push({
+        key: "meta",
+        label: "Add missing meta descriptions",
+        description: `${siteAudit.metrics.missingMeta} pages are missing description metadata.`,
+      });
+    }
+    if (siteAudit.metrics.missingAlt > 0) {
+      list.push({
+        key: "alt",
+        label: "Patch missing image alt text",
+        description: `${siteAudit.metrics.missingAlt} images are missing alt attributes.`,
+      });
+    }
+    if (siteAudit.metrics.ctaCount < 8) {
+      list.push({
+        key: "cta",
+        label: "Increase CTA density",
+        description: "Low CTA coverage can reduce conversion intent signals.",
+      });
+    }
+    if (siteAudit.metrics.totalLinks < 12) {
+      list.push({
+        key: "links",
+        label: "Add quick-link hub",
+        description: "Internal linking depth is below the recommended baseline.",
+      });
+    }
+    if (siteAudit.metrics.totalWords < 900) {
+      list.push({
+        key: "content",
+        label: "Add authority content block",
+        description: "Total copy length is short for SEO depth.",
+      });
+    }
+    return list;
+  }, [siteAudit]);
+
+  const readFromStorage = () => {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  };
+
+  const readDomainStore = () => {
+    const raw = localStorage.getItem(DOMAIN_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  };
+
+  const writeDomainStore = (data) => {
+    localStorage.setItem(DOMAIN_STORAGE_KEY, JSON.stringify(data));
+  };
+
+  const getUserDomainData = (userEmail) => {
+    const data = readDomainStore();
+    return (
+      data[userEmail] || {
+        owned: [],
+        cart: [],
+        seller: { active: false, margin: 35 },
+        registrar: { provider: REGISTRAR_PROVIDERS[0].key, liveMode: false },
+      }
+    );
+  };
+
+  const saveUserDomainData = (userEmail, payload) => {
+    const data = readDomainStore();
+    data[userEmail] = payload;
+    writeDomainStore(data);
+  };
+
+  const persistDomainData = (nextOwned, nextCart, nextSellerMode, nextMargin) => {
+    if (!isSignedIn || !email) return;
+    saveUserDomainData(email, {
+      owned: nextOwned,
+      cart: nextCart,
+      seller: { active: nextSellerMode, margin: nextMargin },
+      registrar: { provider: registrarProvider, liveMode: liveRegistrarMode },
+    });
+  };
+
+  const writeToStorage = (data) => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  };
+
+  const getUserProjects = (userEmail) => {
+    const data = readFromStorage();
+    return data[userEmail] || [];
+  };
+
+  const saveUserProjects = (userEmail, userProjects) => {
+    const data = readFromStorage();
+    data[userEmail] = userProjects;
+    writeToStorage(data);
+  };
+
+  const persistProjects = (updatedProjects) => {
+    setProjects(updatedProjects);
+    if (isSignedIn && email) {
+      saveUserProjects(email, updatedProjects);
+    }
+  };
+
+  const addProjectsForUser = (userEmail, newProjects) => {
+    const updated = [...newProjects, ...getUserProjects(userEmail)].map(normalizeProject);
+    saveUserProjects(userEmail, updated);
+    setProjects(updated);
+  };
+
+  const openProject = (project, page = DEFAULT_PAGE) => {
+    const normalized = normalizeProject(project);
+    const files = getProjectFiles(normalized);
+
+    setActiveProjectId(normalized.id);
+    setPreviewPage(page);
+    setPreviewHtml(files[page] || files[DEFAULT_PAGE]);
+    setEditableHtml(files[page] || files[DEFAULT_PAGE]);
+    setIsInlineEditing(false);
+  };
+
+  useEffect(() => {
+    const savedUser = localStorage.getItem("titonova_user");
+    if (!savedUser) return;
+
+    setEmail(savedUser);
+    setIsSignedIn(true);
+
+    const data = readFromStorage();
+    setProjects((data[savedUser] || []).map(normalizeProject));
+    const domainData = readDomainStore();
+    const domains = domainData[savedUser] || {
+      owned: [],
+      cart: [],
+      seller: { active: false, margin: 35 },
+      registrar: { provider: REGISTRAR_PROVIDERS[0].key, liveMode: false },
+    };
+    setOwnedDomains(domains.owned || []);
+    setDomainCart(domains.cart || []);
+    setSellerMode(Boolean(domains.seller?.active));
+    setResellerMargin(Number(domains.seller?.margin || 35));
+    setRegistrarProvider(domains.registrar?.provider || REGISTRAR_PROVIDERS[0].key);
+    setLiveRegistrarMode(Boolean(domains.registrar?.liveMode));
+  }, []);
+
+  useEffect(() => {
+    const rawDraft = localStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!rawDraft) return;
+    const parsed = parseJsonSafe(rawDraft);
+    if (!parsed || typeof parsed !== "object") return;
+
+    if (typeof parsed.businessName === "string") setBusinessName(parsed.businessName);
+    if (typeof parsed.prompt === "string") setPrompt(parsed.prompt);
+    if (INDUSTRIES.some((item) => item.key === parsed.industryKey)) setIndustryKey(parsed.industryKey);
+    if (TONES.includes(parsed.tone)) setTone(parsed.tone);
+    if (GOALS.includes(parsed.goal)) setGoal(parsed.goal);
+    if (THEME_PRESETS.some((item) => item.key === parsed.themePreset)) setThemePreset(parsed.themePreset);
+    if (typeof parsed.substylePreset === "string") setSubstylePreset(parsed.substylePreset);
+    if (typeof parsed.brandColor === "string") setBrandColor(parsed.brandColor);
+    if (Object.prototype.hasOwnProperty.call(FONT_THEMES, parsed.fontTheme)) setFontTheme(parsed.fontTheme);
+    if (typeof parsed.ctaText === "string") setCtaText(parsed.ctaText);
+    if (typeof parsed.seoTitle === "string") setSeoTitle(parsed.seoTitle);
+    if (typeof parsed.customDomain === "string") setCustomDomain(parsed.customDomain);
+    if (VISUAL_STYLES.some((style) => style.key === parsed.visualStyle)) setVisualStyle(parsed.visualStyle);
+    if (typeof parsed.includePricing === "boolean") setIncludePricing(parsed.includePricing);
+    if (typeof parsed.includeTestimonials === "boolean") setIncludeTestimonials(parsed.includeTestimonials);
+    if (typeof parsed.includeFaq === "boolean") setIncludeFaq(parsed.includeFaq);
+    if (typeof parsed.includeBlog === "boolean") setIncludeBlog(parsed.includeBlog);
+    if (typeof parsed.includePortfolio === "boolean") setIncludePortfolio(parsed.includePortfolio);
+    if (typeof parsed.includeLogoCloud === "boolean") setIncludeLogoCloud(parsed.includeLogoCloud);
+    if (typeof parsed.enableMotion === "boolean") setEnableMotion(parsed.enableMotion);
+    if (typeof parsed.useLlm === "boolean") setUseLlm(parsed.useLlm);
+    if (LLM_MODEL_PRESETS.some((preset) => preset.key === parsed.llmPreset)) setLlmPreset(parsed.llmPreset);
+    if (typeof parsed.llmModel === "string") setLlmModel(parsed.llmModel);
+    if (typeof parsed.llmCustomModel === "string") setLlmCustomModel(parsed.llmCustomModel);
+    if (typeof parsed.savedAt === "string") setDraftSavedAt(parsed.savedAt);
+  }, []);
+
+  useEffect(() => {
+    if (!activeProjectId || isInlineEditing) return;
+
+    const activeProject = projects.find((project) => project.id === activeProjectId);
+    if (!activeProject) return;
+
+    const files = getProjectFiles(activeProject);
+    const html = files[previewPage] || files[DEFAULT_PAGE];
+    setPreviewHtml(html);
+    setEditableHtml(html);
+  }, [activeProjectId, previewPage, projects, isInlineEditing]);
+
+  useEffect(() => {
+    if (availableSubstyles.some((item) => item.key === substylePreset)) return;
+    setSubstylePreset(availableSubstyles[0]?.key || "");
+  }, [availableSubstyles, substylePreset]);
+
+  useEffect(() => {
+    if (!llmModelOptions.includes(llmModel)) {
+      setLlmModel(llmModelOptions[0] || "gpt-4.1");
+    }
+  }, [llmModel, llmModelOptions]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      if (!domainSearch.trim()) {
+        setDomainSuggestions([]);
+        return;
+      }
+
+      if (!liveRegistrarMode) {
+        setDomainSuggestions(buildDomainSuggestions(domainSearch));
+        return;
+      }
+
+      try {
+        setRegistrarLoading(true);
+        const liveResults = await searchDomainsLive({
+          provider: registrarProvider,
+          keyword: domainSearch.trim(),
+          tlds: DOMAIN_TLDS.map((item) => item.tld),
+        });
+        if (cancelled) return;
+
+        if (liveResults.length === 0) {
+          setDomainSuggestions(buildDomainSuggestions(domainSearch));
+        } else {
+          setDomainSuggestions(
+            liveResults.map((item) => ({
+              name: item.name,
+              price: Number(item.price || 0),
+              available: Boolean(item.available),
+            }))
+          );
+        }
+      } catch {
+        if (!cancelled) {
+          setDomainSuggestions(buildDomainSuggestions(domainSearch));
+          setDomainMessage("Live registrar search unavailable. Using local marketplace mode.");
+        }
+      } finally {
+        if (!cancelled) setRegistrarLoading(false);
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [domainSearch, liveRegistrarMode, registrarProvider]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadHosted = async () => {
+      try {
+        const sites = await listHostedProjects();
+        if (cancelled) return;
+        const mapped = Object.fromEntries(sites.map((site) => [site.siteId, site]));
+        setHostedSites(mapped);
+      } catch {
+        if (!cancelled) {
+          setHostedSites({});
+        }
+      }
+    };
+
+    loadHosted();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const payload = {
+        businessName,
+        prompt,
+        industryKey,
+        tone,
+        goal,
+        themePreset,
+        substylePreset,
+        brandColor,
+        fontTheme,
+        ctaText,
+        seoTitle,
+        customDomain,
+        useLlm,
+        llmPreset,
+        llmModel,
+        llmCustomModel,
+        visualStyle,
+        includePricing,
+        includeTestimonials,
+        includeFaq,
+        includeBlog,
+        includePortfolio,
+        includeLogoCloud,
+        enableMotion,
+        savedAt: new Date().toISOString(),
+      };
+      localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(payload));
+      setDraftSavedAt(payload.savedAt);
+    }, 380);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    businessName,
+    prompt,
+    industryKey,
+    tone,
+    goal,
+    themePreset,
+    substylePreset,
+    brandColor,
+    fontTheme,
+    ctaText,
+    seoTitle,
+    customDomain,
+    useLlm,
+    llmPreset,
+    llmModel,
+    llmCustomModel,
+    visualStyle,
+    includePricing,
+    includeTestimonials,
+    includeFaq,
+    includeBlog,
+    includePortfolio,
+    includeLogoCloud,
+    enableMotion,
+  ]);
+
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    const doc = iframe.contentDocument;
+    if (!doc) return;
+
+    if (isInlineEditing) {
+      doc.designMode = "on";
+      doc.body.contentEditable = "true";
+
+      const handler = () => {
+        const html = `<!doctype html>${doc.documentElement.outerHTML}`;
+        setEditableHtml(html);
+        setPreviewHtml(html);
+      };
+
+      iframeListenerRef.current = handler;
+      doc.addEventListener("input", handler);
+    } else {
+      doc.designMode = "off";
+      doc.body.contentEditable = "false";
+      if (iframeListenerRef.current) {
+        doc.removeEventListener("input", iframeListenerRef.current);
+        iframeListenerRef.current = null;
+      }
+    }
+
+    return () => {
+      if (iframeListenerRef.current) {
+        doc.removeEventListener("input", iframeListenerRef.current);
+        iframeListenerRef.current = null;
+      }
+    };
+  }, [isInlineEditing, previewHtml]);
+
+  const buildProjectConfig = (industry) => ({
+    businessName,
+    industry,
+    tone,
+    prompt,
+    goal,
+    themePreset,
+    substylePreset,
+    brandColor,
+    fontTheme,
+    ctaText,
+    seoTitle,
+    customDomain,
+    useLlm,
+    llmPreset,
+    llmModel,
+    llmCustomModel,
+    visualStyle,
+    includePricing,
+    includeTestimonials,
+    includeFaq,
+    includeBlog,
+    includePortfolio,
+    includeLogoCloud,
+    enableMotion,
+  });
+
+  const getLlmModelChain = (config) => {
+    const preset = getLlmPresetByKey(config.llmPreset);
+    return dedupeModels([config.llmCustomModel, config.llmModel, ...(preset.models || [])]);
+  };
+
+  const handleGenerateOne = async () => {
+    setLoading(true);
+    setError("");
+    setLlmStatus("");
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      let llmContent = null;
+      let llmResolvedModel = "";
+      const projectConfig = buildProjectConfig(activeIndustry);
+      if (projectConfig.useLlm) {
+        const llmResult = await generateLlmContent({
+          apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+          modelCandidates: getLlmModelChain(projectConfig),
+          businessName: projectConfig.businessName,
+          industry: activeIndustry,
+          tone: projectConfig.tone,
+          goal: projectConfig.goal,
+          prompt: projectConfig.prompt,
+          ctaText: projectConfig.ctaText,
+          onModelAttempt: (model) => setLlmStatus(`Generating copy with ${model}...`),
+        });
+        llmContent = llmResult.content;
+        llmResolvedModel = llmResult.modelUsed;
+        setLlmStatus(`LLM complete using ${llmResolvedModel}.`);
+      }
+      const project = makeProject({ ...projectConfig, llmContent, llmResolvedModel });
+
+      openProject(project, DEFAULT_PAGE);
+
+      if (isSignedIn && email) {
+        addProjectsForUser(email, [project]);
+      } else {
+        setDraftProject(project);
+        setShowSignup(true);
+      }
+    } catch {
+      setError("Failed to generate project. Check LLM key/model if AI mode is enabled.");
+    } finally {
+      setLlmStatus("");
+      setLoading(false);
+    }
+  };
+
+  const handleGenerateAll = async () => {
+    setLoading(true);
+    setError("");
+    setLlmStatus("");
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      const batch = await Promise.all(
+        INDUSTRIES.map(async (industry) => {
+          const projectConfig = buildProjectConfig(industry);
+          let llmContent = null;
+          let llmResolvedModel = "";
+
+          if (projectConfig.useLlm) {
+            setLlmStatus(`Generating ${industry.label} copy with LLM...`);
+            try {
+              const llmResult = await generateLlmContent({
+                apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+                modelCandidates: getLlmModelChain(projectConfig),
+                businessName: projectConfig.businessName,
+                industry,
+                tone: projectConfig.tone,
+                goal: projectConfig.goal,
+                prompt: projectConfig.prompt,
+                ctaText: projectConfig.ctaText,
+                onModelAttempt: (model) =>
+                  setLlmStatus(`Generating ${industry.label} copy with ${model}...`),
+              });
+              llmContent = llmResult.content;
+              llmResolvedModel = llmResult.modelUsed;
+            } catch {
+              llmContent = null;
+              llmResolvedModel = "";
+            }
+          }
+
+          return makeProject({ ...projectConfig, llmContent, llmResolvedModel });
+        })
+      );
+
+      openProject(batch[0], DEFAULT_PAGE);
+
+      if (isSignedIn && email) {
+        addProjectsForUser(email, batch);
+      } else {
+        setDraftProject(batch[0]);
+        setShowSignup(true);
+      }
+    } catch {
+      setError("Failed to generate projects. Check LLM key/model if AI mode is enabled.");
+    } finally {
+      setLlmStatus("");
+      setLoading(false);
+    }
+  };
+
+  const handleSaveInlineEdits = () => {
+    if (!activeProjectId || !email) return;
+
+    const updated = projects.map((project) => {
+      if (project.id !== activeProjectId) return project;
+      const files = { ...getProjectFiles(project), [previewPage]: editableHtml || previewHtml };
+      const snapshot = createVersionSnapshot(
+        { ...project, files },
+        `Inline edit • ${PAGE_CONFIG.find((page) => page.key === previewPage)?.label || previewPage}`
+      );
+      return {
+        ...project,
+        files,
+        html: files[DEFAULT_PAGE],
+        versions: [snapshot, ...(project.versions || [])].slice(0, 30),
+      };
+    });
+
+    persistProjects(updated);
+    setIsInlineEditing(false);
+  };
+
+  const handleCreateSnapshot = () => {
+    if (!activeProjectId) return;
+    const note = versionNote.trim() || "Manual snapshot";
+
+    const updated = projects.map((project) => {
+      if (project.id !== activeProjectId) return project;
+      const snapshot = createVersionSnapshot(project, note);
+      return {
+        ...project,
+        versions: [snapshot, ...(project.versions || [])].slice(0, 30),
+      };
+    });
+
+    persistProjects(updated);
+    setVersionNote("");
+  };
+
+  const handleRestoreVersion = (versionId) => {
+    if (!activeProjectId) return;
+    const targetProject = projects.find((project) => project.id === activeProjectId);
+    if (!targetProject) return;
+    const snapshot = (targetProject.versions || []).find((item) => item.id === versionId);
+    if (!snapshot) return;
+
+    const updated = projects.map((project) => {
+      if (project.id !== activeProjectId) return project;
+      const restoreSnapshot = createVersionSnapshot(project, "Auto snapshot before restore");
+      return {
+        ...project,
+        files: snapshot.files,
+        html: snapshot.files[DEFAULT_PAGE] || project.html,
+        versions: [restoreSnapshot, ...(project.versions || [])].slice(0, 30),
+      };
+    });
+
+    persistProjects(updated);
+    const restoredProject = updated.find((project) => project.id === activeProjectId);
+    if (restoredProject) {
+      openProject(restoredProject, previewPage);
+    }
+  };
+
+  const handleGlobalReplace = () => {
+    if (!activeProjectId || !replaceFrom.trim()) return;
+
+    const updated = projects.map((project) => {
+      if (project.id !== activeProjectId) return project;
+      const files = Object.fromEntries(
+        Object.entries(getProjectFiles(project)).map(([name, content]) => [
+          name,
+          typeof content === "string"
+            ? replaceInContent(content, replaceFrom, replaceTo, replaceCaseSensitive)
+            : content,
+        ])
+      );
+      const snapshot = createVersionSnapshot(
+        project,
+        `Global replace "${replaceFrom}" -> "${replaceTo}"`
+      );
+      return {
+        ...project,
+        files,
+        html: files[DEFAULT_PAGE] || project.html,
+        versions: [snapshot, ...(project.versions || [])].slice(0, 30),
+      };
+    });
+
+    persistProjects(updated);
+    const changed = updated.find((project) => project.id === activeProjectId);
+    if (changed) {
+      openProject(changed, previewPage);
+    }
+  };
+
+  const mutateActiveProjectFiles = (note, fileMutator) => {
+    if (!activeProjectId) return false;
+    let changed = false;
+
+    const updated = projects.map((project) => {
+      if (project.id !== activeProjectId) return project;
+
+      const currentFiles = getProjectFiles(project);
+      const nextFiles = fileMutator(currentFiles, project);
+      if (!nextFiles || !nextFiles[DEFAULT_PAGE]) return project;
+
+      const didChange = Object.keys(currentFiles).some((key) => currentFiles[key] !== nextFiles[key]);
+      if (!didChange) return project;
+
+      changed = true;
+      const snapshot = createVersionSnapshot(project, note);
+      return {
+        ...project,
+        files: nextFiles,
+        html: nextFiles[DEFAULT_PAGE] || project.html,
+        versions: [snapshot, ...(project.versions || [])].slice(0, 30),
+      };
+    });
+
+    if (!changed) return false;
+    persistProjects(updated);
+    const changedProject = updated.find((project) => project.id === activeProjectId);
+    if (changedProject) openProject(changedProject, previewPage);
+    return true;
+  };
+
+  const mutateActivePage = (note, htmlMutator) => {
+    if (!activeProjectId) return;
+
+    const updated = projects.map((project) => {
+      if (project.id !== activeProjectId) return project;
+
+      const currentFiles = getProjectFiles(project);
+      const currentHtml = currentFiles[previewPage] || "";
+      const nextHtml = htmlMutator(currentHtml);
+      if (!nextHtml || nextHtml === currentHtml) return project;
+
+      const snapshot = createVersionSnapshot(project, note);
+      const files = { ...currentFiles, [previewPage]: nextHtml };
+      return {
+        ...project,
+        files,
+        html: files[DEFAULT_PAGE] || project.html,
+        versions: [snapshot, ...(project.versions || [])].slice(0, 30),
+      };
+    });
+
+    persistProjects(updated);
+    const changed = updated.find((project) => project.id === activeProjectId);
+    if (changed) openProject(changed, previewPage);
+  };
+
+  const getSelectedTemplateHtml = () =>
+    BLOCK_TEMPLATES[selectedBlockTemplate]?.html || BLOCK_TEMPLATES.feature_grid.html;
+
+  const handleInsertSectionAtEnd = () => {
+    mutateActivePage(
+      `Insert block (${selectedBlockTemplate}) at end`,
+      (html) => rewritePageSections(html, (sections) => [...sections, getSelectedTemplateHtml()])
+    );
+  };
+
+  const handleInsertSectionBelow = (index) => {
+    mutateActivePage(
+      `Insert block (${selectedBlockTemplate}) below section ${index + 1}`,
+      (html) =>
+        rewritePageSections(html, (sections) => {
+          const next = [...sections];
+          next.splice(index + 1, 0, getSelectedTemplateHtml());
+          return next;
+        })
+    );
+  };
+
+  const handleRemoveSection = (index) => {
+    mutateActivePage(`Remove section ${index + 1}`, (html) =>
+      rewritePageSections(html, (sections) => {
+        if (sections.length <= 1) return sections;
+        return sections.filter((_, sectionIndex) => sectionIndex !== index);
+      })
+    );
+  };
+
+  const handleDuplicateSection = (index) => {
+    mutateActivePage(`Duplicate section ${index + 1}`, (html) =>
+      rewritePageSections(html, (sections) => {
+        const next = [...sections];
+        next.splice(index + 1, 0, sections[index]);
+        return next;
+      })
+    );
+  };
+
+  const handleMoveSection = (index, direction) => {
+    mutateActivePage(`Move section ${index + 1} ${direction}`, (html) =>
+      rewritePageSections(html, (sections) => {
+        const next = [...sections];
+        const targetIndex = direction === "up" ? index - 1 : index + 1;
+        if (targetIndex < 0 || targetIndex >= next.length) return next;
+        [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
+        return next;
+      })
+    );
+  };
+
+  const applyInsight = (insightKey) => {
+    if (!activeProject) return;
+
+    if (insightKey === "meta") {
+      const applied = mutateActiveProjectFiles("Smart fix: add missing meta descriptions", (files, project) => {
+        const pageKeys = ["index.html", "about.html", "services.html", "contact.html"];
+        const description = `${project.businessName} ${project.industryLabel} services focused on ${project.goal.toLowerCase()}.`;
+        const next = { ...files };
+        pageKeys.forEach((pageKey) => {
+          next[pageKey] = ensureMetaDescription(next[pageKey], description);
+        });
+        return next;
+      });
+      setInsightMessage(applied ? "Applied metadata fix." : "No metadata fix was needed.");
+      return;
+    }
+
+    if (insightKey === "alt") {
+      const applied = mutateActiveProjectFiles("Smart fix: fill missing image alt text", (files) => {
+        const pageKeys = ["index.html", "about.html", "services.html", "contact.html"];
+        const next = { ...files };
+        pageKeys.forEach((pageKey) => {
+          next[pageKey] = ensureImageAltAttributes(next[pageKey]);
+        });
+        return next;
+      });
+      setInsightMessage(applied ? "Applied accessibility alt fix." : "No alt-text fix was needed.");
+      return;
+    }
+
+    if (insightKey === "cta") {
+      const applied = mutateActiveProjectFiles("Smart fix: add conversion CTA sections", (files, project) => {
+        const ctaTextValue = escapeHtml(project.options?.ctaText || "Book a strategy call");
+        const ctaSection = `
+<section data-optimizer="cta-boost">
+  <h2 class="title">Ready to move this project forward?</h2>
+  <p class="muted">Start with a focused consultation and get a practical rollout plan.</p>
+  <a class="cta" href="contact.html">${ctaTextValue}</a>
+</section>`;
+        const next = { ...files };
+        ["index.html", "services.html", "contact.html"].forEach((pageKey) => {
+          next[pageKey] = appendSectionBeforeFooter(next[pageKey], "cta-boost", ctaSection);
+        });
+        return next;
+      });
+      setInsightMessage(applied ? "Added CTA boost sections." : "CTA boost section already exists.");
+      return;
+    }
+
+    if (insightKey === "links") {
+      const applied = mutateActiveProjectFiles("Smart fix: add quick-link hub", (files, project) => {
+        const emailValue = `hello@${slugify(project.businessName || "business") || "business"}.com`;
+        const linksSection = `
+<section data-optimizer="link-hub">
+  <h2 class="title">Quick Links</h2>
+  <div class="cards">
+    <article class="card"><h3>Explore Services</h3><p><a href="services.html">See service packages</a></p></article>
+    <article class="card"><h3>About Our Team</h3><p><a href="about.html">Meet the team</a></p></article>
+    <article class="card"><h3>Talk to Us</h3><p><a href="mailto:${emailValue}">Email consultation desk</a></p></article>
+  </div>
+</section>`;
+        const next = { ...files };
+        next["index.html"] = appendSectionBeforeFooter(next["index.html"], "link-hub", linksSection);
+        return next;
+      });
+      setInsightMessage(applied ? "Added internal link hub." : "Link hub already exists.");
+      return;
+    }
+
+    if (insightKey === "content") {
+      const applied = mutateActiveProjectFiles("Smart fix: add authority content", (files, project) => {
+        const contentSection = `
+<section data-optimizer="authority-copy">
+  <h2 class="title">Execution Framework</h2>
+  <p class="muted">${escapeHtml(
+    project.businessName
+  )} runs a repeatable process built around discovery, strategy alignment, delivery, and optimization.</p>
+  <p class="muted">Each engagement includes weekly reporting, measurable milestones, and continuous testing so teams can improve outcomes over time.</p>
+</section>`;
+        const next = { ...files };
+        next["about.html"] = appendSectionBeforeFooter(
+          next["about.html"],
+          "authority-copy",
+          contentSection
+        );
+        next["services.html"] = appendSectionBeforeFooter(
+          next["services.html"],
+          "authority-copy",
+          contentSection
+        );
+        return next;
+      });
+      setInsightMessage(applied ? "Added authority content blocks." : "Authority content is already present.");
+    }
+  };
+
+  const handleRunAllInsights = () => {
+    if (!activeProject || smartInsights.length === 0) return;
+    const insightKeys = new Set(smartInsights.map((item) => item.key));
+    const applied = mutateActiveProjectFiles("Smart optimization batch run", (files, project) => {
+      const next = { ...files };
+      const pageKeys = ["index.html", "about.html", "services.html", "contact.html"];
+      const description = `${project.businessName} ${project.industryLabel} services focused on ${project.goal.toLowerCase()}.`;
+
+      if (insightKeys.has("meta")) {
+        pageKeys.forEach((pageKey) => {
+          next[pageKey] = ensureMetaDescription(next[pageKey], description);
+        });
+      }
+
+      if (insightKeys.has("alt")) {
+        pageKeys.forEach((pageKey) => {
+          next[pageKey] = ensureImageAltAttributes(next[pageKey]);
+        });
+      }
+
+      if (insightKeys.has("cta")) {
+        const ctaTextValue = escapeHtml(project.options?.ctaText || "Book a strategy call");
+        const ctaSection = `
+<section data-optimizer="cta-boost">
+  <h2 class="title">Ready to move this project forward?</h2>
+  <p class="muted">Start with a focused consultation and get a practical rollout plan.</p>
+  <a class="cta" href="contact.html">${ctaTextValue}</a>
+</section>`;
+        ["index.html", "services.html", "contact.html"].forEach((pageKey) => {
+          next[pageKey] = appendSectionBeforeFooter(next[pageKey], "cta-boost", ctaSection);
+        });
+      }
+
+      if (insightKeys.has("links")) {
+        const emailValue = `hello@${slugify(project.businessName || "business") || "business"}.com`;
+        const linksSection = `
+<section data-optimizer="link-hub">
+  <h2 class="title">Quick Links</h2>
+  <div class="cards">
+    <article class="card"><h3>Explore Services</h3><p><a href="services.html">See service packages</a></p></article>
+    <article class="card"><h3>About Our Team</h3><p><a href="about.html">Meet the team</a></p></article>
+    <article class="card"><h3>Talk to Us</h3><p><a href="mailto:${emailValue}">Email consultation desk</a></p></article>
+  </div>
+</section>`;
+        next["index.html"] = appendSectionBeforeFooter(next["index.html"], "link-hub", linksSection);
+      }
+
+      if (insightKeys.has("content")) {
+        const contentSection = `
+<section data-optimizer="authority-copy">
+  <h2 class="title">Execution Framework</h2>
+  <p class="muted">${escapeHtml(
+    project.businessName
+  )} runs a repeatable process built around discovery, strategy alignment, delivery, and optimization.</p>
+  <p class="muted">Each engagement includes weekly reporting, measurable milestones, and continuous testing so teams can improve outcomes over time.</p>
+</section>`;
+        next["about.html"] = appendSectionBeforeFooter(
+          next["about.html"],
+          "authority-copy",
+          contentSection
+        );
+        next["services.html"] = appendSectionBeforeFooter(
+          next["services.html"],
+          "authority-copy",
+          contentSection
+        );
+      }
+      return next;
+    });
+    setInsightMessage(applied ? "Applied all recommended smart optimizations." : "No changes were needed.");
+  };
+
+  const handleResetDraft = () => {
+    localStorage.removeItem(DRAFT_STORAGE_KEY);
+    setBusinessName("Nova Studio");
+    setPrompt(
+      "Build a high-converting website with clear service sections, trust signals, and lead capture."
+    );
+    setIndustryKey(DEFAULT_INDUSTRY.key);
+    setTone(TONES[0]);
+    setGoal(GOALS[0]);
+    setThemePreset("corporate");
+    setSubstylePreset(getDefaultSubstyle("corporate"));
+    setBrandColor("#14b987");
+    setFontTheme("sans");
+    setCtaText("Book a strategy call");
+    setSeoTitle("");
+    setCustomDomain("");
+    setUseLlm(true);
+    setLlmPreset("flagship");
+    setLlmModel("gpt-4.1");
+    setLlmCustomModel("");
+    setVisualStyle("glass");
+    setIncludePricing(true);
+    setIncludeTestimonials(true);
+    setIncludeFaq(true);
+    setIncludeBlog(false);
+    setIncludePortfolio(true);
+    setIncludeLogoCloud(true);
+    setEnableMotion(true);
+    setDraftSavedAt("");
+  };
+
+  const handleToggleFavorite = (projectId) => {
+    const updated = projects.map((project) =>
+      project.id === projectId ? { ...project, isFavorite: !project.isFavorite } : project
+    );
+    persistProjects(updated);
+  };
+
+  const handleDuplicateProject = (project) => {
+    const normalized = normalizeProject(project);
+    const duplicate = {
+      ...normalized,
+      id: crypto.randomUUID(),
+      businessName: `${normalized.businessName} Copy`,
+      createdAt: new Date().toISOString(),
+      isFavorite: false,
+      versions: [],
+    };
+    persistProjects([duplicate, ...projects]);
+  };
+
+  const testRegistrarConnection = async () => {
+    if (!liveRegistrarMode) {
+      setRegistrarHealthStatus("Enable Live Registrar API to test gateway connectivity.");
+      return;
+    }
+
+    setRegistrarHealthStatus("Testing registrar gateway...");
+    try {
+      const result = await checkRegistrarHealth({ provider: registrarProvider });
+      if (result?.ok) {
+        setRegistrarHealthStatus(
+          `Connected: ${selectedRegistrar.label} (${result.mode || "gateway"})`
+        );
+      } else {
+        setRegistrarHealthStatus("Gateway responded, but provider check is incomplete.");
+      }
+    } catch (error) {
+      setRegistrarHealthStatus(`Connection failed: ${error.message}`);
+    }
+  };
+
+  const addDomainToCart = (domain) => {
+    if (!domain.available) return;
+    if (domainCart.some((item) => item.name === domain.name)) return;
+    const nextCart = [...domainCart, domain];
+    setDomainCart(nextCart);
+    persistDomainData(ownedDomains, nextCart, sellerMode, resellerMargin);
+  };
+
+  const removeDomainFromCart = (domainName) => {
+    const nextCart = domainCart.filter((item) => item.name !== domainName);
+    setDomainCart(nextCart);
+    persistDomainData(ownedDomains, nextCart, sellerMode, resellerMargin);
+  };
+
+  const checkoutDomains = async () => {
+    if (domainCart.length === 0) return;
+    if (!isSignedIn || !email) {
+      setDomainMessage("Sign in to complete domain checkout.");
+      return;
+    }
+
+    let purchasedItems = [...domainCart];
+    if (liveRegistrarMode) {
+      try {
+        const livePurchased = await purchaseDomainsLive({
+          provider: registrarProvider,
+          domains: domainCart.map((item) => item.name),
+        });
+        if (livePurchased.length > 0) {
+          purchasedItems = livePurchased.map((item) => ({
+            name: item.name,
+            price: Number(item.price || 0),
+            available: false,
+          }));
+        }
+      } catch {
+        setDomainMessage("Live checkout failed. Saved locally in simulator mode.");
+      }
+    }
+
+    const merged = [...ownedDomains];
+    purchasedItems.forEach((domain) => {
+      if (!merged.find((item) => item.name === domain.name)) {
+        const resalePrice = Number((domain.price * (1 + resellerMargin / 100)).toFixed(2));
+        merged.push({
+          ...domain,
+          purchasedAt: new Date().toISOString(),
+          status: sellerMode ? "inventory" : "active",
+          listed: sellerMode,
+          resalePrice,
+        });
+      }
+    });
+
+    setOwnedDomains(merged);
+    setDomainCart([]);
+    persistDomainData(merged, [], sellerMode, resellerMargin);
+    setDomainMessage(`Checkout complete: ${merged.length} domains in portfolio.`);
+  };
+
+  const applyOwnedDomain = (domainName) => {
+    setCustomDomain(domainName);
+    setDomainMessage(`Applied ${domainName} as project domain.`);
+  };
+
+  const activateSellerMode = () => {
+    if (!isSignedIn || !email) {
+      setDomainMessage("Sign in to activate seller mode.");
+      return;
+    }
+    setSellerMode(true);
+    persistDomainData(ownedDomains, domainCart, true, resellerMargin);
+    setDomainMessage("Seller mode activated. New domains will be added to inventory.");
+
+    if (liveRegistrarMode) {
+      activateSellerLive({ provider: registrarProvider, margin: resellerMargin }).catch(() => {
+        setDomainMessage("Seller mode active locally. Live registrar activation failed.");
+      });
+    }
+  };
+
+  const updateResalePrice = (domainName, value) => {
+    const next = ownedDomains.map((item) =>
+      item.name === domainName ? { ...item, resalePrice: Number(value || 0) } : item
+    );
+    setOwnedDomains(next);
+    persistDomainData(next, domainCart, sellerMode, resellerMargin);
+  };
+
+  const toggleDomainListing = async (domainName) => {
+    const next = ownedDomains.map((item) =>
+      item.name === domainName
+        ? {
+            ...item,
+            listed: !item.listed,
+            status: !item.listed ? "listed" : "inventory",
+          }
+        : item
+    );
+    setOwnedDomains(next);
+    persistDomainData(next, domainCart, sellerMode, resellerMargin);
+
+    if (liveRegistrarMode) {
+      const changed = next.find((item) => item.name === domainName);
+      if (changed) {
+        try {
+          await updateListingLive({
+            provider: registrarProvider,
+            domain: changed.name,
+            listed: Boolean(changed.listed),
+            resalePrice: Number(changed.resalePrice || changed.price || 0),
+          });
+        } catch {
+          setDomainMessage("Listing updated locally. Live registrar listing update failed.");
+        }
+      }
+    }
+  };
+
+  const getExportFileName = (project) => {
+    const base = slugify(project.businessName || project.industryLabel || "website");
+    return `${base || "website"}-${project.id.slice(0, 8)}.zip`;
+  };
+
+  const handleExport = (project) => {
+    const normalized = normalizeProject(project);
+    const files = getProjectFiles(normalized);
+
+    const blob = createZipBlob([
+      { name: "index.html", content: files["index.html"] },
+      { name: "about.html", content: files["about.html"] },
+      { name: "services.html", content: files["services.html"] },
+      { name: "contact.html", content: files["contact.html"] },
+      { name: "sitemap.xml", content: files["sitemap.xml"] || "" },
+      { name: "robots.txt", content: files["robots.txt"] || "" },
+      {
+        name: "project-config.json",
+        content: JSON.stringify(
+          {
+            businessName: normalized.businessName,
+            industry: normalized.industryLabel,
+            tone: normalized.tone,
+            goal: normalized.goal,
+            qualityScore: normalized.qualityScore,
+            domain: {
+              customDomain: normalized.options?.customDomain || "",
+              effectiveDomain:
+                normalizeDomain(normalized.options?.customDomain || "") ||
+                `${slugify(normalized.businessName || "example")}.com`,
+            },
+            options: normalized.options,
+            themePreset: normalized.options?.themePreset || "corporate",
+            substylePreset: normalized.options?.substylePreset || "",
+          },
+          null,
+          2
+        ),
+      },
+    ]);
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = getExportFileName(normalized);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePublishProject = async (project) => {
+    const normalized = normalizeProject(project);
+    const files = getProjectFiles(normalized);
+    const safeSiteId = `${slugify(normalized.businessName || "site")}-${normalized.id.slice(0, 8)}`;
+
+    setHostingBusyId(normalized.id);
+    setHostingMessage(`Publishing ${normalized.businessName}...`);
+
+    try {
+      const payload = await publishProjectLive({
+        siteId: safeSiteId,
+        projectName: normalized.businessName,
+        customDomain: normalizeDomain(normalized.options?.customDomain || ""),
+        files: {
+          "index.html": files["index.html"],
+          "about.html": files["about.html"],
+          "services.html": files["services.html"],
+          "contact.html": files["contact.html"],
+          "robots.txt": files["robots.txt"] || "",
+          "sitemap.xml": files["sitemap.xml"] || "",
+        },
+      });
+
+      setHostedSites((prev) => ({
+        ...prev,
+        [safeSiteId]: payload,
+      }));
+      setHostingMessage(`Published: ${payload.url}`);
+    } catch (error) {
+      setHostingMessage(`Publish failed: ${error.message}`);
+    } finally {
+      setHostingBusyId("");
+    }
+  };
+
+  const handleUnpublishProject = async (project) => {
+    const normalized = normalizeProject(project);
+    const safeSiteId = `${slugify(normalized.businessName || "site")}-${normalized.id.slice(0, 8)}`;
+
+    setHostingBusyId(normalized.id);
+    setHostingMessage(`Unpublishing ${normalized.businessName}...`);
+    try {
+      await unpublishProjectLive({ siteId: safeSiteId });
+      setHostedSites((prev) => {
+        const next = { ...prev };
+        delete next[safeSiteId];
+        return next;
+      });
+      setHostingMessage("Project unpublished.");
+    } catch (error) {
+      setHostingMessage(`Unpublish failed: ${error.message}`);
+    } finally {
+      setHostingBusyId("");
+    }
+  };
+
+  const handleExportProjectJson = (project) => {
+    const normalized = normalizeProject(project);
+    const blob = new Blob([JSON.stringify(normalized, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${slugify(normalized.businessName || "project")}-${normalized.id.slice(
+      0,
+      8
+    )}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportProjectJson = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const imported = normalizeProject({
+        ...parsed,
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+      });
+      persistProjects([imported, ...projects]);
+    } catch {
+      setError("Could not import project JSON file.");
+    } finally {
+      if (projectImportRef.current) {
+        projectImportRef.current.value = "";
+      }
+    }
+  };
+
+  const handleClearAll = () => {
+    if (!window.confirm("Delete all saved websites for all accounts on this browser?")) return;
+
+    localStorage.removeItem(STORAGE_KEY);
+    setProjects([]);
+    setPreviewHtml("");
+    setEditableHtml("");
+    setActiveProjectId(null);
+    setDraftProject(null);
+    setError("");
+  };
+
+  const handleSignup = () => {
+    if (!email || !password) {
+      alert("Enter email and password");
+      return;
+    }
+
+    localStorage.setItem("titonova_user", email);
+    setIsSignedIn(true);
+    setShowSignup(false);
+
+    if (draftProject) {
+      addProjectsForUser(email, [draftProject]);
+      setDraftProject(null);
+    } else {
+      setProjects(getUserProjects(email).map(normalizeProject));
+    }
+    const domains = getUserDomainData(email);
+    setOwnedDomains(domains.owned || []);
+    setDomainCart(domains.cart || []);
+    setSellerMode(Boolean(domains.seller?.active));
+    setResellerMargin(Number(domains.seller?.margin || 35));
+  };
+
+  const handleSignout = () => {
+    localStorage.removeItem("titonova_user");
+    setIsSignedIn(false);
+    setProjects([]);
+    setOwnedDomains([]);
+    setDomainCart([]);
+    setSellerMode(false);
+    setResellerMargin(35);
+  };
+
+  shortcutHandlersRef.current.generateOne = handleGenerateOne;
+  shortcutHandlersRef.current.generateAll = handleGenerateAll;
+  shortcutHandlersRef.current.saveInlineEdits = handleSaveInlineEdits;
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      const modifier = event.metaKey || event.ctrlKey;
+      if (!modifier) return;
+      if (event.target instanceof HTMLElement) {
+        const tag = event.target.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") {
+          if (event.key.toLowerCase() !== "s") return;
+        }
+      }
+
+      if (event.key === "Enter" && event.shiftKey) {
+        event.preventDefault();
+        if (!loading) shortcutHandlersRef.current.generateAll();
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (!loading) shortcutHandlersRef.current.generateOne();
+        return;
+      }
+
+      if (event.key.toLowerCase() === "s" && isInlineEditing && activeProjectId) {
+        event.preventDefault();
+        shortcutHandlersRef.current.saveInlineEdits();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [loading, isInlineEditing, activeProjectId]);
+
+  return (
+    <div className="builder-shell">
+      <header className="builder-topbar">
+        <div className="brand-block">
+          <div className="brand-dot">TN</div>
+          <div>
+            <strong>TitoNova AI Builder Pro</strong>
+            <p>Advanced multi-page generation workspace</p>
+          </div>
+        </div>
+        <div className="topbar-actions">
+          <button className="ghost" onClick={() => setShowSignup(true)}>
+            {isSignedIn ? "Account" : "Sign in"}
+          </button>
+          {isSignedIn && (
+            <button className="ghost" onClick={handleSignout}>
+              Sign out
+            </button>
+          )}
+        </div>
+      </header>
+
+      <main className="workspace-grid">
+        <aside className="wizard-panel">
+          <h2>AI Setup Wizard</h2>
+          <p>Configure the full website strategy, branding system, and conversion goal.</p>
+
+          <label htmlFor="business-name">Business name</label>
+          <input
+            id="business-name"
+            value={businessName}
+            onChange={(event) => setBusinessName(event.target.value)}
+            placeholder="Example: Northpoint Studio"
+          />
+
+          <label htmlFor="industry-select">Industry</label>
+          <select
+            id="industry-select"
+            value={industryKey}
+            onChange={(event) => setIndustryKey(event.target.value)}
+          >
+            {INDUSTRIES.map((industry) => (
+              <option key={industry.key} value={industry.key}>
+                {industry.label}
+              </option>
+            ))}
+          </select>
+
+          <label htmlFor="goal-select">Primary goal</label>
+          <select id="goal-select" value={goal} onChange={(event) => setGoal(event.target.value)}>
+            {GOALS.map((goalOption) => (
+              <option key={goalOption} value={goalOption}>
+                {goalOption}
+              </option>
+            ))}
+          </select>
+
+          <label htmlFor="theme-select">Theme preset</label>
+          <select
+            id="theme-select"
+            value={themePreset}
+            onChange={(event) => setThemePreset(event.target.value)}
+          >
+            {THEME_PRESETS.map((preset) => (
+              <option key={preset.key} value={preset.key}>
+                {preset.label}
+              </option>
+            ))}
+          </select>
+
+          <label htmlFor="substyle-select">Substyle</label>
+          <select
+            id="substyle-select"
+            value={substylePreset}
+            onChange={(event) => setSubstylePreset(event.target.value)}
+          >
+            {availableSubstyles.map((substyle) => (
+              <option key={substyle.key} value={substyle.key}>
+                {substyle.label}
+              </option>
+            ))}
+          </select>
+
+          <label>Tone</label>
+          <div className="tone-row">
+            {TONES.map((toneOption) => (
+              <button
+                key={toneOption}
+                className={`tone-chip ${toneOption === tone ? "active" : ""}`}
+                onClick={() => setTone(toneOption)}
+              >
+                {toneOption}
+              </button>
+            ))}
+          </div>
+
+          <label htmlFor="brand-color">Brand color</label>
+          <div className="input-inline">
+            <input
+              id="brand-color"
+              type="color"
+              value={brandColor}
+              onChange={(event) => setBrandColor(event.target.value)}
+            />
+            <input
+              value={brandColor}
+              onChange={(event) => setBrandColor(event.target.value)}
+              aria-label="Brand color hex"
+            />
+          </div>
+
+          <label htmlFor="font-theme">Typography style</label>
+          <select
+            id="font-theme"
+            value={fontTheme}
+            onChange={(event) => setFontTheme(event.target.value)}
+          >
+            <option value="sans">Sans</option>
+            <option value="serif">Serif</option>
+            <option value="mono">Mono</option>
+          </select>
+
+          <label htmlFor="visual-style">Visual style pack</label>
+          <select
+            id="visual-style"
+            value={visualStyle}
+            onChange={(event) => setVisualStyle(event.target.value)}
+          >
+            {VISUAL_STYLES.map((style) => (
+              <option key={style.key} value={style.key}>
+                {style.label}
+              </option>
+            ))}
+          </select>
+
+          <label className="inline-toggle">
+            <input
+              type="checkbox"
+              checked={useLlm}
+              onChange={(event) => setUseLlm(event.target.checked)}
+            />
+            Use LLM copy generation
+          </label>
+          {useLlm && (
+            <>
+              <label htmlFor="llm-preset">AI quality preset</label>
+              <select
+                id="llm-preset"
+                value={llmPreset}
+                onChange={(event) => setLlmPreset(event.target.value)}
+              >
+                {LLM_MODEL_PRESETS.map((preset) => (
+                  <option key={preset.key} value={preset.key}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+              <p className="llm-note">{selectedLlmPreset.description}</p>
+
+              <label htmlFor="llm-model">LLM model</label>
+              <select
+                id="llm-model"
+                value={llmModel}
+                onChange={(event) => setLlmModel(event.target.value)}
+              >
+                {llmModelOptions.map((modelOption) => (
+                  <option key={modelOption} value={modelOption}>
+                    {modelOption}
+                  </option>
+                ))}
+              </select>
+
+              <label htmlFor="llm-custom-model">Custom first-choice model (optional)</label>
+              <input
+                id="llm-custom-model"
+                value={llmCustomModel}
+                onChange={(event) => setLlmCustomModel(event.target.value)}
+                placeholder="e.g. gpt-4.1"
+              />
+              <p className="llm-note">
+                Requires <code>VITE_OPENAI_API_KEY</code>. If the selected model is unavailable,
+                fallback models from the preset are used automatically.
+              </p>
+            </>
+          )}
+
+          <div className="toggle-grid">
+            <label><input type="checkbox" checked={includePricing} onChange={(e) => setIncludePricing(e.target.checked)} /> Pricing</label>
+            <label><input type="checkbox" checked={includeTestimonials} onChange={(e) => setIncludeTestimonials(e.target.checked)} /> Testimonials</label>
+            <label><input type="checkbox" checked={includeFaq} onChange={(e) => setIncludeFaq(e.target.checked)} /> FAQ</label>
+            <label><input type="checkbox" checked={includeBlog} onChange={(e) => setIncludeBlog(e.target.checked)} /> Blog</label>
+            <label><input type="checkbox" checked={includePortfolio} onChange={(e) => setIncludePortfolio(e.target.checked)} /> Portfolio</label>
+            <label><input type="checkbox" checked={includeLogoCloud} onChange={(e) => setIncludeLogoCloud(e.target.checked)} /> Logo cloud</label>
+            <label><input type="checkbox" checked={enableMotion} onChange={(e) => setEnableMotion(e.target.checked)} /> Animations</label>
+          </div>
+
+          <div className="quality-meter">
+            <div className="quality-head">
+              <strong>AI brief score</strong>
+              <span>{qualityScore}/100</span>
+            </div>
+            <div className="quality-track">
+              <span style={{ width: `${qualityScore}%` }} />
+            </div>
+          </div>
+
+          <div className="wizard-stats">
+            <div>
+              <strong>{INDUSTRIES.length}</strong>
+              <span>Industries</span>
+            </div>
+            <div>
+              <strong>{projectCount}</strong>
+              <span>Saved projects</span>
+            </div>
+            <div>
+              <strong>{PAGE_CONFIG.length}</strong>
+              <span>Pages/site</span>
+            </div>
+          </div>
+        </aside>
+
+        <section className="generator-panel">
+          <div className="panel-card">
+            <h1>Describe the website you want</h1>
+            <p>
+              Advanced generation includes SEO metadata, extra sections, conversion-focused layouts,
+              and multipage export artifacts.
+            </p>
+
+            <label htmlFor="prompt">Project prompt</label>
+            <textarea
+              id="prompt"
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              rows={8}
+              placeholder="Describe services, audience, location, value proposition, and CTA style."
+            />
+
+            <div className="advanced-grid">
+              <div>
+                <label htmlFor="cta-text">Primary CTA</label>
+                <input
+                  id="cta-text"
+                  value={ctaText}
+                  onChange={(event) => setCtaText(event.target.value)}
+                  placeholder="Book a strategy call"
+                />
+              </div>
+              <div>
+                <label htmlFor="seo-title">SEO title</label>
+                <input
+                  id="seo-title"
+                  value={seoTitle}
+                  onChange={(event) => setSeoTitle(event.target.value)}
+                  placeholder="Brand | Industry Services"
+                />
+              </div>
+              <div>
+                <label htmlFor="custom-domain">Custom domain</label>
+                <input
+                  id="custom-domain"
+                  value={customDomain}
+                  onChange={(event) => setCustomDomain(event.target.value)}
+                  placeholder="example.com"
+                />
+              </div>
+            </div>
+
+            {error && <div className="error-box">{error}</div>}
+            {llmStatus && <div className="llm-status">{llmStatus}</div>}
+
+            <div className="action-row">
+              <button onClick={handleGenerateOne} disabled={loading}>
+                {loading ? "Generating..." : "Generate Website"}
+              </button>
+              <button className="ghost" onClick={handleGenerateAll} disabled={loading}>
+                {loading ? "Generating..." : "Generate All Industries"}
+              </button>
+            </div>
+
+            <div className="command-center">
+              <div className="command-row">
+                <strong>Builder Draft</strong>
+                <span className="muted">
+                  {draftSavedAt ? `Autosaved ${new Date(draftSavedAt).toLocaleTimeString()}` : "No draft saved yet"}
+                </span>
+              </div>
+              <div className="shortcut-grid">
+                <span>
+                  <kbd>Ctrl/Cmd + Enter</kbd> Generate website
+                </span>
+                <span>
+                  <kbd>Ctrl/Cmd + Shift + Enter</kbd> Generate all industries
+                </span>
+                <span>
+                  <kbd>Ctrl/Cmd + S</kbd> Save inline edits
+                </span>
+              </div>
+              <button className="ghost small" type="button" onClick={handleResetDraft}>
+                Reset builder draft
+              </button>
+            </div>
+          </div>
+
+          <div className="panel-card">
+            <div className="card-header-row">
+              <h2>Domain Marketplace</h2>
+              <span className="muted">Search, cart, and checkout domains</span>
+            </div>
+            <div className="registrar-controls">
+              <select
+                value={registrarProvider}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setRegistrarProvider(next);
+                  setRegistrarHealthStatus("");
+                  if (isSignedIn && email) {
+                    saveUserDomainData(email, {
+                      owned: ownedDomains,
+                      cart: domainCart,
+                      seller: { active: sellerMode, margin: resellerMargin },
+                      registrar: { provider: next, liveMode: liveRegistrarMode },
+                    });
+                  }
+                }}
+              >
+                {REGISTRAR_PROVIDERS.map((provider) => (
+                  <option key={provider.key} value={provider.key}>
+                    {provider.label}
+                  </option>
+                ))}
+              </select>
+              <label className="mini-toggle">
+                <input
+                  type="checkbox"
+                  checked={liveRegistrarMode}
+                  onChange={(event) => {
+                    const next = event.target.checked;
+                    setLiveRegistrarMode(next);
+                    setRegistrarHealthStatus("");
+                    if (isSignedIn && email) {
+                      saveUserDomainData(email, {
+                        owned: ownedDomains,
+                        cart: domainCart,
+                        seller: { active: sellerMode, margin: resellerMargin },
+                        registrar: { provider: registrarProvider, liveMode: next },
+                      });
+                    }
+                  }}
+                />
+                Live Registrar API
+              </label>
+              <button className="ghost small" onClick={testRegistrarConnection}>
+                Test Connection
+              </button>
+              {registrarLoading && <span className="muted">Querying registrar...</span>}
+            </div>
+            <div className="registrar-hint">
+              <strong>{selectedRegistrar.label} requirements</strong>
+              <ul className="registrar-req-list">
+                {selectedRegistrar.requirements.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+              <p className="muted">
+                Gateway path: <code>/api/registrar/*</code>
+              </p>
+            </div>
+            {registrarHealthStatus && <div className="llm-status">{registrarHealthStatus}</div>}
+            <div className="seller-row">
+              <span className={`domain-status ${sellerMode ? "ok" : "taken"}`}>
+                {sellerMode ? "Seller Mode Active" : "Seller Mode Inactive"}
+              </span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={resellerMargin}
+                onChange={(event) => setResellerMargin(Number(event.target.value || 0))}
+                className="margin-input"
+                aria-label="Reseller margin percentage"
+              />
+              <span className="muted">Margin %</span>
+              <button className="ghost small" onClick={activateSellerMode}>
+                Activate Seller
+              </button>
+            </div>
+            <div className="domain-search-row">
+              <input
+                placeholder="Search domain keyword..."
+                value={domainSearch}
+                onChange={(event) => setDomainSearch(event.target.value)}
+              />
+            </div>
+            {domainMessage && <div className="llm-status">{domainMessage}</div>}
+            <div className="domain-suggestion-grid">
+              {domainSuggestions.slice(0, 8).map((domain) => (
+                <article key={domain.name} className="domain-card">
+                  <div>
+                    <h3>{domain.name}</h3>
+                    <p>${domain.price.toFixed(2)}/year</p>
+                  </div>
+                  <div className="domain-actions">
+                    <span className={`domain-status ${domain.available ? "ok" : "taken"}`}>
+                      {domain.available ? "Available" : "Taken"}
+                    </span>
+                    <button
+                      className="ghost small"
+                      onClick={() => addDomainToCart(domain)}
+                      disabled={!domain.available}
+                    >
+                      Add to cart
+                    </button>
+                  </div>
+                </article>
+              ))}
+              {domainSuggestions.length === 0 && (
+                <div className="empty">Enter a keyword to discover domain options.</div>
+              )}
+            </div>
+
+            <div className="domain-cart">
+              <h3>Cart ({domainCart.length})</h3>
+              <div className="domain-cart-list">
+                {domainCart.map((item) => (
+                  <div key={item.name} className="domain-cart-item">
+                    <span>{item.name}</span>
+                    <span>${item.price.toFixed(2)}</span>
+                    <button className="ghost small" onClick={() => removeDomainFromCart(item.name)}>
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                {domainCart.length === 0 && <div className="empty-mini">No domains in cart.</div>}
+              </div>
+              <button className="ghost" onClick={checkoutDomains} disabled={domainCart.length === 0}>
+                Checkout Domains
+              </button>
+            </div>
+
+            <div className="domain-owned">
+              <h3>Owned Domains ({ownedDomains.length})</h3>
+              <div className="domain-cart-list">
+                {ownedDomains.slice(0, 8).map((item) => (
+                  <div key={item.name} className="domain-cart-item">
+                    <span>{item.name}</span>
+                    <span>{item.listed ? `Listed $${Number(item.resalePrice || item.price).toFixed(2)}` : item.status}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={Number(item.resalePrice || item.price)}
+                      onChange={(event) => updateResalePrice(item.name, event.target.value)}
+                      className="resale-input"
+                      aria-label={`Resale price for ${item.name}`}
+                    />
+                    <button className="ghost small" onClick={() => toggleDomainListing(item.name)}>
+                      {item.listed ? "Unlist" : "List"}
+                    </button>
+                    <button className="ghost small" onClick={() => applyOwnedDomain(item.name)}>
+                      Use for project
+                    </button>
+                  </div>
+                ))}
+                {ownedDomains.length === 0 && (
+                  <div className="empty-mini">No owned domains yet.</div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {isSignedIn && (
+            <div className="panel-card">
+              <div className="card-header-row">
+                <h2>Project Library</h2>
+                {projects.length > 0 && (
+                  <button className="danger" onClick={handleClearAll}>
+                    Clean up all websites
+                  </button>
+                )}
+              </div>
+
+              <div className="library-toolbar">
+                <input
+                  placeholder="Search by name, industry, tone, goal..."
+                  value={projectSearch}
+                  onChange={(event) => setProjectSearch(event.target.value)}
+                />
+                <select value={sortMode} onChange={(event) => setSortMode(event.target.value)}>
+                  <option value="newest">Newest</option>
+                  <option value="score">Best score</option>
+                  <option value="name">Name</option>
+                </select>
+                <button
+                  className="ghost"
+                  type="button"
+                  onClick={() => projectImportRef.current?.click()}
+                >
+                  Import JSON
+                </button>
+                <input
+                  ref={projectImportRef}
+                  type="file"
+                  accept="application/json"
+                  className="hidden-input"
+                  onChange={handleImportProjectJson}
+                />
+                <label className="fav-toggle">
+                  <input
+                    type="checkbox"
+                    checked={favoritesOnly}
+                    onChange={(event) => setFavoritesOnly(event.target.checked)}
+                  />
+                  Favorites only
+                </label>
+              </div>
+
+              {filteredProjects.length === 0 ? (
+                <div className="empty">No projects match your current filters.</div>
+              ) : (
+                <div className="project-grid">
+                  {filteredProjects.map((project) => {
+                    const siteId = `${slugify(project.businessName || "site")}-${project.id.slice(0, 8)}`;
+                    const hosted = hostedSites[siteId];
+                    return (
+                    <article key={project.id} className="project-card">
+                      <div>
+                        <h3>{project.businessName}</h3>
+                        <p>
+                          {project.industryLabel} • {project.tone} • {project.goal} •{" "}
+                          {(project.options?.themePreset || "corporate").toUpperCase()} •{" "}
+                          {(project.options?.substylePreset || "default").toUpperCase()} •{" "}
+                          {(project.options?.visualStyle || "glass").toUpperCase()}
+                          {project.options?.useLlm
+                            ? ` • LLM:${project.options?.llmResolvedModel || project.options?.llmModel || "ON"}`
+                            : ""}
+                        </p>
+                        <span>
+                          Domain:{" "}
+                          {normalizeDomain(project.options?.customDomain || "") || "(auto generated)"}
+                        </span>
+                        {hosted?.url && (
+                          <span>
+                            Live URL:{" "}
+                            <a href={hosted.url} target="_blank" rel="noreferrer">
+                              {hosted.url}
+                            </a>
+                          </span>
+                        )}
+                        <span>{new Date(project.createdAt).toLocaleString()}</span>
+                      </div>
+                      <div className="project-meta-row">
+                        <span className="score-chip">Score {project.qualityScore}</span>
+                        <button
+                          className={`ghost icon-btn ${project.isFavorite ? "is-favorite" : ""}`}
+                          onClick={() => handleToggleFavorite(project.id)}
+                          aria-label="Toggle favorite"
+                        >
+                          ★
+                        </button>
+                      </div>
+                      <div className="project-actions">
+                        <button className="ghost" onClick={() => openProject(project)}>
+                          Open preview
+                        </button>
+                        <button className="ghost" onClick={() => handleExport(project)}>
+                          Export ZIP
+                        </button>
+                        <button className="ghost" onClick={() => handleExportProjectJson(project)}>
+                          Export JSON
+                        </button>
+                        <button className="ghost" onClick={() => handleDuplicateProject(project)}>
+                          Duplicate
+                        </button>
+                        <button
+                          className="ghost"
+                          onClick={() => handlePublishProject(project)}
+                          disabled={hostingBusyId === project.id}
+                        >
+                          {hostingBusyId === project.id ? "Publishing..." : "Publish Live"}
+                        </button>
+                        {hosted?.url && (
+                          <>
+                            <a className="ghost button-link" href={hosted.url} target="_blank" rel="noreferrer">
+                              Open Live
+                            </a>
+                            <button
+                              className="ghost"
+                              onClick={() => handleUnpublishProject(project)}
+                              disabled={hostingBusyId === project.id}
+                            >
+                              Unpublish
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </article>
+                    );
+                  })}
+                </div>
+              )}
+              {hostingMessage && <div className="llm-status">{hostingMessage}</div>}
+            </div>
+          )}
+        </section>
+
+        <aside className="preview-panel">
+          <div className="preview-header">
+            <h2>Live Preview</h2>
+            <p>Page-level canvas with responsive device emulation</p>
+          </div>
+
+          <div className="preview-toolbar">
+            <div className="page-tabs">
+              {PAGE_CONFIG.map((page) => (
+                <button
+                  key={page.key}
+                  className={`ghost small ${previewPage === page.key ? "active" : ""}`}
+                  onClick={() => setPreviewPage(page.key)}
+                >
+                  {page.label}
+                </button>
+              ))}
+            </div>
+            <div className="device-tabs">
+              <button
+                className={`ghost small ${previewDevice === "desktop" ? "active" : ""}`}
+                onClick={() => setPreviewDevice("desktop")}
+              >
+                Desktop
+              </button>
+              <button
+                className={`ghost small ${previewDevice === "tablet" ? "active" : ""}`}
+                onClick={() => setPreviewDevice("tablet")}
+              >
+                Tablet
+              </button>
+              <button
+                className={`ghost small ${previewDevice === "mobile" ? "active" : ""}`}
+                onClick={() => setPreviewDevice("mobile")}
+              >
+                Mobile
+              </button>
+            </div>
+          </div>
+
+          <div className="preview-tools">
+            <button className="ghost" onClick={() => setIsInlineEditing((prev) => !prev)}>
+              {isInlineEditing ? "Stop inline edit" : "Inline edit"}
+            </button>
+            {isInlineEditing && (
+              <button onClick={handleSaveInlineEdits}>Save edits to {previewPage}</button>
+            )}
+          </div>
+
+          {activeProject && (
+            <div className="advanced-tools">
+              <div className="tool-block">
+                <h3>Global Replace</h3>
+                <div className="replace-grid">
+                  <input
+                    placeholder="Find text..."
+                    value={replaceFrom}
+                    onChange={(event) => setReplaceFrom(event.target.value)}
+                  />
+                  <input
+                    placeholder="Replace with..."
+                    value={replaceTo}
+                    onChange={(event) => setReplaceTo(event.target.value)}
+                  />
+                </div>
+                <label className="mini-toggle">
+                  <input
+                    type="checkbox"
+                    checked={replaceCaseSensitive}
+                    onChange={(event) => setReplaceCaseSensitive(event.target.checked)}
+                  />
+                  Case-sensitive
+                </label>
+                <button className="ghost" onClick={handleGlobalReplace}>
+                  Apply to all pages
+                </button>
+              </div>
+
+              <div className="tool-block">
+                <h3>Block Editor</h3>
+                <div className="snapshot-row">
+                  <select
+                    value={selectedBlockTemplate}
+                    onChange={(event) => setSelectedBlockTemplate(event.target.value)}
+                  >
+                    {Object.entries(BLOCK_TEMPLATES).map(([key, block]) => (
+                      <option key={key} value={key}>
+                        {block.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="ghost" onClick={handleInsertSectionAtEnd}>
+                    Insert At End
+                  </button>
+                </div>
+                <div className="version-list">
+                  {pageSections.map((section) => (
+                    <div key={`${previewPage}-${section.index}`} className="version-item block-item">
+                      <span>{section.title}</span>
+                      <small>Section {section.index + 1}</small>
+                      <div className="block-actions">
+                        <button
+                          className="ghost small"
+                          onClick={() => handleMoveSection(section.index, "up")}
+                        >
+                          Up
+                        </button>
+                        <button
+                          className="ghost small"
+                          onClick={() => handleMoveSection(section.index, "down")}
+                        >
+                          Down
+                        </button>
+                        <button
+                          className="ghost small"
+                          onClick={() => handleDuplicateSection(section.index)}
+                        >
+                          Duplicate
+                        </button>
+                        <button
+                          className="ghost small"
+                          onClick={() => handleInsertSectionBelow(section.index)}
+                        >
+                          Insert Below
+                        </button>
+                        <button
+                          className="ghost small"
+                          onClick={() => handleRemoveSection(section.index)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {pageSections.length === 0 && (
+                    <div className="empty-mini">No editable sections found on this page.</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="tool-block">
+                <h3>Version History</h3>
+                <div className="snapshot-row">
+                  <input
+                    placeholder="Snapshot note..."
+                    value={versionNote}
+                    onChange={(event) => setVersionNote(event.target.value)}
+                  />
+                  <button className="ghost" onClick={handleCreateSnapshot}>
+                    Save Snapshot
+                  </button>
+                </div>
+                <div className="version-list">
+                  {(activeProject.versions || []).slice(0, 6).map((version) => (
+                    <div key={version.id} className="version-item">
+                      <span>{version.note}</span>
+                      <small>{new Date(version.createdAt).toLocaleString()}</small>
+                      <button className="ghost small" onClick={() => handleRestoreVersion(version.id)}>
+                        Restore
+                      </button>
+                    </div>
+                  ))}
+                  {(activeProject.versions || []).length === 0 && (
+                    <div className="empty-mini">No snapshots yet.</div>
+                  )}
+                </div>
+              </div>
+
+              {siteAudit && (
+                <div className="tool-block">
+                  <h3>SEO & A11y Audit</h3>
+                  <div className="audit-score">Score: {siteAudit.score}/100</div>
+                  <div className="audit-grid">
+                    <span>Words: {siteAudit.metrics.totalWords}</span>
+                    <span>Links: {siteAudit.metrics.totalLinks}</span>
+                    <span>CTA mentions: {siteAudit.metrics.ctaCount}</span>
+                    <span>Missing meta: {siteAudit.metrics.missingMeta}</span>
+                    <span>Heading issues: {siteAudit.metrics.headingIssues}</span>
+                    <span>Missing alt: {siteAudit.metrics.missingAlt}</span>
+                  </div>
+                </div>
+              )}
+
+              {siteAudit && (
+                <div className="tool-block">
+                  <div className="card-header-row">
+                    <h3>Smart Optimization</h3>
+                    <button
+                      className="ghost small"
+                      type="button"
+                      onClick={handleRunAllInsights}
+                      disabled={smartInsights.length === 0}
+                    >
+                      Apply All
+                    </button>
+                  </div>
+                  {smartInsights.length === 0 ? (
+                    <div className="empty-mini">No optimization actions recommended.</div>
+                  ) : (
+                    <div className="insight-list">
+                      {smartInsights.map((insight) => (
+                        <div key={insight.key} className="version-item insight-item">
+                          <span>{insight.label}</span>
+                          <small>{insight.description}</small>
+                          <button
+                            className="ghost small"
+                            type="button"
+                            onClick={() => applyInsight(insight.key)}
+                          >
+                            Apply
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {insightMessage && <div className="llm-status">{insightMessage}</div>}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className={`preview-frame device-${previewDevice}`}>
+            {previewHtml ? (
+              <iframe
+                ref={iframeRef}
+                title="Website preview"
+                srcDoc={isInlineEditing ? editableHtml : previewHtml}
+                sandbox="allow-same-origin"
+              />
+            ) : (
+              <div className="preview-empty">Generate a website to preview your draft here.</div>
+            )}
+          </div>
+        </aside>
+      </main>
+
+      {showSignup && !isSignedIn && (
+        <div className="modal-overlay">
+          <div className="signup-modal">
+            <h3>Create account to save projects</h3>
+            <p>Sign in is local-only for this demo workspace.</p>
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="Email"
+            />
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Password"
+            />
+            <div className="modal-actions">
+              <button onClick={handleSignup}>Create Account</button>
+              <button className="ghost" onClick={() => setShowSignup(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
