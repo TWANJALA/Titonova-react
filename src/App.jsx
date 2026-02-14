@@ -31,6 +31,33 @@ const INDUSTRIES = [
 ];
 
 const TONES = ["Professional", "Modern", "Bold", "Minimal", "Friendly"];
+const REWRITE_PRESETS = [
+  {
+    key: "premium",
+    label: "More Premium",
+    tone: "Professional",
+    instruction:
+      "Elevate perceived value and authority with refined, high-trust language suited to premium buyers.",
+  },
+  {
+    key: "concise",
+    label: "More Concise",
+    tone: "Minimal",
+    instruction: "Shorten copy while preserving clarity and conversion intent.",
+  },
+  {
+    key: "friendly",
+    label: "More Friendly",
+    tone: "Friendly",
+    instruction: "Use warmer, approachable language while staying clear and action-oriented.",
+  },
+  {
+    key: "urgent",
+    label: "More Urgent",
+    tone: "Bold",
+    instruction: "Increase urgency and momentum without sounding spammy or aggressive.",
+  },
+];
 const GOALS = ["Lead Generation", "Bookings", "Ecommerce", "Brand Awareness"];
 const QUICK_START_PRESETS = [
   {
@@ -2289,6 +2316,176 @@ const extractQuickEditFields = (html) => {
   return { headline, subhead, cta };
 };
 
+const SECTION_REWRITE_OPTIONS = [
+  {
+    key: "hero",
+    label: "Hero",
+    pages: ["index.html", "about.html", "services.html", "contact.html"],
+  },
+  {
+    key: "services",
+    label: "Services",
+    pages: ["index.html", "services.html"],
+  },
+  {
+    key: "about_story",
+    label: "About Story",
+    pages: ["about.html"],
+  },
+  {
+    key: "contact_block",
+    label: "Contact block",
+    pages: ["contact.html"],
+  },
+];
+
+const getSectionOptionsForPage = (pageKey) =>
+  SECTION_REWRITE_OPTIONS.filter((item) => item.pages.includes(pageKey));
+
+const extractSectionRewriteFields = (html, sectionKey) => {
+  if (!html) return null;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+
+  if (sectionKey === "hero") {
+    const headline = doc.querySelector("h1")?.textContent?.trim() || "";
+    const subhead = doc.querySelector(".sub")?.textContent?.trim() || "";
+    const cta = doc.querySelector("a.cta")?.textContent?.trim() || "";
+    return { headline, subhead, cta };
+  }
+
+  if (sectionKey === "services") {
+    const sections = Array.from(doc.querySelectorAll("main section"));
+    const target =
+      sections.find((section) => /service/i.test(section.querySelector("h2")?.textContent || "")) ||
+      sections.find((section) => section.querySelector(".cards .card"));
+    if (!target) return null;
+    const title = target.querySelector("h2")?.textContent?.trim() || "";
+    const points = Array.from(target.querySelectorAll(".card p"))
+      .slice(0, 3)
+      .map((node) => node.textContent?.trim() || "");
+    return {
+      title,
+      point1: points[0] || "",
+      point2: points[1] || "",
+      point3: points[2] || "",
+    };
+  }
+
+  if (sectionKey === "about_story") {
+    const sections = Array.from(doc.querySelectorAll("main section"));
+    const target = sections.find((section) =>
+      /our story/i.test(section.querySelector("h2")?.textContent || "")
+    );
+    if (!target) return null;
+    const title = target.querySelector("h2")?.textContent?.trim() || "";
+    const stories = Array.from(target.querySelectorAll(".card p"))
+      .slice(0, 3)
+      .map((node) => node.textContent?.trim() || "");
+    return {
+      title,
+      story1: stories[0] || "",
+      story2: stories[1] || "",
+      story3: stories[2] || "",
+    };
+  }
+
+  if (sectionKey === "contact_block") {
+    const sections = Array.from(doc.querySelectorAll("main section"));
+    const target =
+      sections.find((section) =>
+        /what happens next/i.test(section.querySelector("h2")?.textContent || "")
+      ) || doc.querySelector("section#connect");
+    if (!target) return null;
+    const title = target.querySelector("h2")?.textContent?.trim() || "Contact block";
+    const blurb = target.querySelector("p.muted")?.textContent?.trim() || "";
+    const points = Array.from(target.querySelectorAll(".card p, .contact-item p"))
+      .slice(0, 3)
+      .map((node) => node.textContent?.trim() || "");
+    return {
+      title,
+      blurb,
+      point1: points[0] || "",
+      point2: points[1] || "",
+      point3: points[2] || "",
+    };
+  }
+
+  return null;
+};
+
+const applySectionRewriteFields = (html, sectionKey, fields) => {
+  if (!html || !fields) return html;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+
+  if (sectionKey === "hero") {
+    const headline = doc.querySelector("h1");
+    const subhead = doc.querySelector(".sub");
+    const cta = doc.querySelector("a.cta");
+    if (headline && fields.headline?.trim()) headline.textContent = fields.headline.trim();
+    if (subhead && fields.subhead?.trim()) subhead.textContent = fields.subhead.trim();
+    if (cta && fields.cta?.trim()) cta.textContent = fields.cta.trim();
+    return "<!doctype html>\n" + doc.documentElement.outerHTML;
+  }
+
+  if (sectionKey === "services") {
+    const sections = Array.from(doc.querySelectorAll("main section"));
+    const target =
+      sections.find((section) => /service/i.test(section.querySelector("h2")?.textContent || "")) ||
+      sections.find((section) => section.querySelector(".cards .card"));
+    if (!target) return html;
+    const titleNode = target.querySelector("h2");
+    if (titleNode && fields.title?.trim()) titleNode.textContent = fields.title.trim();
+    const pointNodes = Array.from(target.querySelectorAll(".card p")).slice(0, 3);
+    [fields.point1, fields.point2, fields.point3].forEach((value, index) => {
+      if (pointNodes[index] && String(value || "").trim()) {
+        pointNodes[index].textContent = String(value).trim();
+      }
+    });
+    return "<!doctype html>\n" + doc.documentElement.outerHTML;
+  }
+
+  if (sectionKey === "about_story") {
+    const sections = Array.from(doc.querySelectorAll("main section"));
+    const target = sections.find((section) =>
+      /our story/i.test(section.querySelector("h2")?.textContent || "")
+    );
+    if (!target) return html;
+    const titleNode = target.querySelector("h2");
+    if (titleNode && fields.title?.trim()) titleNode.textContent = fields.title.trim();
+    const storyNodes = Array.from(target.querySelectorAll(".card p")).slice(0, 3);
+    [fields.story1, fields.story2, fields.story3].forEach((value, index) => {
+      if (storyNodes[index] && String(value || "").trim()) {
+        storyNodes[index].textContent = String(value).trim();
+      }
+    });
+    return "<!doctype html>\n" + doc.documentElement.outerHTML;
+  }
+
+  if (sectionKey === "contact_block") {
+    const sections = Array.from(doc.querySelectorAll("main section"));
+    const target =
+      sections.find((section) =>
+        /what happens next/i.test(section.querySelector("h2")?.textContent || "")
+      ) || doc.querySelector("section#connect");
+    if (!target) return html;
+    const titleNode = target.querySelector("h2");
+    if (titleNode && fields.title?.trim()) titleNode.textContent = fields.title.trim();
+    const blurbNode = target.querySelector("p.muted");
+    if (blurbNode && fields.blurb?.trim()) blurbNode.textContent = fields.blurb.trim();
+    const pointNodes = Array.from(target.querySelectorAll(".card p, .contact-item p")).slice(0, 3);
+    [fields.point1, fields.point2, fields.point3].forEach((value, index) => {
+      if (pointNodes[index] && String(value || "").trim()) {
+        pointNodes[index].textContent = String(value).trim();
+      }
+    });
+    return "<!doctype html>\n" + doc.documentElement.outerHTML;
+  }
+
+  return html;
+};
+
 const applyQuickEditFieldsToHtml = (html, fields) => {
   if (!html) return html;
   const parser = new DOMParser();
@@ -2705,6 +2902,13 @@ export default function App() {
   const [quickRewriteTone, setQuickRewriteTone] = useState("Professional");
   const [quickAiBusy, setQuickAiBusy] = useState(false);
   const [quickAiSuggestion, setQuickAiSuggestion] = useState(null);
+  const [sectionRewriteTarget, setSectionRewriteTarget] = useState("hero");
+  const [sectionAiBusy, setSectionAiBusy] = useState(false);
+  const [sectionRewriteBefore, setSectionRewriteBefore] = useState(null);
+  const [sectionAiSuggestion, setSectionAiSuggestion] = useState(null);
+  const [sectionRewritePreset, setSectionRewritePreset] = useState("premium");
+  const [lastSectionUndo, setLastSectionUndo] = useState(null);
+  const [applySectionToMatchingPages, setApplySectionToMatchingPages] = useState(false);
   const [quickApplyAllPages, setQuickApplyAllPages] = useState(false);
   const [quickEditStatus, setQuickEditStatus] = useState("");
   const [quickEditStep, setQuickEditStep] = useState(1);
@@ -2804,6 +3008,48 @@ export default function App() {
     () => quickEditDiffRows.some((row) => row.before !== row.after),
     [quickEditDiffRows]
   );
+  const sectionOptionsForPage = useMemo(
+    () => getSectionOptionsForPage(previewPage),
+    [previewPage]
+  );
+  const sectionDiffRows = useMemo(() => {
+    const before = sectionRewriteBefore || {};
+    const after = sectionAiSuggestion || {};
+    const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
+    return keys.map((key) => ({
+      key,
+      before: String(before[key] || ""),
+      after: String(after[key] || ""),
+    }));
+  }, [sectionRewriteBefore, sectionAiSuggestion]);
+  const sectionFieldCount = useMemo(() => {
+    if (sectionAiSuggestion) {
+      return Object.keys(sectionAiSuggestion).filter((key) => !key.startsWith("__")).length;
+    }
+    if (sectionRewriteBefore) return Object.keys(sectionRewriteBefore).length;
+    return 0;
+  }, [sectionAiSuggestion, sectionRewriteBefore]);
+  const activeProjectForRewrite = useMemo(() => {
+    if (activeProject) return activeProject;
+    if (draftProject?.id === activeProjectId) return normalizeProject(draftProject);
+    return null;
+  }, [activeProject, draftProject, activeProjectId]);
+  const sectionMatchingPages = useMemo(() => {
+    if (!activeProjectForRewrite) return [];
+    const files = getProjectFiles(activeProjectForRewrite);
+    return PAGE_CONFIG.filter((page) => {
+      if (!getSectionOptionsForPage(page.key).some((item) => item.key === sectionRewriteTarget)) {
+        return false;
+      }
+      const html = files[page.key];
+      return Boolean(extractSectionRewriteFields(html || "", sectionRewriteTarget));
+    }).map((page) => page.key);
+  }, [activeProjectForRewrite, sectionRewriteTarget]);
+  const impactedFieldCount = useMemo(() => {
+    if (sectionFieldCount === 0) return 0;
+    const pageCount = applySectionToMatchingPages ? sectionMatchingPages.length : 1;
+    return sectionFieldCount * pageCount;
+  }, [sectionFieldCount, applySectionToMatchingPages, sectionMatchingPages.length]);
 
   const pageSections = useMemo(() => {
     if (!previewHtml) return [];
@@ -3134,6 +3380,9 @@ export default function App() {
       setQuickEditFields({ headline: "", subhead: "", cta: "" });
       setQuickEditBaseline({ headline: "", subhead: "", cta: "" });
       setQuickAiSuggestion(null);
+      setSectionRewriteBefore(null);
+      setSectionAiSuggestion(null);
+      setApplySectionToMatchingPages(false);
       return;
     }
     const extracted = extractQuickEditFields(previewHtml);
@@ -3141,9 +3390,18 @@ export default function App() {
     setQuickEditBaseline(extracted);
     setQuickRewriteTone(tone);
     setQuickAiSuggestion(null);
+    setSectionRewriteBefore(null);
+    setSectionAiSuggestion(null);
+    setApplySectionToMatchingPages(false);
     setQuickEditStatus("");
     setQuickEditStep(1);
   }, [previewHtml, previewPage, activeProjectId, tone]);
+
+  useEffect(() => {
+    if (sectionOptionsForPage.length === 0) return;
+    if (sectionOptionsForPage.some((item) => item.key === sectionRewriteTarget)) return;
+    setSectionRewriteTarget(sectionOptionsForPage[0].key);
+  }, [sectionOptionsForPage, sectionRewriteTarget]);
 
   useEffect(() => {
     setShowAdvancedEditor(false);
@@ -3848,6 +4106,279 @@ Rules:
     });
     setQuickAiSuggestion(null);
     setQuickEditStatus("AI rewrite applied to fields. Continue to diff and apply.");
+  };
+
+  const handleRewriteSectionWithAi = async (presetKey = sectionRewritePreset) => {
+    const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
+    if (!apiKey) {
+      setQuickEditStatus("Missing VITE_OPENAI_API_KEY for section rewrite.");
+      return;
+    }
+    if (!previewHtml) {
+      setQuickEditStatus("No page loaded for section rewrite.");
+      return;
+    }
+
+    const beforeFields = extractSectionRewriteFields(previewHtml, sectionRewriteTarget);
+    if (!beforeFields || Object.keys(beforeFields).length === 0) {
+      setQuickEditStatus("Could not detect selected section on this page.");
+      return;
+    }
+
+    const sectionLabel =
+      sectionOptionsForPage.find((item) => item.key === sectionRewriteTarget)?.label ||
+      sectionRewriteTarget;
+    const selectedPreset =
+      REWRITE_PRESETS.find((item) => item.key === presetKey) || REWRITE_PRESETS[0];
+    const effectiveTone = selectedPreset?.tone || quickRewriteTone;
+    if (selectedPreset?.tone) setQuickRewriteTone(selectedPreset.tone);
+    const modelChain = dedupeModels([llmCustomModel, llmModel, ...(selectedLlmPreset.models || [])]);
+    if (modelChain.length === 0) {
+      setQuickEditStatus("No LLM model configured for section rewrite.");
+      return;
+    }
+
+    const fieldPairs = Object.entries(beforeFields)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join("\n");
+
+    setSectionAiBusy(true);
+    setSectionRewriteBefore(beforeFields);
+    setSectionAiSuggestion(null);
+    setQuickEditStatus(`Rewriting ${sectionLabel} (${selectedPreset.label})...`);
+
+    let lastError = null;
+    for (const model of modelChain) {
+      try {
+        const schemaProperties = Object.fromEntries(
+          Object.keys(beforeFields).map((key) => [key, { type: "string" }])
+        );
+        const response = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            input: [
+              {
+                role: "system",
+                content:
+                  "You are a conversion-focused website copywriter. Return only valid JSON matching schema.",
+              },
+              {
+                role: "user",
+                content: `Rewrite only the selected website section fields.
+Section: ${sectionLabel}
+Page: ${PAGE_CONFIG.find((page) => page.key === previewPage)?.label || previewPage}
+Tone: ${effectiveTone}
+Business: ${businessName}
+Industry: ${activeIndustry.label}
+Goal: ${goal}
+Preset: ${selectedPreset.label}
+
+Current fields:
+${fieldPairs}
+
+Rules:
+- Rewrite only these fields.
+- Keep response concise, specific, and conversion-focused.
+- ${selectedPreset.instruction}
+- Do not add keys.`,
+              },
+            ],
+            text: {
+              format: {
+                type: "json_schema",
+                name: "section_rewrite",
+                schema: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: schemaProperties,
+                  required: Object.keys(beforeFields),
+                },
+                strict: true,
+              },
+            },
+          }),
+        });
+
+        if (!response.ok) {
+          const details = await response.text();
+          lastError = new Error(`Section rewrite failed for ${model} (${response.status}): ${details}`);
+          continue;
+        }
+
+        const payload = await response.json();
+        const outputText = extractResponseText(payload);
+        const parsed = parseJsonSafe(outputText);
+        if (!parsed || typeof parsed !== "object") {
+          lastError = new Error(`Invalid section rewrite JSON from ${model}.`);
+          continue;
+        }
+
+        const normalized = Object.fromEntries(
+          Object.keys(beforeFields).map((key) => [key, String(parsed[key] || "").trim()])
+        );
+        setSectionAiSuggestion({ ...normalized, __model: model });
+        setQuickEditStatus(
+          `${sectionLabel} rewrite ready (${selectedPreset.label}, ${model}). Preview and apply.`
+        );
+        setSectionAiBusy(false);
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    setSectionAiBusy(false);
+    setQuickEditStatus(`Section rewrite failed: ${String(lastError?.message || "Unknown error")}`);
+  };
+
+  const handleApplySectionRewrite = () => {
+    if (!activeProjectId || !sectionAiSuggestion || !previewHtml) return;
+    const nextFields = Object.fromEntries(
+      Object.entries(sectionAiSuggestion).filter(([key]) => !key.startsWith("__"))
+    );
+    const pagesToApply = applySectionToMatchingPages
+      ? sectionMatchingPages
+      : [previewPage];
+
+    const activeFromLibrary = projects.find((project) => project.id === activeProjectId);
+    if (activeFromLibrary) {
+      let changedProject = null;
+      let undoPayload = null;
+
+      const updated = projects.map((project) => {
+        if (project.id !== activeProjectId) return project;
+        const currentFiles = getProjectFiles(project);
+        const nextFiles = { ...currentFiles };
+        let appliedCount = 0;
+        pagesToApply.forEach((pageKey) => {
+          const currentHtml = currentFiles[pageKey] || "";
+          if (!currentHtml) return;
+          const nextHtml = applySectionRewriteFields(currentHtml, sectionRewriteTarget, nextFields);
+          if (nextHtml && nextHtml !== currentHtml) {
+            nextFiles[pageKey] = nextHtml;
+            appliedCount += 1;
+          }
+        });
+        if (appliedCount === 0) return project;
+
+        const snapshot = createVersionSnapshot(
+          project,
+          applySectionToMatchingPages
+            ? `Section rewrite • ${sectionRewriteTarget} • ${appliedCount} pages`
+            : `Section rewrite • ${sectionRewriteTarget}`
+        );
+        undoPayload = { projectId: project.id, files: currentFiles, page: previewPage };
+        changedProject = {
+          ...project,
+          files: nextFiles,
+          html: nextFiles[DEFAULT_PAGE] || project.html,
+          versions: [snapshot, ...(project.versions || [])].slice(0, 30),
+        };
+        return changedProject;
+      });
+
+      if (!changedProject) {
+        setQuickEditStatus("No section changes were applied.");
+        return;
+      }
+
+      persistProjects(updated);
+      openProject(changedProject, previewPage);
+      setLastSectionUndo(undoPayload);
+      setSectionRewriteBefore(nextFields);
+      setSectionAiSuggestion(null);
+      setQuickEditStatus(
+        applySectionToMatchingPages
+          ? `Section rewrite applied to ${pagesToApply.length} matching pages.`
+          : "Section rewrite applied."
+      );
+      return;
+    }
+
+    if (draftProject?.id === activeProjectId) {
+      const normalizedDraft = normalizeProject(draftProject);
+      const currentFiles = getProjectFiles(normalizedDraft);
+      const nextFiles = { ...currentFiles };
+      let appliedCount = 0;
+      pagesToApply.forEach((pageKey) => {
+        const currentHtml = currentFiles[pageKey] || "";
+        if (!currentHtml) return;
+        const nextHtml = applySectionRewriteFields(currentHtml, sectionRewriteTarget, nextFields);
+        if (nextHtml && nextHtml !== currentHtml) {
+          nextFiles[pageKey] = nextHtml;
+          appliedCount += 1;
+        }
+      });
+      if (appliedCount === 0) {
+        setQuickEditStatus("No section changes were applied.");
+        return;
+      }
+
+      const updatedDraft = {
+        ...normalizedDraft,
+        files: nextFiles,
+        html: nextFiles[DEFAULT_PAGE] || normalizedDraft.html,
+      };
+      setDraftProject(updatedDraft);
+      openProject(updatedDraft, previewPage);
+      setLastSectionUndo({
+        projectId: normalizedDraft.id,
+        files: currentFiles,
+        page: previewPage,
+      });
+      setSectionRewriteBefore(nextFields);
+      setSectionAiSuggestion(null);
+      setQuickEditStatus(
+        applySectionToMatchingPages
+          ? `Section rewrite applied to ${appliedCount} matching pages.`
+          : "Section rewrite applied."
+      );
+    }
+  };
+
+  const handleUndoSectionRewrite = () => {
+    if (!lastSectionUndo?.projectId || !lastSectionUndo?.files) return;
+    const targetId = lastSectionUndo.projectId;
+    const undoFiles = lastSectionUndo.files;
+
+    const inLibrary = projects.some((project) => project.id === targetId);
+    if (inLibrary) {
+      let restored = null;
+      const updated = projects.map((project) => {
+        if (project.id !== targetId) return project;
+        const snapshot = createVersionSnapshot(project, "Undo section rewrite");
+        restored = {
+          ...project,
+          files: undoFiles,
+          html: undoFiles[DEFAULT_PAGE] || project.html,
+          versions: [snapshot, ...(project.versions || [])].slice(0, 30),
+        };
+        return restored;
+      });
+      persistProjects(updated);
+      if (restored) openProject(restored, lastSectionUndo.page || previewPage);
+      setLastSectionUndo(null);
+      setQuickEditStatus("Section rewrite undone.");
+      return;
+    }
+
+    if (draftProject?.id === targetId) {
+      const normalizedDraft = normalizeProject(draftProject);
+      const restoredDraft = {
+        ...normalizedDraft,
+        files: undoFiles,
+        html: undoFiles[DEFAULT_PAGE] || normalizedDraft.html,
+      };
+      setDraftProject(restoredDraft);
+      openProject(restoredDraft, lastSectionUndo.page || previewPage);
+      setLastSectionUndo(null);
+      setQuickEditStatus("Section rewrite undone.");
+    }
   };
 
   const handleUndoQuickEdit = () => {
@@ -5955,6 +6486,124 @@ Rules:
                       </button>
                     </div>
                   )}
+                  <div className="section-rewrite-card">
+                    <strong>Section Rewrite</strong>
+                    <p className="muted">Pick one section, rewrite only that section, then apply.</p>
+                    <div className="preset-chip-row">
+                      {REWRITE_PRESETS.map((preset) => (
+                        <button
+                          key={`preset-${preset.key}`}
+                          type="button"
+                          className={`ghost small ${sectionRewritePreset === preset.key ? "active" : ""}`}
+                          onClick={() => {
+                            setSectionRewritePreset(preset.key);
+                            setApplySectionToMatchingPages(true);
+                            handleRewriteSectionWithAi(preset.key);
+                          }}
+                          disabled={sectionAiBusy || sectionOptionsForPage.length === 0}
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="quick-ai-row">
+                      <select
+                        value={sectionRewriteTarget}
+                        onChange={(event) => setSectionRewriteTarget(event.target.value)}
+                      >
+                        {sectionOptionsForPage.map((item) => (
+                          <option key={`section-option-${item.key}`} value={item.key}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={() => handleRewriteSectionWithAi(sectionRewritePreset)}
+                        disabled={sectionAiBusy || sectionOptionsForPage.length === 0}
+                      >
+                        {sectionAiBusy ? "Rewriting section..." : "AI Rewrite Section"}
+                      </button>
+                    </div>
+                    {sectionDiffRows.length > 0 && (
+                      <div className="section-diff-grid">
+                        <article className="quick-diff-item">
+                          <b>Before</b>
+                          {sectionDiffRows.map((row) => (
+                            <small key={`before-${row.key}`}>
+                              {row.key}: {row.before || "(empty)"}
+                            </small>
+                          ))}
+                        </article>
+                        <article className="quick-diff-item">
+                          <b>
+                            After
+                            {sectionAiSuggestion?.__model ? ` (${sectionAiSuggestion.__model})` : ""}
+                          </b>
+                          {sectionDiffRows.map((row) => (
+                            <small key={`after-${row.key}`}>
+                              {row.key}: {row.after || "(empty)"}
+                            </small>
+                          ))}
+                        </article>
+                      </div>
+                    )}
+                    <label className="mini-toggle">
+                      <input
+                        type="checkbox"
+                        checked={applySectionToMatchingPages}
+                        onChange={(event) => setApplySectionToMatchingPages(event.target.checked)}
+                      />
+                      Apply to matching sections across all pages
+                    </label>
+                    {applySectionToMatchingPages && (
+                      <div className="section-confirm-list">
+                        <b>
+                          Affected pages ({sectionMatchingPages.length})
+                        </b>
+                        {sectionMatchingPages.map((pageKey) => (
+                          <small key={`section-page-${pageKey}`}>
+                            {PAGE_CONFIG.find((page) => page.key === pageKey)?.label || pageKey}
+                          </small>
+                        ))}
+                        {sectionMatchingPages.length === 0 && (
+                          <small>No matching sections detected.</small>
+                        )}
+                        <small>
+                          Impact preview: {impactedFieldCount} field changes
+                        </small>
+                      </div>
+                    )}
+                    {!applySectionToMatchingPages && (
+                      <div className="section-confirm-list">
+                        <b>Affected pages (1)</b>
+                        <small>
+                          {PAGE_CONFIG.find((page) => page.key === previewPage)?.label || previewPage}
+                        </small>
+                        <small>Impact preview: {impactedFieldCount} field changes</small>
+                      </div>
+                    )}
+                    <div className="quick-edit-actions">
+                      <button
+                        type="button"
+                        onClick={handleApplySectionRewrite}
+                        disabled={!sectionAiSuggestion || (applySectionToMatchingPages && sectionMatchingPages.length === 0)}
+                      >
+                        {applySectionToMatchingPages
+                          ? `Apply to Matching Pages (${impactedFieldCount})`
+                          : `Apply Section Change (${impactedFieldCount})`}
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost"
+                        onClick={handleUndoSectionRewrite}
+                        disabled={!lastSectionUndo}
+                      >
+                        Undo Section Change
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
               {quickEditStep === 3 && (
