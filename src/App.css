@@ -441,6 +441,31 @@ textarea:focus {
   gap: 8px;
 }
 
+.type-preview-strip {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin: 4px 0 12px;
+  background: rgba(8, 22, 17, 0.78);
+  display: grid;
+  gap: 6px;
+}
+
+.type-preview-heading {
+  margin: 0;
+  color: #b8ffdf;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.type-preview-body {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .muted {
   color: var(--muted);
   font-size: 12px;

@@ -67,10 +67,59 @@ const QUICK_START_PRESETS = [
       "Design a high-converting restaurant website with menu highlights, events, gallery, testimonials, and strong reservation calls to action.",
   },
 ];
+const FONT_THEME_OPTIONS = [
+  { key: "sans", label: "Sans Modern" },
+  { key: "serif", label: "Serif Classic" },
+  { key: "mono", label: "Monospace Tech" },
+  { key: "geometric", label: "Geometric" },
+  { key: "humanist", label: "Humanist" },
+  { key: "editorial", label: "Editorial" },
+  { key: "display", label: "Display Bold" },
+  { key: "luxury", label: "Luxury Serif" },
+  { key: "friendly", label: "Friendly Rounded" },
+  { key: "formal", label: "Formal" },
+];
 const FONT_THEMES = {
-  sans: '"DM Sans", "Segoe UI", system-ui, sans-serif',
-  serif: '"Merriweather", Georgia, "Times New Roman", serif',
-  mono: '"IBM Plex Mono", "JetBrains Mono", monospace',
+  sans: {
+    stack: '"DM Sans", "Segoe UI", system-ui, sans-serif',
+    googleQuery: "family=DM+Sans:wght@400;500;700;800",
+  },
+  serif: {
+    stack: '"Merriweather", Georgia, "Times New Roman", serif',
+    googleQuery: "family=Merriweather:wght@400;700;900",
+  },
+  mono: {
+    stack: '"IBM Plex Mono", "JetBrains Mono", monospace',
+    googleQuery: "family=IBM+Plex+Mono:wght@400;500;700",
+  },
+  geometric: {
+    stack: '"Poppins", "Avenir Next", "Century Gothic", sans-serif',
+    googleQuery: "family=Poppins:wght@400;500;600;700;800",
+  },
+  humanist: {
+    stack: '"Source Sans 3", "Calibri", "Trebuchet MS", sans-serif',
+    googleQuery: "family=Source+Sans+3:wght@400;500;600;700",
+  },
+  editorial: {
+    stack: '"Spectral", "Garamond", "Times New Roman", serif',
+    googleQuery: "family=Spectral:wght@400;500;600;700;800",
+  },
+  display: {
+    stack: '"Sora", "Montserrat", "Arial Black", sans-serif',
+    googleQuery: "family=Sora:wght@400;500;600;700;800",
+  },
+  luxury: {
+    stack: '"Cormorant Garamond", "Baskerville", "Times New Roman", serif',
+    googleQuery: "family=Cormorant+Garamond:wght@400;500;600;700",
+  },
+  friendly: {
+    stack: '"Nunito", "Trebuchet MS", "Verdana", sans-serif',
+    googleQuery: "family=Nunito:wght@400;500;600;700;800",
+  },
+  formal: {
+    stack: '"Lora", "Cambria", "Georgia", serif',
+    googleQuery: "family=Lora:wght@400;500;600;700",
+  },
 };
 const THEME_PRESETS = [
   { key: "corporate", label: "Corporate" },
@@ -543,6 +592,8 @@ const buildWebsiteFiles = ({
   themePreset,
   substylePreset,
   brandColor,
+  headingFontTheme,
+  bodyFontTheme,
   fontTheme,
   ctaText,
   seoTitle,
@@ -582,7 +633,29 @@ const buildWebsiteFiles = ({
   const domainHost = normalizedDomain || `${brandSlug || "example"}.com`;
   const domainUrl = `https://${domainHost}`;
   const safeBrandColor = /^#[0-9A-Fa-f]{6}$/.test(brandColor) ? brandColor : "#14b987";
-  const safeFontStack = FONT_THEMES[fontTheme] || FONT_THEMES.sans;
+  const resolvedBodyFontKey = Object.prototype.hasOwnProperty.call(FONT_THEMES, bodyFontTheme)
+    ? bodyFontTheme
+    : Object.prototype.hasOwnProperty.call(FONT_THEMES, fontTheme)
+      ? fontTheme
+      : "sans";
+  const resolvedHeadingFontKey = Object.prototype.hasOwnProperty.call(FONT_THEMES, headingFontTheme)
+    ? headingFontTheme
+    : resolvedBodyFontKey;
+  const safeBodyFontStack = FONT_THEMES[resolvedBodyFontKey]?.stack || FONT_THEMES.sans.stack;
+  const safeHeadingFontStack =
+    FONT_THEMES[resolvedHeadingFontKey]?.stack || FONT_THEMES[resolvedBodyFontKey]?.stack || FONT_THEMES.sans.stack;
+  const googleQueries = Array.from(
+    new Set(
+      [resolvedBodyFontKey, resolvedHeadingFontKey]
+        .map((key) => FONT_THEMES[key]?.googleQuery)
+        .filter(Boolean)
+    )
+  );
+  const fontHeadTags = googleQueries.length
+    ? `<link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?${googleQueries.join("&")}&display=swap" rel="stylesheet" />`
+    : "";
   const safeVisualStyle = VISUAL_STYLES.some((style) => style.key === visualStyle)
     ? visualStyle
     : "glass";
@@ -980,6 +1053,7 @@ const buildWebsiteFiles = ({
   <meta property="og:description" content="${safePrompt}" />
   <meta property="og:url" content="${domainUrl}/${pagePath}" />
   <link rel="canonical" href="${domainUrl}/${pagePath}" />
+  ${fontHeadTags}
   <style>
     :root {
       --bg: ${stylePalette.bg};
@@ -988,16 +1062,19 @@ const buildWebsiteFiles = ({
       --primary: ${safeBrandColor};
       --card: ${stylePalette.card};
       --line: ${stylePalette.line};
+      --font-body: ${safeBodyFontStack};
+      --font-heading: ${safeHeadingFontStack};
       --theme-mode: "${activeTheme}";
       --style-mode: "${safeVisualStyle}";
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: ${safeFontStack};
+      font-family: var(--font-body);
       color: var(--ink);
       background: ${stylePalette.heroFx}, var(--bg);
     }
+    h1, h2, h3, .title, .pill, .cta { font-family: var(--font-heading); }
     .container { width: min(1120px, 92%); margin: 0 auto; }
     .nav {
       display: flex;
@@ -1667,6 +1744,8 @@ const makeProject = (config) => {
       themePreset: config.themePreset,
       substylePreset: config.substylePreset,
       brandColor: config.brandColor,
+      headingFontTheme: config.headingFontTheme || config.fontTheme || "sans",
+      bodyFontTheme: config.bodyFontTheme || config.fontTheme || "sans",
       fontTheme: config.fontTheme,
       ctaText: config.ctaText,
       seoTitle: config.seoTitle,
@@ -1752,7 +1831,11 @@ const normalizeProject = (project) => {
         project.options?.substylePreset ||
         getDefaultSubstyle(project.options?.themePreset || "corporate"),
       brandColor: project.options?.brandColor || "#14b987",
-      fontTheme: project.options?.fontTheme || "sans",
+      headingFontTheme:
+        project.options?.headingFontTheme || project.options?.fontTheme || "sans",
+      bodyFontTheme:
+        project.options?.bodyFontTheme || project.options?.fontTheme || "sans",
+      fontTheme: project.options?.fontTheme || project.options?.bodyFontTheme || "sans",
       ctaText: project.options?.ctaText || "Book a strategy call",
       seoTitle: project.options?.seoTitle || "",
       customDomain: project.options?.customDomain || "",
@@ -2109,7 +2192,8 @@ export default function App() {
   );
 
   const [brandColor, setBrandColor] = useState("#14b987");
-  const [fontTheme, setFontTheme] = useState("sans");
+  const [headingFontTheme, setHeadingFontTheme] = useState("display");
+  const [bodyFontTheme, setBodyFontTheme] = useState("sans");
   const [ctaText, setCtaText] = useState("Book a strategy call");
   const [seoTitle, setSeoTitle] = useState("");
   const [customDomain, setCustomDomain] = useState("");
@@ -2525,7 +2609,20 @@ export default function App() {
     if (THEME_PRESETS.some((item) => item.key === parsed.themePreset)) setThemePreset(parsed.themePreset);
     if (typeof parsed.substylePreset === "string") setSubstylePreset(parsed.substylePreset);
     if (typeof parsed.brandColor === "string") setBrandColor(parsed.brandColor);
-    if (Object.prototype.hasOwnProperty.call(FONT_THEMES, parsed.fontTheme)) setFontTheme(parsed.fontTheme);
+    if (Object.prototype.hasOwnProperty.call(FONT_THEMES, parsed.headingFontTheme)) {
+      setHeadingFontTheme(parsed.headingFontTheme);
+    }
+    if (Object.prototype.hasOwnProperty.call(FONT_THEMES, parsed.bodyFontTheme)) {
+      setBodyFontTheme(parsed.bodyFontTheme);
+    }
+    if (Object.prototype.hasOwnProperty.call(FONT_THEMES, parsed.fontTheme)) {
+      if (!Object.prototype.hasOwnProperty.call(FONT_THEMES, parsed.headingFontTheme)) {
+        setHeadingFontTheme(parsed.fontTheme);
+      }
+      if (!Object.prototype.hasOwnProperty.call(FONT_THEMES, parsed.bodyFontTheme)) {
+        setBodyFontTheme(parsed.fontTheme);
+      }
+    }
     if (typeof parsed.ctaText === "string") setCtaText(parsed.ctaText);
     if (typeof parsed.seoTitle === "string") setSeoTitle(parsed.seoTitle);
     if (typeof parsed.customDomain === "string") setCustomDomain(parsed.customDomain);
@@ -2667,7 +2764,8 @@ export default function App() {
         themePreset,
         substylePreset,
         brandColor,
-        fontTheme,
+        headingFontTheme,
+        bodyFontTheme,
         ctaText,
         seoTitle,
         customDomain,
@@ -2699,7 +2797,8 @@ export default function App() {
     themePreset,
     substylePreset,
     brandColor,
-    fontTheme,
+    headingFontTheme,
+    bodyFontTheme,
     ctaText,
     seoTitle,
     customDomain,
@@ -2761,7 +2860,9 @@ export default function App() {
     themePreset,
     substylePreset,
     brandColor,
-    fontTheme,
+    headingFontTheme,
+    bodyFontTheme,
+    fontTheme: bodyFontTheme,
     ctaText,
     seoTitle,
     customDomain,
@@ -3427,7 +3528,8 @@ export default function App() {
     setThemePreset("corporate");
     setSubstylePreset(getDefaultSubstyle("corporate"));
     setBrandColor("#14b987");
-    setFontTheme("sans");
+    setHeadingFontTheme("display");
+    setBodyFontTheme("sans");
     setCtaText("Book a strategy call");
     setSeoTitle("");
     setCustomDomain("");
@@ -4136,16 +4238,46 @@ export default function App() {
             />
           </div>
 
-          <label htmlFor="font-theme">Typography style</label>
+          <label htmlFor="heading-font-theme">Heading font style</label>
           <select
-            id="font-theme"
-            value={fontTheme}
-            onChange={(event) => setFontTheme(event.target.value)}
+            id="heading-font-theme"
+            value={headingFontTheme}
+            onChange={(event) => setHeadingFontTheme(event.target.value)}
           >
-            <option value="sans">Sans</option>
-            <option value="serif">Serif</option>
-            <option value="mono">Mono</option>
+            {FONT_THEME_OPTIONS.map((fontOption) => (
+              <option key={fontOption.key} value={fontOption.key}>
+                {fontOption.label}
+              </option>
+            ))}
           </select>
+
+          <label htmlFor="body-font-theme">Body font style</label>
+          <select
+            id="body-font-theme"
+            value={bodyFontTheme}
+            onChange={(event) => setBodyFontTheme(event.target.value)}
+          >
+            {FONT_THEME_OPTIONS.map((fontOption) => (
+              <option key={fontOption.key} value={fontOption.key}>
+                {fontOption.label}
+              </option>
+            ))}
+          </select>
+
+          <div className="type-preview-strip">
+            <p
+              className="type-preview-heading"
+              style={{ fontFamily: FONT_THEMES[headingFontTheme]?.stack || FONT_THEMES.display.stack }}
+            >
+              Build financial clarity with confidence
+            </p>
+            <p
+              className="type-preview-body"
+              style={{ fontFamily: FONT_THEMES[bodyFontTheme]?.stack || FONT_THEMES.sans.stack }}
+            >
+              Flowpilot helps teams monitor cash flow, forecast outcomes, and make faster finance decisions.
+            </p>
+          </div>
 
           <label htmlFor="visual-style">Visual style pack</label>
           <select
