@@ -74,7 +74,7 @@ const QUICK_START_PRESETS = [
   {
     key: "saas-launch",
     label: "SaaS Launch",
-    businessName: "Flowpilot",
+    businessName: "Your SaaS Company",
     industryKey: "finance",
     goal: "Brand Awareness",
     tone: "Modern",
@@ -290,9 +290,9 @@ const BLOCK_TEMPLATES = {
   trust_metrics: {
     label: "Trust Metrics",
     html: `<section class="metrics-strip">
-  <article><strong>1,200+</strong><span>Projects launched</span></article>
-  <article><strong>96%</strong><span>Retention rate</span></article>
-  <article><strong>4.9/5</strong><span>Client satisfaction</span></article>
+  <article><strong>Add KPI</strong><span>Projects launched</span></article>
+  <article><strong>Add KPI</strong><span>Retention rate</span></article>
+  <article><strong>Add KPI</strong><span>Client satisfaction</span></article>
 </section>`,
   },
   cta_band: {
@@ -308,7 +308,7 @@ const BLOCK_TEMPLATES = {
   <h2 class="title">Testimonials</h2>
   <div class="cards">
     <article class="card"><p>"The new site transformed our lead quality."</p><h3>— Growth Lead</h3></article>
-    <article class="card"><p>"Clean execution, clear strategy, measurable results."</p><h3>— Founder</h3></article>
+    <article class="card"><p>"Clean execution, clear strategy, measurable results."</p><h3>— Customer</h3></article>
     <article class="card"><p>"Best redesign decision we made this year."</p><h3>— Operations Manager</h3></article>
   </div>
 </section>`,
@@ -548,14 +548,14 @@ const buildDefaultLlmContent = (safeName, safePrompt) => ({
     { step: "03", title: "Optimize", description: "Track outcomes, refine messaging, and improve funnel performance." },
   ],
   stats: [
-    { value: "46%", label: "Average lift in qualified inquiries" },
-    { value: "2.1x", label: "Faster lead-response cycle after launch" },
-    { value: "96%", label: "Client retention in long-term engagements" },
+    { value: "Add KPI", label: "Qualified inquiries improvement" },
+    { value: "Add KPI", label: "Lead-response cycle improvement" },
+    { value: "Add KPI", label: "Retention outcome" },
   ],
   testimonials: [
-    { quote: "The new site increased qualified inquiries by 46%.", author: "Operations Director" },
-    { quote: "Fast delivery and clear ROI from day one.", author: "Marketing Lead" },
-    { quote: "Our conversion funnel is finally predictable.", author: "Founder" },
+    { quote: "Add a real customer testimonial here.", author: "Customer Name, Role" },
+    { quote: "Add a second verified testimonial here.", author: "Customer Name, Role" },
+    { quote: "Add a third verified testimonial here.", author: "Customer Name, Role" },
   ],
   faqs: [
     { question: "How quickly can we launch?", answer: "Most projects go live in 1-2 weeks." },
@@ -807,9 +807,9 @@ const buildWebsiteFiles = ({
   const pageLinks = PAGE_CONFIG.map((page) => `<a href="${page.key}">${page.label}</a>`).join("");
   const pageChips = PAGE_CONFIG.map((page) => `<span>${page.label}</span>`).join("");
   const contactEmail = `hello@${slugify(rawName) || "business"}.com`;
-  const contactPhone = "+1 (555) 246-8100";
-  const contactPhoneHref = "+15552468100";
-  const whatsappHref = `https://wa.me/15552468100?text=${encodeURIComponent(
+  const contactPhone = "+1 (000) 000-0000";
+  const contactPhoneHref = "+10000000000";
+  const whatsappHref = `https://wa.me/10000000000?text=${encodeURIComponent(
     `Hi ${rawName}, I want to discuss ${industry.label.toLowerCase()} website services.`
   )}`;
 
@@ -1032,7 +1032,7 @@ const buildWebsiteFiles = ({
         </label>
         <label class="form-field">
           <span>Phone number</span>
-          <input type="tel" name="phone" placeholder="+1 555 555 5555" />
+          <input type="tel" name="phone" placeholder="+1 000 000 0000" />
         </label>
         <label class="form-field">
           <span>Company / Organization</span>
@@ -1091,9 +1091,9 @@ const buildWebsiteFiles = ({
     ? `<section>
         <h2 class="title">Pricing</h2>
         <div class="cards">
-          <article class="card"><h3>Starter</h3><p>For new teams launching quickly.</p><strong>$499/mo</strong></article>
-          <article class="card"><h3>Growth</h3><p>For teams scaling lead volume.</p><strong>$1,250/mo</strong></article>
-          <article class="card"><h3>Enterprise</h3><p>Advanced workflows and priority support.</p><strong>Custom</strong></article>
+          <article class="card"><h3>Starter</h3><p>For new teams launching quickly.</p><strong>Add your pricing</strong></article>
+          <article class="card"><h3>Growth</h3><p>For teams scaling lead volume.</p><strong>Add your pricing</strong></article>
+          <article class="card"><h3>Enterprise</h3><p>Advanced workflows and priority support.</p><strong>Contact for quote</strong></article>
         </div>
       </section>`
     : "";
@@ -1125,8 +1125,8 @@ const buildWebsiteFiles = ({
 
   const logoCloudBlock = includeLogoCloud
     ? `<section class="logo-cloud">
-        <span>Trusted by teams at</span>
-        <div><b>Northline</b><b>BlueHarbor</b><b>VerdeLabs</b><b>Axiom</b><b>UrbanLeaf</b></div>
+        <span>Trusted by teams like yours</span>
+        <div><b>Add Client</b><b>Add Client</b><b>Add Client</b><b>Add Client</b><b>Add Client</b></div>
       </section>`
     : "";
 
@@ -1143,9 +1143,9 @@ const buildWebsiteFiles = ({
   const themeHomeBlocks = {
     "corporate:enterprise": `
       <section class="metrics-strip">
-        <article><strong>1.2k+</strong><span>Projects delivered</span></article>
-        <article><strong>96%</strong><span>Retention rate</span></article>
-        <article><strong>4.9/5</strong><span>Client satisfaction</span></article>
+        <article><strong>Add KPI</strong><span>Projects delivered</span></article>
+        <article><strong>Add KPI</strong><span>Retention rate</span></article>
+        <article><strong>Add KPI</strong><span>Client satisfaction</span></article>
       </section>
       <section class="split-panel">
         <div class="panel-copy">
@@ -1167,8 +1167,8 @@ const buildWebsiteFiles = ({
         <article class="matrix-card"><h3>Scale Smart</h3><p>High-impact improvements every sprint.</p></article>
       </section>
       <section class="logo-ribbon">
-        <span>Backed by startup teams from</span>
-        <div><b>Seedline</b><b>NorthStack</b><b>Pulsebase</b><b>Launchdock</b></div>
+        <span>Backed by teams across your market</span>
+        <div><b>Add Partner</b><b>Add Partner</b><b>Add Partner</b><b>Add Partner</b></div>
       </section>
     `,
     "saas:product-led": `
@@ -1178,8 +1178,8 @@ const buildWebsiteFiles = ({
         <article class="matrix-card"><h3>Analytics</h3><p>Live dashboards focused on usage and revenue health.</p></article>
       </section>
       <section class="logo-ribbon">
-        <span>Trusted by product teams at</span>
-        <div><b>NorthGrid</b><b>Flowpilot</b><b>Shiftbase</b><b>NexaOS</b></div>
+        <span>Trusted by product teams across industries</span>
+        <div><b>Add Company</b><b>Add Company</b><b>Add Company</b><b>Add Company</b></div>
       </section>
     `,
     "saas:developer": `
@@ -1819,7 +1819,7 @@ const buildWebsiteFiles = ({
     <section id="connect" class="contact-list">
       <article class="contact-item"><strong>Email</strong><p class="muted">${contactEmail}</p></article>
       <article class="contact-item"><strong>Phone</strong><p class="muted">${contactPhone}</p></article>
-      <article class="contact-item"><strong>Office</strong><p class="muted">120 Market Street, Suite 400</p></article>
+      <article class="contact-item"><strong>Office</strong><p class="muted">Add your office address</p></article>
     </section>
     ${themeContactBlocks[variantKey] || themeContactBlocks[`${activeTheme}:${defaultSubstyle}`]}
     ${faqGrid}
@@ -2741,7 +2741,7 @@ const applyPublishChecklistFixes = (files, checklist, fixContent) => {
   const subheadBase = String(fixContent?.heroSubhead || "Get a conversion-focused website experience.");
   const ctaBase = String(fixContent?.ctaText || "Book a strategy call");
   const contactEmail = String(fixContent?.contactEmail || "hello@example.com");
-  const contactPhone = String(fixContent?.contactPhone || "+1 (555) 000-0000");
+  const contactPhone = String(fixContent?.contactPhone || "+1 (000) 000-0000");
   const emptySectionText = String(
     fixContent?.emptySectionText || "This section has been enhanced for clarity and conversion."
   );
@@ -5368,7 +5368,7 @@ Rules:
         "Built for clarity, trust, and consistent conversion performance across all pages.",
       ctaText: project.options?.ctaText || "Book a strategy call",
       contactEmail: `hello@${slugify(project.businessName || "business") || "business"}.com`,
-      contactPhone: "+1 (555) 246-8100",
+      contactPhone: "+1 (000) 000-0000",
       emptySectionText:
         "This section has been expanded with clear, conversion-focused information.",
     };
@@ -6096,7 +6096,7 @@ Return practical text for headlines, CTA, contact info, and section filler copy.
               className="type-preview-body"
               style={{ fontFamily: FONT_THEMES[bodyFontTheme]?.stack || FONT_THEMES.sans.stack }}
             >
-              Flowpilot helps teams monitor cash flow, forecast outcomes, and make faster finance decisions.
+              Your business can present clear value, build trust, and guide visitors to take action.
             </p>
           </div>
 
