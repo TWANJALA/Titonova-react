@@ -144,6 +144,7 @@ const dedupeModels = (values) => {
 const DEFAULT_INDUSTRY = INDUSTRIES[0];
 const STORAGE_KEY = "titonova_ai_projects";
 const DRAFT_STORAGE_KEY = "titonova_builder_draft_v1";
+const PUBLISH_LOG_STORAGE_KEY = "titonova_publish_logs_v1";
 const DEFAULT_PAGE = "index.html";
 
 const PAGE_CONFIG = [
@@ -1685,6 +1686,7 @@ const makeProject = (config) => {
     },
     qualityScore,
     isFavorite: false,
+    publishHistory: [],
     pages: PAGE_CONFIG.map((page) => page.label),
     files,
     html: files[DEFAULT_PAGE],
@@ -1742,6 +1744,7 @@ const normalizeProject = (project) => {
     qualityScore: project.qualityScore || 70,
     isFavorite: Boolean(project.isFavorite),
     versions: Array.isArray(project.versions) ? project.versions : [],
+    publishHistory: Array.isArray(project.publishHistory) ? project.publishHistory : [],
     goal: project.goal || GOALS[0],
     options: {
       themePreset: project.options?.themePreset || "corporate",
@@ -2141,6 +2144,7 @@ export default function App() {
   const [hostingMessage, setHostingMessage] = useState("");
   const [hostingStep, setHostingStep] = useState("idle");
   const [lastPublishProjectId, setLastPublishProjectId] = useState("");
+  const [publishLogs, setPublishLogs] = useState([]);
   const [hostingBusyId, setHostingBusyId] = useState("");
   const [hostedSites, setHostedSites] = useState({});
 
@@ -2402,6 +2406,58 @@ export default function App() {
     }
   };
 
+  const pushPublishLog = ({ projectId, projectName, action, status, message, url = "" }) => {
+    setPublishLogs((prev) =>
+      [
+        {
+          id: crypto.randomUUID(),
+          projectId,
+          projectName,
+          action,
+          status,
+          message,
+          url,
+          createdAt: new Date().toISOString(),
+        },
+        ...prev,
+      ].slice(0, 30)
+    );
+  };
+
+  const recordPublishSnapshot = ({ projectId, files, url, note }) => {
+    const snapshot = {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      note,
+      url,
+      files,
+    };
+
+    const hasProject = projects.some((item) => item.id === projectId);
+    if (hasProject) {
+      const updated = projects.map((project) => {
+        if (project.id !== projectId) return project;
+        return {
+          ...project,
+          publishHistory: [snapshot, ...(project.publishHistory || [])].slice(0, 12),
+        };
+      });
+      persistProjects(updated);
+      return;
+    }
+
+    if (draftProject?.id === projectId) {
+      setDraftProject((prev) =>
+        prev
+          ? {
+              ...prev,
+              publishHistory: [snapshot, ...(prev.publishHistory || [])].slice(0, 12),
+            }
+          : prev
+      );
+    }
+  };
+
   const addProjectsForUser = (userEmail, newProjects) => {
     const updated = [...newProjects, ...getUserProjects(userEmail)].map(normalizeProject);
     saveUserProjects(userEmail, updated);
@@ -2442,6 +2498,18 @@ export default function App() {
     setRegistrarProvider(domains.registrar?.provider || REGISTRAR_PROVIDERS[0].key);
     setLiveRegistrarMode(Boolean(domains.registrar?.liveMode));
   }, []);
+
+  useEffect(() => {
+    const raw = localStorage.getItem(PUBLISH_LOG_STORAGE_KEY);
+    const parsed = parseJsonSafe(raw || "");
+    if (Array.isArray(parsed)) {
+      setPublishLogs(parsed.slice(0, 30));
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(PUBLISH_LOG_STORAGE_KEY, JSON.stringify(publishLogs.slice(0, 30)));
+  }, [publishLogs]);
 
   useEffect(() => {
     const rawDraft = localStorage.getItem(DRAFT_STORAGE_KEY);
@@ -3394,6 +3462,7 @@ export default function App() {
       createdAt: new Date().toISOString(),
       isFavorite: false,
       versions: [],
+      publishHistory: [],
     };
     persistProjects([duplicate, ...projects]);
   };
@@ -3626,10 +3695,31 @@ export default function App() {
       }));
       setHostingStep("live");
       setHostingMessage(`Published: ${payload.url}`);
+      recordPublishSnapshot({
+        projectId: normalized.id,
+        files,
+        url: payload.url,
+        note: "Published live",
+      });
+      pushPublishLog({
+        projectId: normalized.id,
+        projectName: normalized.businessName,
+        action: "publish",
+        status: "success",
+        message: "Publish completed",
+        url: payload.url,
+      });
       return payload;
     } catch (error) {
       setHostingStep("error");
       setHostingMessage(`Publish failed: ${error.message}`);
+      pushPublishLog({
+        projectId: normalized.id,
+        projectName: normalized.businessName,
+        action: "publish",
+        status: "fail",
+        message: String(error.message || "Publish failed"),
+      });
       return null;
     } finally {
       setHostingBusyId("");
@@ -3689,8 +3779,111 @@ export default function App() {
         return next;
       });
       setHostingMessage("Project unpublished.");
+      pushPublishLog({
+        projectId: normalized.id,
+        projectName: normalized.businessName,
+        action: "unpublish",
+        status: "success",
+        message: "Site unpublished",
+      });
     } catch (error) {
       setHostingMessage(`Unpublish failed: ${error.message}`);
+      pushPublishLog({
+        projectId: normalized.id,
+        projectName: normalized.businessName,
+        action: "unpublish",
+        status: "fail",
+        message: String(error.message || "Unpublish failed"),
+      });
+    } finally {
+      setHostingBusyId("");
+    }
+  };
+
+  const handleRollbackLive = async (project) => {
+    const normalized = normalizeProject(project);
+    const safeSiteId = `${slugify(normalized.businessName || "site")}-${normalized.id.slice(0, 8)}`;
+    const history = normalized.publishHistory || [];
+    if (history.length < 2) {
+      setHostingMessage("Rollback unavailable. Publish at least twice first.");
+      return;
+    }
+
+    const previous = history[1];
+    if (!previous?.files?.[DEFAULT_PAGE]) {
+      setHostingMessage("Rollback snapshot is incomplete.");
+      return;
+    }
+
+    setLastPublishProjectId(normalized.id);
+    setHostingBusyId(normalized.id);
+    setHostingStep("preparing");
+    setHostingMessage(`Preparing rollback for ${normalized.businessName}...`);
+
+    try {
+      setHostingStep("uploading");
+      setHostingMessage(`Uploading rollback version for ${normalized.businessName}...`);
+      const payload = await publishProjectLive({
+        siteId: safeSiteId,
+        projectName: normalized.businessName,
+        customDomain: normalizeDomain(normalized.options?.customDomain || ""),
+        files: previous.files,
+      });
+
+      setHostedSites((prev) => ({
+        ...prev,
+        [safeSiteId]: payload,
+      }));
+
+      const hasProject = projects.some((item) => item.id === normalized.id);
+      if (hasProject) {
+        const updated = projects.map((item) => {
+          if (item.id !== normalized.id) return item;
+          const autoSnapshot = createVersionSnapshot(item, "Auto snapshot before live rollback");
+          return {
+            ...item,
+            files: previous.files,
+            html: previous.files[DEFAULT_PAGE] || item.html,
+            versions: [autoSnapshot, ...(item.versions || [])].slice(0, 30),
+            publishHistory: [
+              {
+                id: crypto.randomUUID(),
+                createdAt: new Date().toISOString(),
+                note: "Rollback to previous live version",
+                url: payload.url,
+                files: previous.files,
+              },
+              ...(item.publishHistory || []),
+            ].slice(0, 12),
+          };
+        });
+        persistProjects(updated);
+        const changed = updated.find((item) => item.id === normalized.id);
+        if (changed && activeProjectId === normalized.id) {
+          openProject(changed, previewPage);
+        }
+      }
+
+      setHostingStep("live");
+      setHostingMessage(`Rollback complete: ${payload.url}`);
+      pushPublishLog({
+        projectId: normalized.id,
+        projectName: normalized.businessName,
+        action: "rollback",
+        status: "success",
+        message: "Rollback completed",
+        url: payload.url,
+      });
+    } catch (error) {
+      setHostingStep("error");
+      setHostingMessage(`Rollback failed: ${error.message}`);
+      pushPublishLog({
+        projectId: normalized.id,
+        projectName: normalized.businessName,
+        action: "rollback",
+        status: "fail",
+        message: String(error.message || "Rollback failed"),
+      });
     } finally {
       setHostingBusyId("");
     }
@@ -4497,6 +4690,15 @@ export default function App() {
                             <a className="ghost button-link" href={hosted.url} target="_blank" rel="noreferrer">
                               Open Live
                             </a>
+                            {(project.publishHistory?.length || 0) >= 2 && (
+                              <button
+                                className="ghost"
+                                onClick={() => handleRollbackLive(project)}
+                                disabled={hostingBusyId === project.id}
+                              >
+                                Rollback Live
+                              </button>
+                            )}
                             <button
                               className="ghost"
                               onClick={() => handleUnpublishProject(project)}
@@ -4543,6 +4745,41 @@ export default function App() {
                   )}
                 </div>
               )}
+              <div className="publish-log-card">
+                <div className="card-header-row">
+                  <h3>Publish Logs</h3>
+                  {publishLogs.length > 0 && (
+                    <button className="ghost small" onClick={() => setPublishLogs([])}>
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <div className="publish-log-list">
+                  {publishLogs.slice(0, 8).map((entry) => (
+                    <div key={entry.id} className="publish-log-item">
+                      <span className={`diag-badge ${entry.status === "success" ? "ok" : "fail"}`}>
+                        {entry.status === "success" ? "OK" : "FAIL"}
+                      </span>
+                      <div>
+                        <b>{entry.projectName} • {entry.action}</b>
+                        <small>
+                          {new Date(entry.createdAt).toLocaleString()} • {entry.message}
+                        </small>
+                        {entry.url && (
+                          <small>
+                            <a href={entry.url} target="_blank" rel="noreferrer">
+                              {entry.url}
+                            </a>
+                          </small>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {publishLogs.length === 0 && (
+                    <div className="empty-mini">No publish events yet.</div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
         </section>

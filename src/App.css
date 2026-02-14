@@ -744,6 +744,53 @@ button:disabled {
   background: rgba(36, 255, 164, 0.16);
 }
 
+.publish-log-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(8, 22, 17, 0.72);
+  padding: 10px;
+  margin-top: 10px;
+}
+
+.publish-log-card h3 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #7dffc6;
+}
+
+.publish-log-list {
+  display: grid;
+  gap: 7px;
+}
+
+.publish-log-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(8, 22, 17, 0.78);
+}
+
+.publish-log-item b {
+  display: block;
+  font-size: 12px;
+}
+
+.publish-log-item small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.publish-log-item a {
+  color: #b0ffd9;
+}
+
 .registrar-controls {
   display: flex;
   flex-wrap: wrap;
