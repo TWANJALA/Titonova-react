@@ -2323,6 +2323,9 @@ export default function App() {
   const [publishLogs, setPublishLogs] = useState([]);
   const [hostingBusyId, setHostingBusyId] = useState("");
   const [hostedSites, setHostedSites] = useState({});
+  const [goLiveStep, setGoLiveStep] = useState("idle");
+  const [goLiveMessage, setGoLiveMessage] = useState("");
+  const [goLiveError, setGoLiveError] = useState("");
 
   const [previewPage, setPreviewPage] = useState(DEFAULT_PAGE);
   const [previewDevice, setPreviewDevice] = useState("desktop");
@@ -3038,15 +3041,25 @@ export default function App() {
     setLoading(true);
     setError("");
     setLlmStatus("");
+    setGoLiveError("");
+    setGoLiveStep("preparing");
+    setGoLiveMessage("Preparing website generation...");
 
     try {
       await new Promise((resolve) => setTimeout(resolve, 300));
       const project = await generateSingleProject(activeIndustry);
+      setGoLiveStep("uploading");
+      setGoLiveMessage(`Uploading ${project.businessName} to live hosting...`);
       const payload = await handlePublishProject(project);
-      if (payload?.url) {
-        window.open(payload.url, "_blank", "noopener,noreferrer");
+      if (!payload?.url) {
+        throw new Error("Publish failed");
       }
+      setGoLiveStep("live");
+      setGoLiveMessage(`Live at ${payload.url}`);
+      window.open(payload.url, "_blank", "noopener,noreferrer");
     } catch {
+      setGoLiveStep("error");
+      setGoLiveError("Generate + Go Live failed. Retry to run generation and publish again.");
       setError("Generate + Go Live failed. Check LLM settings and gateway connection.");
     } finally {
       setLlmStatus("");
@@ -4599,6 +4612,39 @@ export default function App() {
                 {loading ? "Working..." : "Generate + Go Live"}
               </button>
             </div>
+            {(goLiveStep !== "idle" || goLiveError) && (
+              <div className="publish-status-wrap">
+                <div className="publish-steps">
+                  {PUBLISH_STEPS.map((step) => {
+                    const active =
+                      goLiveStep === step ||
+                      (goLiveStep === "error" && step === "uploading");
+                    const done =
+                      step === "preparing"
+                        ? ["uploading", "live", "error"].includes(goLiveStep)
+                        : step === "uploading"
+                          ? ["live", "error"].includes(goLiveStep)
+                          : goLiveStep === "live";
+                    return (
+                      <span
+                        key={`go-live-${step}`}
+                        className={`publish-step ${active ? "active" : ""} ${done ? "done" : ""}`}
+                      >
+                        {step.charAt(0).toUpperCase() + step.slice(1)}
+                      </span>
+                    );
+                  })}
+                </div>
+                {(goLiveMessage || goLiveError) && (
+                  <div className="llm-status">{goLiveError || goLiveMessage}</div>
+                )}
+                {goLiveStep === "error" && (
+                  <button type="button" className="ghost small" onClick={handleGenerateAndGoLive} disabled={loading}>
+                    Retry Generate + Go Live
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="panel-card">
