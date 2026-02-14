@@ -5961,265 +5961,289 @@ Return practical text for headlines, CTA, contact info, and section filler copy.
         <aside className="wizard-panel">
           <h2>TitoNova Cloud Engine Setup Wizard</h2>
           <p>Configure the full website strategy, branding system, and conversion goal.</p>
-
-          <label htmlFor="business-name">Business name</label>
-          <input
-            id="business-name"
-            value={businessName}
-            onChange={(event) => setBusinessName(event.target.value)}
-            placeholder="Example: Northpoint Studio"
-          />
-
-          <label htmlFor="industry-select">Industry</label>
-          <select
-            id="industry-select"
-            value={industryKey}
-            onChange={(event) => setIndustryKey(event.target.value)}
-          >
-            {INDUSTRIES.map((industry) => (
-              <option key={industry.key} value={industry.key}>
-                {industry.label}
-              </option>
-            ))}
-          </select>
-
-          <label htmlFor="goal-select">Primary goal</label>
-          <select id="goal-select" value={goal} onChange={(event) => setGoal(event.target.value)}>
-            {GOALS.map((goalOption) => (
-              <option key={goalOption} value={goalOption}>
-                {goalOption}
-              </option>
-            ))}
-          </select>
-
-          <label htmlFor="theme-select">Theme preset</label>
-          <select
-            id="theme-select"
-            value={themePreset}
-            onChange={(event) => setThemePreset(event.target.value)}
-          >
-            {THEME_PRESETS.map((preset) => (
-              <option key={preset.key} value={preset.key}>
-                {preset.label}
-              </option>
-            ))}
-          </select>
-
-          <label htmlFor="substyle-select">Substyle</label>
-          <select
-            id="substyle-select"
-            value={substylePreset}
-            onChange={(event) => setSubstylePreset(event.target.value)}
-          >
-            {availableSubstyles.map((substyle) => (
-              <option key={substyle.key} value={substyle.key}>
-                {substyle.label}
-              </option>
-            ))}
-          </select>
-
-          <label>Tone</label>
-          <div className="tone-row">
-            {TONES.map((toneOption) => (
-              <button
-                key={toneOption}
-                className={`tone-chip ${toneOption === tone ? "active" : ""}`}
-                onClick={() => setTone(toneOption)}
-              >
-                {toneOption}
-              </button>
-            ))}
-          </div>
-
-          <label htmlFor="brand-color">Brand color</label>
-          <div className="input-inline">
-            <input
-              id="brand-color"
-              type="color"
-              value={brandColor}
-              onChange={(event) => setBrandColor(event.target.value)}
-            />
-            <input
-              value={brandColor}
-              onChange={(event) => setBrandColor(event.target.value)}
-              aria-label="Brand color hex"
-            />
-          </div>
-
-          <label htmlFor="heading-font-theme">Heading font style</label>
-          <select
-            id="heading-font-theme"
-            value={headingFontTheme}
-            onChange={(event) => setHeadingFontTheme(event.target.value)}
-          >
-            {FONT_THEME_OPTIONS.map((fontOption) => (
-              <option key={fontOption.key} value={fontOption.key}>
-                {fontOption.label}
-              </option>
-            ))}
-          </select>
-
-          <label htmlFor="body-font-theme">Body font style</label>
-          <select
-            id="body-font-theme"
-            value={bodyFontTheme}
-            onChange={(event) => setBodyFontTheme(event.target.value)}
-          >
-            {FONT_THEME_OPTIONS.map((fontOption) => (
-              <option key={fontOption.key} value={fontOption.key}>
-                {fontOption.label}
-              </option>
-            ))}
-          </select>
-
-          <div className="type-presets-row">
-            {TYPOGRAPHY_PRESETS.map((preset) => (
-              <button
-                key={preset.key}
-                type="button"
-                className="ghost small"
-                onClick={() => applyTypographyPreset(preset.key)}
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="type-preview-strip">
-            <p
-              className="type-preview-heading"
-              style={{ fontFamily: FONT_THEMES[headingFontTheme]?.stack || FONT_THEMES.display.stack }}
-            >
-              Build financial clarity with confidence
-            </p>
-            <p
-              className="type-preview-body"
-              style={{ fontFamily: FONT_THEMES[bodyFontTheme]?.stack || FONT_THEMES.sans.stack }}
-            >
-              Your business can present clear value, build trust, and guide visitors to take action.
-            </p>
-          </div>
-
-          <div className="page-font-grid">
-            <div className="page-font-grid-head">
-              <strong>Per-page font overrides</strong>
-              <button
-                type="button"
-                className="ghost small"
-                onClick={() => setPageFontOverrides(createDefaultPageFontOverrides())}
-              >
-                Clear overrides
-              </button>
-            </div>
-            {PAGE_CONFIG.map((page) => {
-              const override = pageFontOverrides[page.key] || { heading: "", body: "" };
-              return (
-                <div key={page.key} className="page-font-row">
-                  <span>{page.label}</span>
-                  <select
-                    value={override.heading}
-                    onChange={(event) =>
-                      updatePageFontOverride(page.key, "heading", event.target.value)
-                    }
-                  >
-                    <option value="">Heading: Use global</option>
-                    {FONT_THEME_OPTIONS.map((fontOption) => (
-                      <option key={`${page.key}-h-${fontOption.key}`} value={fontOption.key}>
-                        Heading: {fontOption.label}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    value={override.body}
-                    onChange={(event) =>
-                      updatePageFontOverride(page.key, "body", event.target.value)
-                    }
-                  >
-                    <option value="">Body: Use global</option>
-                    {FONT_THEME_OPTIONS.map((fontOption) => (
-                      <option key={`${page.key}-b-${fontOption.key}`} value={fontOption.key}>
-                        Body: {fontOption.label}
-                      </option>
-                    ))}
-                  </select>
+          <section className="wizard-section">
+            <h3>1. Business Profile</h3>
+            <div className="wizard-grid-2">
+              <div className="wizard-field-full">
+                <label htmlFor="business-name">Business name</label>
+                <input
+                  id="business-name"
+                  value={businessName}
+                  onChange={(event) => setBusinessName(event.target.value)}
+                  placeholder="Example: Northpoint Studio"
+                />
+              </div>
+              <div>
+                <label htmlFor="industry-select">Industry</label>
+                <select
+                  id="industry-select"
+                  value={industryKey}
+                  onChange={(event) => setIndustryKey(event.target.value)}
+                >
+                  {INDUSTRIES.map((industry) => (
+                    <option key={industry.key} value={industry.key}>
+                      {industry.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="goal-select">Primary goal</label>
+                <select id="goal-select" value={goal} onChange={(event) => setGoal(event.target.value)}>
+                  {GOALS.map((goalOption) => (
+                    <option key={goalOption} value={goalOption}>
+                      {goalOption}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="theme-select">Theme preset</label>
+                <select
+                  id="theme-select"
+                  value={themePreset}
+                  onChange={(event) => setThemePreset(event.target.value)}
+                >
+                  {THEME_PRESETS.map((preset) => (
+                    <option key={preset.key} value={preset.key}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="substyle-select">Substyle</label>
+                <select
+                  id="substyle-select"
+                  value={substylePreset}
+                  onChange={(event) => setSubstylePreset(event.target.value)}
+                >
+                  {availableSubstyles.map((substyle) => (
+                    <option key={substyle.key} value={substyle.key}>
+                      {substyle.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="wizard-field-full">
+                <label>Tone</label>
+                <div className="tone-row">
+                  {TONES.map((toneOption) => (
+                    <button
+                      key={toneOption}
+                      className={`tone-chip ${toneOption === tone ? "active" : ""}`}
+                      onClick={() => setTone(toneOption)}
+                    >
+                      {toneOption}
+                    </button>
+                  ))}
                 </div>
-              );
-            })}
-          </div>
+              </div>
+              <div>
+                <label htmlFor="brand-color">Brand color</label>
+                <div className="input-inline">
+                  <input
+                    id="brand-color"
+                    type="color"
+                    value={brandColor}
+                    onChange={(event) => setBrandColor(event.target.value)}
+                  />
+                  <input
+                    value={brandColor}
+                    onChange={(event) => setBrandColor(event.target.value)}
+                    aria-label="Brand color hex"
+                  />
+                </div>
+              </div>
+              <div>
+                <label htmlFor="visual-style">Visual style pack</label>
+                <select
+                  id="visual-style"
+                  value={visualStyle}
+                  onChange={(event) => setVisualStyle(event.target.value)}
+                >
+                  {VISUAL_STYLES.map((style) => (
+                    <option key={style.key} value={style.key}>
+                      {style.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </section>
 
-          <label htmlFor="visual-style">Visual style pack</label>
-          <select
-            id="visual-style"
-            value={visualStyle}
-            onChange={(event) => setVisualStyle(event.target.value)}
-          >
-            {VISUAL_STYLES.map((style) => (
-              <option key={style.key} value={style.key}>
-                {style.label}
-              </option>
-            ))}
-          </select>
-
-          <label className="inline-toggle">
-            <input
-              type="checkbox"
-              checked={useLlm}
-              onChange={(event) => setUseLlm(event.target.checked)}
-            />
-            Use LLM copy generation
-          </label>
-          {useLlm && (
-            <>
-              <label htmlFor="llm-preset">TitoNova Cloud Engine quality preset</label>
-              <select
-                id="llm-preset"
-                value={llmPreset}
-                onChange={(event) => setLlmPreset(event.target.value)}
+          <section className="wizard-section">
+            <h3>2. Design & Typography</h3>
+            <div className="wizard-grid-2">
+              <div>
+                <label htmlFor="heading-font-theme">Heading font style</label>
+                <select
+                  id="heading-font-theme"
+                  value={headingFontTheme}
+                  onChange={(event) => setHeadingFontTheme(event.target.value)}
+                >
+                  {FONT_THEME_OPTIONS.map((fontOption) => (
+                    <option key={fontOption.key} value={fontOption.key}>
+                      {fontOption.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="body-font-theme">Body font style</label>
+                <select
+                  id="body-font-theme"
+                  value={bodyFontTheme}
+                  onChange={(event) => setBodyFontTheme(event.target.value)}
+                >
+                  {FONT_THEME_OPTIONS.map((fontOption) => (
+                    <option key={fontOption.key} value={fontOption.key}>
+                      {fontOption.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="type-presets-row">
+              {TYPOGRAPHY_PRESETS.map((preset) => (
+                <button
+                  key={preset.key}
+                  type="button"
+                  className="ghost small"
+                  onClick={() => applyTypographyPreset(preset.key)}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <div className="type-preview-strip">
+              <p
+                className="type-preview-heading"
+                style={{ fontFamily: FONT_THEMES[headingFontTheme]?.stack || FONT_THEMES.display.stack }}
               >
-                {LLM_MODEL_PRESETS.map((preset) => (
-                  <option key={preset.key} value={preset.key}>
-                    {preset.label}
-                  </option>
-                ))}
-              </select>
-              <p className="llm-note">{selectedLlmPreset.description}</p>
-
-              <label htmlFor="llm-model">LLM model</label>
-              <select
-                id="llm-model"
-                value={llmModel}
-                onChange={(event) => setLlmModel(event.target.value)}
-              >
-                {llmModelOptions.map((modelOption) => (
-                  <option key={modelOption} value={modelOption}>
-                    {modelOption}
-                  </option>
-                ))}
-              </select>
-
-              <label htmlFor="llm-custom-model">Custom first-choice model (optional)</label>
-              <input
-                id="llm-custom-model"
-                value={llmCustomModel}
-                onChange={(event) => setLlmCustomModel(event.target.value)}
-                placeholder="e.g. gpt-4.1"
-              />
-              <p className="llm-note">
-                Requires <code>VITE_OPENAI_API_KEY</code>. If the selected model is unavailable,
-                fallback models from the preset are used automatically.
+                Build financial clarity with confidence
               </p>
-            </>
-          )}
+              <p
+                className="type-preview-body"
+                style={{ fontFamily: FONT_THEMES[bodyFontTheme]?.stack || FONT_THEMES.sans.stack }}
+              >
+                Your business can present clear value, build trust, and guide visitors to take action.
+              </p>
+            </div>
+            <div className="page-font-grid">
+              <div className="page-font-grid-head">
+                <strong>Per-page font overrides</strong>
+                <button
+                  type="button"
+                  className="ghost small"
+                  onClick={() => setPageFontOverrides(createDefaultPageFontOverrides())}
+                >
+                  Clear overrides
+                </button>
+              </div>
+              {PAGE_CONFIG.map((page) => {
+                const override = pageFontOverrides[page.key] || { heading: "", body: "" };
+                return (
+                  <div key={page.key} className="page-font-row">
+                    <span>{page.label}</span>
+                    <select
+                      value={override.heading}
+                      onChange={(event) =>
+                        updatePageFontOverride(page.key, "heading", event.target.value)
+                      }
+                    >
+                      <option value="">Heading: Use global</option>
+                      {FONT_THEME_OPTIONS.map((fontOption) => (
+                        <option key={`${page.key}-h-${fontOption.key}`} value={fontOption.key}>
+                          Heading: {fontOption.label}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={override.body}
+                      onChange={(event) =>
+                        updatePageFontOverride(page.key, "body", event.target.value)
+                      }
+                    >
+                      <option value="">Body: Use global</option>
+                      {FONT_THEME_OPTIONS.map((fontOption) => (
+                        <option key={`${page.key}-b-${fontOption.key}`} value={fontOption.key}>
+                          Body: {fontOption.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
 
-          <div className="toggle-grid">
-            <label><input type="checkbox" checked={includePricing} onChange={(e) => setIncludePricing(e.target.checked)} /> Pricing</label>
-            <label><input type="checkbox" checked={includeTestimonials} onChange={(e) => setIncludeTestimonials(e.target.checked)} /> Testimonials</label>
-            <label><input type="checkbox" checked={includeFaq} onChange={(e) => setIncludeFaq(e.target.checked)} /> FAQ</label>
-            <label><input type="checkbox" checked={includeBlog} onChange={(e) => setIncludeBlog(e.target.checked)} /> Blog</label>
-            <label><input type="checkbox" checked={includePortfolio} onChange={(e) => setIncludePortfolio(e.target.checked)} /> Portfolio</label>
-            <label><input type="checkbox" checked={includeLogoCloud} onChange={(e) => setIncludeLogoCloud(e.target.checked)} /> Logo cloud</label>
-            <label><input type="checkbox" checked={enableMotion} onChange={(e) => setEnableMotion(e.target.checked)} /> Animations</label>
-          </div>
+          <section className="wizard-section">
+            <h3>3. Content Engine</h3>
+            <label className="inline-toggle">
+              <input
+                type="checkbox"
+                checked={useLlm}
+                onChange={(event) => setUseLlm(event.target.checked)}
+              />
+              Use TitoNova Cloud Engine copy generation
+            </label>
+            {useLlm && (
+              <>
+                <label htmlFor="llm-preset">TitoNova Cloud Engine quality preset</label>
+                <select
+                  id="llm-preset"
+                  value={llmPreset}
+                  onChange={(event) => setLlmPreset(event.target.value)}
+                >
+                  {LLM_MODEL_PRESETS.map((preset) => (
+                    <option key={preset.key} value={preset.key}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="llm-note">{selectedLlmPreset.description}</p>
+
+                <label htmlFor="llm-model">LLM model</label>
+                <select
+                  id="llm-model"
+                  value={llmModel}
+                  onChange={(event) => setLlmModel(event.target.value)}
+                >
+                  {llmModelOptions.map((modelOption) => (
+                    <option key={modelOption} value={modelOption}>
+                      {modelOption}
+                    </option>
+                  ))}
+                </select>
+
+                <label htmlFor="llm-custom-model">Custom first-choice model (optional)</label>
+                <input
+                  id="llm-custom-model"
+                  value={llmCustomModel}
+                  onChange={(event) => setLlmCustomModel(event.target.value)}
+                  placeholder="e.g. gpt-4.1"
+                />
+                <p className="llm-note">
+                  Requires <code>VITE_OPENAI_API_KEY</code>. If the selected model is unavailable,
+                  fallback models from the preset are used automatically.
+                </p>
+              </>
+            )}
+          </section>
+
+          <section className="wizard-section">
+            <h3>4. Website Modules</h3>
+            <div className="toggle-grid">
+              <label><input type="checkbox" checked={includePricing} onChange={(e) => setIncludePricing(e.target.checked)} /> Pricing</label>
+              <label><input type="checkbox" checked={includeTestimonials} onChange={(e) => setIncludeTestimonials(e.target.checked)} /> Testimonials</label>
+              <label><input type="checkbox" checked={includeFaq} onChange={(e) => setIncludeFaq(e.target.checked)} /> FAQ</label>
+              <label><input type="checkbox" checked={includeBlog} onChange={(e) => setIncludeBlog(e.target.checked)} /> Blog</label>
+              <label><input type="checkbox" checked={includePortfolio} onChange={(e) => setIncludePortfolio(e.target.checked)} /> Portfolio</label>
+              <label><input type="checkbox" checked={includeLogoCloud} onChange={(e) => setIncludeLogoCloud(e.target.checked)} /> Logo cloud</label>
+              <label><input type="checkbox" checked={enableMotion} onChange={(e) => setEnableMotion(e.target.checked)} /> Animations</label>
+            </div>
+          </section>
 
           <div className="quality-meter">
             <div className="quality-head">
