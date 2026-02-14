@@ -2275,6 +2275,45 @@ const parsePageSections = (html) => {
   });
 };
 
+const extractQuickEditFields = (html) => {
+  if (!html) return { headline: "", subhead: "", cta: "" };
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  const root = doc.querySelector("main") || doc.body;
+  const headline = root?.querySelector("h1")?.textContent?.trim() || "";
+  const subhead =
+    root?.querySelector(".sub")?.textContent?.trim() ||
+    root?.querySelector("p")?.textContent?.trim() ||
+    "";
+  const cta = root?.querySelector("a.cta")?.textContent?.trim() || "";
+  return { headline, subhead, cta };
+};
+
+const applyQuickEditFieldsToHtml = (html, fields) => {
+  if (!html) return html;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, "text/html");
+  const root = doc.querySelector("main") || doc.body;
+  if (!root) return html;
+
+  const headlineNode = root.querySelector("h1");
+  if (headlineNode && fields.headline.trim()) {
+    headlineNode.textContent = fields.headline.trim();
+  }
+
+  const subheadNode = root.querySelector(".sub") || root.querySelector("p");
+  if (subheadNode && fields.subhead.trim()) {
+    subheadNode.textContent = fields.subhead.trim();
+  }
+
+  const ctaNode = root.querySelector("a.cta");
+  if (ctaNode && fields.cta.trim()) {
+    ctaNode.textContent = fields.cta.trim();
+  }
+
+  return "<!doctype html>\n" + doc.documentElement.outerHTML;
+};
+
 const rewritePageSections = (html, sectionUpdater) => {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, "text/html");
@@ -2653,6 +2692,14 @@ export default function App() {
   const [isImageDropActive, setIsImageDropActive] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState("");
   const [insightMessage, setInsightMessage] = useState("");
+  const [quickEditFields, setQuickEditFields] = useState({
+    headline: "",
+    subhead: "",
+    cta: "",
+  });
+  const [quickApplyAllPages, setQuickApplyAllPages] = useState(false);
+  const [quickEditStatus, setQuickEditStatus] = useState("");
+  const [showAdvancedEditor, setShowAdvancedEditor] = useState(false);
 
   const iframeRef = useRef(null);
   const iframeListenerRef = useRef(null);
@@ -3047,6 +3094,19 @@ export default function App() {
     setPreviewHtml(html);
     setEditableHtml(html);
   }, [activeProjectId, previewPage, projects, isInlineEditing]);
+
+  useEffect(() => {
+    if (!previewHtml) {
+      setQuickEditFields({ headline: "", subhead: "", cta: "" });
+      return;
+    }
+    setQuickEditFields(extractQuickEditFields(previewHtml));
+    setQuickEditStatus("");
+  }, [previewHtml, previewPage, activeProjectId]);
+
+  useEffect(() => {
+    setShowAdvancedEditor(false);
+  }, [activeProjectId]);
 
   useEffect(() => {
     if (availableSubstyles.some((item) => item.key === substylePreset)) return;
@@ -3513,6 +3573,107 @@ export default function App() {
     const changed = updated.find((project) => project.id === activeProjectId);
     if (changed) {
       openProject(changed, previewPage);
+    }
+  };
+
+  const handleApplyQuickEdits = () => {
+    if (!activeProjectId) return;
+
+    const input = {
+      headline: quickEditFields.headline.trim(),
+      subhead: quickEditFields.subhead.trim(),
+      cta: quickEditFields.cta.trim(),
+    };
+    if (!input.headline && !input.subhead && !input.cta) {
+      setQuickEditStatus("Enter at least one field before applying.");
+      return;
+    }
+
+    const targetPages = quickApplyAllPages ? PAGE_CONFIG.map((page) => page.key) : [previewPage];
+    const activeFromLibrary = projects.find((project) => project.id === activeProjectId);
+
+    if (activeFromLibrary) {
+      let changedProject = null;
+      const updated = projects.map((project) => {
+        if (project.id !== activeProjectId) return project;
+        const currentFiles = getProjectFiles(project);
+        const nextFiles = { ...currentFiles };
+        let didChange = false;
+
+        targetPages.forEach((pageKey) => {
+          const currentHtml = currentFiles[pageKey];
+          if (typeof currentHtml !== "string") return;
+          const nextHtml = applyQuickEditFieldsToHtml(currentHtml, input);
+          if (nextHtml !== currentHtml) {
+            didChange = true;
+            nextFiles[pageKey] = nextHtml;
+          }
+        });
+
+        if (!didChange) return project;
+
+        const label =
+          quickApplyAllPages
+            ? "Quick edit applied to all pages"
+            : `Quick edit • ${PAGE_CONFIG.find((page) => page.key === previewPage)?.label || previewPage}`;
+        const snapshot = createVersionSnapshot(project, label);
+        changedProject = {
+          ...project,
+          files: nextFiles,
+          html: nextFiles[DEFAULT_PAGE] || project.html,
+          versions: [snapshot, ...(project.versions || [])].slice(0, 30),
+        };
+        return changedProject;
+      });
+
+      if (!changedProject) {
+        setQuickEditStatus("No visible changes were applied.");
+        return;
+      }
+
+      persistProjects(updated);
+      openProject(changedProject, previewPage);
+      setQuickEditStatus(
+        quickApplyAllPages
+          ? "Quick edits applied across all pages."
+          : "Quick edits applied to this page."
+      );
+      return;
+    }
+
+    if (draftProject?.id === activeProjectId) {
+      const currentFiles = getProjectFiles(draftProject);
+      const nextFiles = { ...currentFiles };
+      let didChange = false;
+
+      targetPages.forEach((pageKey) => {
+        const currentHtml = currentFiles[pageKey];
+        if (typeof currentHtml !== "string") return;
+        const nextHtml = applyQuickEditFieldsToHtml(currentHtml, input);
+        if (nextHtml !== currentHtml) {
+          didChange = true;
+          nextFiles[pageKey] = nextHtml;
+        }
+      });
+
+      if (!didChange) {
+        setQuickEditStatus("No visible changes were applied.");
+        return;
+      }
+
+      const normalizedDraft = normalizeProject(draftProject);
+      const updatedDraft = {
+        ...normalizedDraft,
+        files: nextFiles,
+        html: nextFiles[DEFAULT_PAGE] || normalizedDraft.html,
+      };
+      setDraftProject(updatedDraft);
+      openProject(updatedDraft, previewPage);
+      setQuickEditStatus(
+        quickApplyAllPages
+          ? "Quick edits applied across all pages."
+          : "Quick edits applied to this page."
+      );
     }
   };
 
@@ -5485,9 +5646,57 @@ export default function App() {
             {isInlineEditing && (
               <button onClick={handleSaveInlineEdits}>Save edits to {previewPage}</button>
             )}
+            <button className="ghost" onClick={() => setShowAdvancedEditor((prev) => !prev)}>
+              {showAdvancedEditor ? "Hide advanced editor" : "Show advanced editor"}
+            </button>
           </div>
 
-          {activeProject && (
+          {activeProjectId && (
+            <div className="tool-block quick-edit-flow">
+              <h3>Quick Edit</h3>
+              <p className="muted">
+                1) Choose page 2) Update headline, subhead, CTA 3) Click Apply.
+              </p>
+              <div className="quick-edit-grid">
+                <input
+                  placeholder="Main headline"
+                  value={quickEditFields.headline}
+                  onChange={(event) =>
+                    setQuickEditFields((prev) => ({ ...prev, headline: event.target.value }))
+                  }
+                />
+                <textarea
+                  rows={3}
+                  placeholder="Supporting paragraph / subhead"
+                  value={quickEditFields.subhead}
+                  onChange={(event) =>
+                    setQuickEditFields((prev) => ({ ...prev, subhead: event.target.value }))
+                  }
+                />
+                <input
+                  placeholder="Primary button text (CTA)"
+                  value={quickEditFields.cta}
+                  onChange={(event) =>
+                    setQuickEditFields((prev) => ({ ...prev, cta: event.target.value }))
+                  }
+                />
+              </div>
+              <label className="mini-toggle">
+                <input
+                  type="checkbox"
+                  checked={quickApplyAllPages}
+                  onChange={(event) => setQuickApplyAllPages(event.target.checked)}
+                />
+                Apply same text to all pages
+              </label>
+              <div className="quick-edit-actions">
+                <button onClick={handleApplyQuickEdits}>Apply Quick Edit</button>
+              </div>
+              {quickEditStatus && <div className="llm-status">{quickEditStatus}</div>}
+            </div>
+          )}
+
+          {activeProject && showAdvancedEditor && (
             <div className="advanced-tools">
               <div className="tool-block">
                 <h3>Global Replace</h3>
