@@ -79,46 +79,62 @@ const FONT_THEME_OPTIONS = [
   { key: "friendly", label: "Friendly Rounded" },
   { key: "formal", label: "Formal" },
 ];
+const TYPOGRAPHY_PRESETS = [
+  { key: "corporate", label: "Corporate", heading: "display", body: "humanist" },
+  { key: "editorial", label: "Editorial", heading: "editorial", body: "serif" },
+  { key: "startup", label: "Startup", heading: "geometric", body: "sans" },
+  { key: "luxury", label: "Luxury", heading: "luxury", body: "formal" },
+];
 const FONT_THEMES = {
   sans: {
     stack: '"DM Sans", "Segoe UI", system-ui, sans-serif',
     googleQuery: "family=DM+Sans:wght@400;500;700;800",
+    primary: "DM Sans",
   },
   serif: {
     stack: '"Merriweather", Georgia, "Times New Roman", serif',
     googleQuery: "family=Merriweather:wght@400;700;900",
+    primary: "Merriweather",
   },
   mono: {
     stack: '"IBM Plex Mono", "JetBrains Mono", monospace',
     googleQuery: "family=IBM+Plex+Mono:wght@400;500;700",
+    primary: "IBM Plex Mono",
   },
   geometric: {
     stack: '"Poppins", "Avenir Next", "Century Gothic", sans-serif',
     googleQuery: "family=Poppins:wght@400;500;600;700;800",
+    primary: "Poppins",
   },
   humanist: {
     stack: '"Source Sans 3", "Calibri", "Trebuchet MS", sans-serif',
     googleQuery: "family=Source+Sans+3:wght@400;500;600;700",
+    primary: "Source Sans 3",
   },
   editorial: {
     stack: '"Spectral", "Garamond", "Times New Roman", serif',
     googleQuery: "family=Spectral:wght@400;500;600;700;800",
+    primary: "Spectral",
   },
   display: {
     stack: '"Sora", "Montserrat", "Arial Black", sans-serif',
     googleQuery: "family=Sora:wght@400;500;600;700;800",
+    primary: "Sora",
   },
   luxury: {
     stack: '"Cormorant Garamond", "Baskerville", "Times New Roman", serif',
     googleQuery: "family=Cormorant+Garamond:wght@400;500;600;700",
+    primary: "Cormorant Garamond",
   },
   friendly: {
     stack: '"Nunito", "Trebuchet MS", "Verdana", sans-serif',
     googleQuery: "family=Nunito:wght@400;500;600;700;800",
+    primary: "Nunito",
   },
   formal: {
     stack: '"Lora", "Cambria", "Georgia", serif',
     googleQuery: "family=Lora:wght@400;500;600;700",
+    primary: "Lora",
   },
 };
 const THEME_PRESETS = [
@@ -202,6 +218,27 @@ const PAGE_CONFIG = [
   { key: "services.html", label: "Services" },
   { key: "contact.html", label: "Contact" },
 ];
+const createDefaultPageFontOverrides = () =>
+  Object.fromEntries(PAGE_CONFIG.map((page) => [page.key, { heading: "", body: "" }]));
+const normalizePageFontOverrides = (input) => {
+  const defaults = createDefaultPageFontOverrides();
+  if (!input || typeof input !== "object") return defaults;
+  const next = { ...defaults };
+  PAGE_CONFIG.forEach((page) => {
+    const item = input[page.key];
+    if (!item || typeof item !== "object") return;
+    const heading =
+      typeof item.heading === "string" && Object.prototype.hasOwnProperty.call(FONT_THEMES, item.heading)
+        ? item.heading
+        : "";
+    const body =
+      typeof item.body === "string" && Object.prototype.hasOwnProperty.call(FONT_THEMES, item.body)
+        ? item.body
+        : "";
+    next[page.key] = { heading, body };
+  });
+  return next;
+};
 const DOMAIN_STORAGE_KEY = "titonova_domain_store";
 const DOMAIN_TLDS = [
   { tld: ".com", price: 14.99 },
@@ -594,6 +631,7 @@ const buildWebsiteFiles = ({
   brandColor,
   headingFontTheme,
   bodyFontTheme,
+  pageFontOverrides,
   fontTheme,
   ctaText,
   seoTitle,
@@ -641,21 +679,18 @@ const buildWebsiteFiles = ({
   const resolvedHeadingFontKey = Object.prototype.hasOwnProperty.call(FONT_THEMES, headingFontTheme)
     ? headingFontTheme
     : resolvedBodyFontKey;
-  const safeBodyFontStack = FONT_THEMES[resolvedBodyFontKey]?.stack || FONT_THEMES.sans.stack;
-  const safeHeadingFontStack =
-    FONT_THEMES[resolvedHeadingFontKey]?.stack || FONT_THEMES[resolvedBodyFontKey]?.stack || FONT_THEMES.sans.stack;
-  const googleQueries = Array.from(
-    new Set(
-      [resolvedBodyFontKey, resolvedHeadingFontKey]
-        .map((key) => FONT_THEMES[key]?.googleQuery)
-        .filter(Boolean)
-    )
-  );
-  const fontHeadTags = googleQueries.length
-    ? `<link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?${googleQueries.join("&")}&display=swap" rel="stylesheet" />`
-    : "";
+  const normalizedPageFontOverrides = normalizePageFontOverrides(pageFontOverrides);
+  const resolveFontKeysForPage = (pagePath) => {
+    const override = normalizedPageFontOverrides[pagePath] || { heading: "", body: "" };
+    const body = override.body || resolvedBodyFontKey;
+    const heading = override.heading || resolvedHeadingFontKey;
+    return {
+      body: Object.prototype.hasOwnProperty.call(FONT_THEMES, body) ? body : resolvedBodyFontKey,
+      heading: Object.prototype.hasOwnProperty.call(FONT_THEMES, heading)
+        ? heading
+        : resolvedHeadingFontKey,
+    };
+  };
   const safeVisualStyle = VISUAL_STYLES.some((style) => style.key === visualStyle)
     ? visualStyle
     : "glass";
@@ -1042,7 +1077,25 @@ const buildWebsiteFiles = ({
     "editorial:journal": `<section class="contact-note"><p class="muted">Please include your research scope, methodological constraints, and intended readership.</p></section>`,
   };
 
-  const sharedHead = (title, pagePath) => `<!doctype html>
+  const sharedHead = (title, pagePath) => {
+    const pageFonts = resolveFontKeysForPage(pagePath);
+    const safeBodyFontStack = FONT_THEMES[pageFonts.body]?.stack || FONT_THEMES.sans.stack;
+    const safeHeadingFontStack = FONT_THEMES[pageFonts.heading]?.stack || FONT_THEMES.sans.stack;
+    const bodyPrimary = FONT_THEMES[pageFonts.body]?.primary || "sans-serif";
+    const headingPrimary = FONT_THEMES[pageFonts.heading]?.primary || "sans-serif";
+    const googleQueries = Array.from(
+      new Set(
+        [pageFonts.body, pageFonts.heading]
+          .map((key) => FONT_THEMES[key]?.googleQuery)
+          .filter(Boolean)
+      )
+    );
+    const fontHeadTags = googleQueries.length
+      ? `<link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?${googleQueries.join("&")}&display=swap" rel="stylesheet" />`
+      : "";
+    return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -1119,6 +1172,19 @@ const buildWebsiteFiles = ({
       border-radius: 999px;
       padding: 12px 20px;
       font-weight: 700;
+    }
+    .font-fallback-alert {
+      position: sticky;
+      top: 8px;
+      z-index: 50;
+      margin: 8px 0 0;
+      border: 1px solid rgba(255, 196, 64, 0.6);
+      background: rgba(255, 196, 64, 0.14);
+      color: #5f490c;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 12px;
+      display: none;
     }
     .hero img, .about img, .gallery img {
       width: 100%;
@@ -1329,12 +1395,20 @@ const buildWebsiteFiles = ({
     @media (max-width: 760px) { .form-grid { grid-template-columns: 1fr; } }
   </style>
 </head>
-<body class="theme-${activeTheme} substyle-${activeSubstyle}">
+<body
+  class="theme-${activeTheme} substyle-${activeSubstyle}"
+  data-font-body-primary="${bodyPrimary}"
+  data-font-heading-primary="${headingPrimary}"
+>
   <main class="container">
+    <div id="font-fallback-alert" class="font-fallback-alert" role="status" aria-live="polite">
+      Google Fonts failed to load. Showing web-safe fallback fonts.
+    </div>
     <nav class="nav">
       <strong>${safeName}</strong>
       <div class="menu">${pageLinks}</div>
     </nav>`;
+  };
 
   const footer = `
     <aside class="connection-dock" aria-label="Connection actions">
@@ -1393,6 +1467,21 @@ const buildWebsiteFiles = ({
           form.reset();
         });
       });
+
+      const fontAlert = document.getElementById("font-fallback-alert");
+      const verifyFonts = () => {
+        if (!fontAlert || !document.fonts || typeof document.fonts.check !== "function") return;
+        const bodyPrimary = document.body?.dataset?.fontBodyPrimary || "";
+        const headingPrimary = document.body?.dataset?.fontHeadingPrimary || "";
+        const bodyOk = bodyPrimary ? document.fonts.check('16px "' + bodyPrimary + '"') : true;
+        const headingOk = headingPrimary
+          ? document.fonts.check('16px "' + headingPrimary + '"')
+          : true;
+        if (!bodyOk || !headingOk) {
+          fontAlert.style.display = "block";
+        }
+      };
+      window.setTimeout(verifyFonts, 1800);
     })();
   </script>
 </body>
@@ -1746,6 +1835,7 @@ const makeProject = (config) => {
       brandColor: config.brandColor,
       headingFontTheme: config.headingFontTheme || config.fontTheme || "sans",
       bodyFontTheme: config.bodyFontTheme || config.fontTheme || "sans",
+      pageFontOverrides: normalizePageFontOverrides(config.pageFontOverrides),
       fontTheme: config.fontTheme,
       ctaText: config.ctaText,
       seoTitle: config.seoTitle,
@@ -1835,6 +1925,7 @@ const normalizeProject = (project) => {
         project.options?.headingFontTheme || project.options?.fontTheme || "sans",
       bodyFontTheme:
         project.options?.bodyFontTheme || project.options?.fontTheme || "sans",
+      pageFontOverrides: normalizePageFontOverrides(project.options?.pageFontOverrides),
       fontTheme: project.options?.fontTheme || project.options?.bodyFontTheme || "sans",
       ctaText: project.options?.ctaText || "Book a strategy call",
       seoTitle: project.options?.seoTitle || "",
@@ -2194,6 +2285,7 @@ export default function App() {
   const [brandColor, setBrandColor] = useState("#14b987");
   const [headingFontTheme, setHeadingFontTheme] = useState("display");
   const [bodyFontTheme, setBodyFontTheme] = useState("sans");
+  const [pageFontOverrides, setPageFontOverrides] = useState(createDefaultPageFontOverrides());
   const [ctaText, setCtaText] = useState("Book a strategy call");
   const [seoTitle, setSeoTitle] = useState("");
   const [customDomain, setCustomDomain] = useState("");
@@ -2623,6 +2715,9 @@ export default function App() {
         setBodyFontTheme(parsed.fontTheme);
       }
     }
+    if (parsed.pageFontOverrides && typeof parsed.pageFontOverrides === "object") {
+      setPageFontOverrides(normalizePageFontOverrides(parsed.pageFontOverrides));
+    }
     if (typeof parsed.ctaText === "string") setCtaText(parsed.ctaText);
     if (typeof parsed.seoTitle === "string") setSeoTitle(parsed.seoTitle);
     if (typeof parsed.customDomain === "string") setCustomDomain(parsed.customDomain);
@@ -2766,6 +2861,7 @@ export default function App() {
         brandColor,
         headingFontTheme,
         bodyFontTheme,
+        pageFontOverrides,
         ctaText,
         seoTitle,
         customDomain,
@@ -2799,6 +2895,7 @@ export default function App() {
     brandColor,
     headingFontTheme,
     bodyFontTheme,
+    pageFontOverrides,
     ctaText,
     seoTitle,
     customDomain,
@@ -2862,6 +2959,7 @@ export default function App() {
     brandColor,
     headingFontTheme,
     bodyFontTheme,
+    pageFontOverrides,
     fontTheme: bodyFontTheme,
     ctaText,
     seoTitle,
@@ -3530,6 +3628,7 @@ export default function App() {
     setBrandColor("#14b987");
     setHeadingFontTheme("display");
     setBodyFontTheme("sans");
+    setPageFontOverrides(createDefaultPageFontOverrides());
     setCtaText("Book a strategy call");
     setSeoTitle("");
     setCustomDomain("");
@@ -3546,6 +3645,26 @@ export default function App() {
     setIncludeLogoCloud(true);
     setEnableMotion(true);
     setDraftSavedAt("");
+  };
+
+  const applyTypographyPreset = (presetKey) => {
+    const preset = TYPOGRAPHY_PRESETS.find((item) => item.key === presetKey);
+    if (!preset) return;
+    setHeadingFontTheme(preset.heading);
+    setBodyFontTheme(preset.body);
+    setPageFontOverrides(createDefaultPageFontOverrides());
+  };
+
+  const updatePageFontOverride = (pageKey, channel, value) => {
+    if (!["heading", "body"].includes(channel)) return;
+    const validValue = Object.prototype.hasOwnProperty.call(FONT_THEMES, value) ? value : "";
+    setPageFontOverrides((prev) => ({
+      ...prev,
+      [pageKey]: {
+        ...(prev[pageKey] || { heading: "", body: "" }),
+        [channel]: validValue,
+      },
+    }));
   };
 
   const handleToggleFavorite = (projectId) => {
@@ -4264,6 +4383,19 @@ export default function App() {
             ))}
           </select>
 
+          <div className="type-presets-row">
+            {TYPOGRAPHY_PRESETS.map((preset) => (
+              <button
+                key={preset.key}
+                type="button"
+                className="ghost small"
+                onClick={() => applyTypographyPreset(preset.key)}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
           <div className="type-preview-strip">
             <p
               className="type-preview-heading"
@@ -4277,6 +4409,53 @@ export default function App() {
             >
               Flowpilot helps teams monitor cash flow, forecast outcomes, and make faster finance decisions.
             </p>
+          </div>
+
+          <div className="page-font-grid">
+            <div className="page-font-grid-head">
+              <strong>Per-page font overrides</strong>
+              <button
+                type="button"
+                className="ghost small"
+                onClick={() => setPageFontOverrides(createDefaultPageFontOverrides())}
+              >
+                Clear overrides
+              </button>
+            </div>
+            {PAGE_CONFIG.map((page) => {
+              const override = pageFontOverrides[page.key] || { heading: "", body: "" };
+              return (
+                <div key={page.key} className="page-font-row">
+                  <span>{page.label}</span>
+                  <select
+                    value={override.heading}
+                    onChange={(event) =>
+                      updatePageFontOverride(page.key, "heading", event.target.value)
+                    }
+                  >
+                    <option value="">Heading: Use global</option>
+                    {FONT_THEME_OPTIONS.map((fontOption) => (
+                      <option key={`${page.key}-h-${fontOption.key}`} value={fontOption.key}>
+                        Heading: {fontOption.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={override.body}
+                    onChange={(event) =>
+                      updatePageFontOverride(page.key, "body", event.target.value)
+                    }
+                  >
+                    <option value="">Body: Use global</option>
+                    {FONT_THEME_OPTIONS.map((fontOption) => (
+                      <option key={`${page.key}-b-${fontOption.key}`} value={fontOption.key}>
+                        Body: {fontOption.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })}
           </div>
 
           <label htmlFor="visual-style">Visual style pack</label>
