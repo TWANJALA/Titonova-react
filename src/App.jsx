@@ -543,18 +543,69 @@ const buildDefaultLlmContent = (safeName, safePrompt) => ({
       missionTitle: "Our Mission",
       missionBody:
         "We combine strategy, design, and execution to deliver practical business growth outcomes.",
+      aboutStory: [
+        "Founded to simplify complex digital growth for ambitious teams.",
+        "Built around measurable outcomes, not vanity metrics.",
+        "Trusted delivery through clear planning and accountable execution.",
+      ],
+      teamValues: [
+        { title: "Clarity", description: "Clear strategy, scope, and success metrics from day one." },
+        { title: "Ownership", description: "We take responsibility for outcomes, not just outputs." },
+        { title: "Velocity", description: "Fast iteration cycles with quality controls built in." },
+      ],
     },
     services: {
       heroTitle: "Solutions Designed for Measurable Growth",
       heroSubhead:
         "Flexible service packages designed for acquisition, retention, and operational efficiency.",
       sectionTitle: "Service Packages",
+      serviceDetails: [
+        {
+          title: "Offer Positioning",
+          description: "Sharpen your value proposition for higher-intent demand.",
+          outcome: "Improved lead quality",
+        },
+        {
+          title: "Conversion UX",
+          description: "Restructure key journeys to remove friction and increase actions.",
+          outcome: "Higher conversion rate",
+        },
+        {
+          title: "Growth Operations",
+          description: "Instrument reporting and optimization loops for repeatable scale.",
+          outcome: "Predictable pipeline growth",
+        },
+      ],
+      packageComparison: [
+        {
+          tier: "Starter",
+          fit: "New teams launching core pages quickly.",
+          investment: "From $499/mo",
+        },
+        {
+          tier: "Growth",
+          fit: "Teams optimizing conversion and demand capture.",
+          investment: "From $1,250/mo",
+        },
+        {
+          tier: "Enterprise",
+          fit: "Multi-team programs with governance and scale needs.",
+          investment: "Custom pricing",
+        },
+      ],
     },
     contact: {
       heroTitle: `Contact ${safeName}`,
       heroSubhead:
         "Tell us about your goals and timeline. We will share a tailored roadmap and proposal.",
       contactTitle: "Let’s Talk",
+      contactTrustCopy:
+        "Every inquiry is reviewed by a project strategist. You get practical next steps, not a generic sales reply.",
+      responseExpectations: [
+        "Initial response within one business day.",
+        "Clear scope guidance tailored to your goals.",
+        "Recommended next step call with timeline options.",
+      ],
     },
   },
 });
@@ -793,6 +844,67 @@ const buildWebsiteFiles = ({
       aiCopy?.pageCopy?.contact?.contactTitle || fallbackLlm.pageCopy.contact.contactTitle
     ),
   };
+  const aboutStoryItems =
+    Array.isArray(aiCopy?.pageCopy?.about?.aboutStory) && aiCopy.pageCopy.about.aboutStory.length >= 3
+      ? aiCopy.pageCopy.about.aboutStory
+      : fallbackLlm.pageCopy.about.aboutStory;
+  const aboutStoryMarkup = aboutStoryItems
+    .slice(0, 3)
+    .map((item) => `<article class="card"><p>${escapeHtml(item || "")}</p></article>`)
+    .join("");
+  const aboutValuesItems =
+    Array.isArray(aiCopy?.pageCopy?.about?.teamValues) && aiCopy.pageCopy.about.teamValues.length >= 3
+      ? aiCopy.pageCopy.about.teamValues
+      : fallbackLlm.pageCopy.about.teamValues;
+  const aboutValuesMarkup = aboutValuesItems
+    .slice(0, 3)
+    .map(
+      (item) =>
+        `<article class="card"><h3>${escapeHtml(item.title || "Value")}</h3><p>${escapeHtml(
+          item.description || ""
+        )}</p></article>`
+    )
+    .join("");
+  const serviceDetailsItems =
+    Array.isArray(aiCopy?.pageCopy?.services?.serviceDetails) &&
+    aiCopy.pageCopy.services.serviceDetails.length >= 3
+      ? aiCopy.pageCopy.services.serviceDetails
+      : fallbackLlm.pageCopy.services.serviceDetails;
+  const serviceDetailsMarkup = serviceDetailsItems
+    .slice(0, 3)
+    .map(
+      (item) =>
+        `<article class="matrix-card"><h3>${escapeHtml(item.title || "Detail")}</h3><p>${escapeHtml(
+          item.description || ""
+        )}</p><p class="muted"><strong>Outcome:</strong> ${escapeHtml(item.outcome || "")}</p></article>`
+    )
+    .join("");
+  const packageComparisonItems =
+    Array.isArray(aiCopy?.pageCopy?.services?.packageComparison) &&
+    aiCopy.pageCopy.services.packageComparison.length >= 3
+      ? aiCopy.pageCopy.services.packageComparison
+      : fallbackLlm.pageCopy.services.packageComparison;
+  const packageComparisonMarkup = packageComparisonItems
+    .slice(0, 3)
+    .map(
+      (item) =>
+        `<article class="card"><h3>${escapeHtml(item.tier || "Package")}</h3><p>${escapeHtml(
+          item.fit || ""
+        )}</p><strong>${escapeHtml(item.investment || "")}</strong></article>`
+    )
+    .join("");
+  const contactTrustCopy = escapeHtml(
+    aiCopy?.pageCopy?.contact?.contactTrustCopy || fallbackLlm.pageCopy.contact.contactTrustCopy
+  );
+  const responseExpectationsItems =
+    Array.isArray(aiCopy?.pageCopy?.contact?.responseExpectations) &&
+    aiCopy.pageCopy.contact.responseExpectations.length >= 3
+      ? aiCopy.pageCopy.contact.responseExpectations
+      : fallbackLlm.pageCopy.contact.responseExpectations;
+  const responseExpectationsMarkup = responseExpectationsItems
+    .slice(0, 3)
+    .map((item) => `<article class="card"><p>${escapeHtml(item || "")}</p></article>`)
+    .join("");
 
   const aiServices =
     Array.isArray(aiCopy.services) && aiCopy.services.length >= 3
@@ -1603,6 +1715,14 @@ const buildWebsiteFiles = ({
       <h2 class="title">How We Deliver</h2>
       <div class="startup-roadmap">${processMarkup}</div>
     </section>
+    <section>
+      <h2 class="title">Our Story</h2>
+      <div class="cards">${aboutStoryMarkup}</div>
+    </section>
+    <section>
+      <h2 class="title">Team Values</h2>
+      <div class="cards">${aboutValuesMarkup}</div>
+    </section>
     ${themeAboutBlocks[variantKey] || themeAboutBlocks[`${activeTheme}:${defaultSubstyle}`]}
     ${portfolioBlock}
     ${testimonialsGrid}
@@ -1625,10 +1745,18 @@ const buildWebsiteFiles = ({
       <h2 class="title">Engagement Model</h2>
       <div class="startup-roadmap">${processMarkup}</div>
     </section>
+    <section>
+      <h2 class="title">Service Details</h2>
+      <div class="startup-roadmap">${serviceDetailsMarkup}</div>
+    </section>
 
     <section>
       <h2 class="title">Expected Outcomes</h2>
       <div class="stats">${statsMarkup}</div>
+    </section>
+    <section>
+      <h2 class="title">Package Comparison</h2>
+      <div class="cards">${packageComparisonMarkup}</div>
     </section>
 
     ${themeServicesBlocks[variantKey] || themeServicesBlocks[`${activeTheme}:${defaultSubstyle}`]}
@@ -1655,6 +1783,11 @@ const buildWebsiteFiles = ({
     </section>
 
     ${detailedContactForm}
+    <section>
+      <h2 class="title">What Happens Next</h2>
+      <p class="muted">${contactTrustCopy}</p>
+      <div class="cards">${responseExpectationsMarkup}</div>
+    </section>
 
     <section id="connect" class="contact-list">
       <article class="contact-item"><strong>Email</strong><p class="muted">${contactEmail}</p></article>
@@ -1726,7 +1859,7 @@ Primary goal: ${goal}
 Prompt: ${prompt}
 CTA: ${ctaText}
 
-Return concise, specific copy with no markdown. Generate distinct copy for Home/About/Services/Contact so each page has unique purpose and messaging. Focus on high-ticket positioning, trust signals, proof-driven language, and clear buying paths.`,
+Return concise, specific copy with no markdown. Generate distinct copy for Home/About/Services/Contact so each page has unique purpose and messaging. Include useful section-level content for each page (about story and values, service details and package comparison, contact trust and response expectations). Focus on high-ticket positioning, trust signals, proof-driven language, and clear buying paths.`,
           },
         ],
         text: {
@@ -1838,8 +1971,35 @@ Return concise, specific copy with no markdown. Generate distinct copy for Home/
                         heroSubhead: { type: "string" },
                         missionTitle: { type: "string" },
                         missionBody: { type: "string" },
+                        aboutStory: {
+                          type: "array",
+                          minItems: 3,
+                          maxItems: 3,
+                          items: { type: "string" },
+                        },
+                        teamValues: {
+                          type: "array",
+                          minItems: 3,
+                          maxItems: 3,
+                          items: {
+                            type: "object",
+                            additionalProperties: false,
+                            properties: {
+                              title: { type: "string" },
+                              description: { type: "string" },
+                            },
+                            required: ["title", "description"],
+                          },
+                        },
                       },
-                      required: ["heroTitle", "heroSubhead", "missionTitle", "missionBody"],
+                      required: [
+                        "heroTitle",
+                        "heroSubhead",
+                        "missionTitle",
+                        "missionBody",
+                        "aboutStory",
+                        "teamValues",
+                      ],
                     },
                     services: {
                       type: "object",
@@ -1848,8 +2008,44 @@ Return concise, specific copy with no markdown. Generate distinct copy for Home/
                         heroTitle: { type: "string" },
                         heroSubhead: { type: "string" },
                         sectionTitle: { type: "string" },
+                        serviceDetails: {
+                          type: "array",
+                          minItems: 3,
+                          maxItems: 3,
+                          items: {
+                            type: "object",
+                            additionalProperties: false,
+                            properties: {
+                              title: { type: "string" },
+                              description: { type: "string" },
+                              outcome: { type: "string" },
+                            },
+                            required: ["title", "description", "outcome"],
+                          },
+                        },
+                        packageComparison: {
+                          type: "array",
+                          minItems: 3,
+                          maxItems: 3,
+                          items: {
+                            type: "object",
+                            additionalProperties: false,
+                            properties: {
+                              tier: { type: "string" },
+                              fit: { type: "string" },
+                              investment: { type: "string" },
+                            },
+                            required: ["tier", "fit", "investment"],
+                          },
+                        },
                       },
-                      required: ["heroTitle", "heroSubhead", "sectionTitle"],
+                      required: [
+                        "heroTitle",
+                        "heroSubhead",
+                        "sectionTitle",
+                        "serviceDetails",
+                        "packageComparison",
+                      ],
                     },
                     contact: {
                       type: "object",
@@ -1858,8 +2054,21 @@ Return concise, specific copy with no markdown. Generate distinct copy for Home/
                         heroTitle: { type: "string" },
                         heroSubhead: { type: "string" },
                         contactTitle: { type: "string" },
+                        contactTrustCopy: { type: "string" },
+                        responseExpectations: {
+                          type: "array",
+                          minItems: 3,
+                          maxItems: 3,
+                          items: { type: "string" },
+                        },
                       },
-                      required: ["heroTitle", "heroSubhead", "contactTitle"],
+                      required: [
+                        "heroTitle",
+                        "heroSubhead",
+                        "contactTitle",
+                        "contactTrustCopy",
+                        "responseExpectations",
+                      ],
                     },
                   },
                   required: ["about", "services", "contact"],
