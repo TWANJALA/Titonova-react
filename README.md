@@ -1,6 +1,6 @@
-# Titonova AI Website Builder
+# TitoNova Cloud Engine Pro
 
-React + Vite website builder with multi-page export, block editing, theme presets/substyles, domain marketplace flows, and built-in local hosting publish/unpublish.
+TitoNova Cloud Engine Pro is a React + Vite website platform with multi-page generation/export, guided editing flows, domain marketplace operations, and built-in local hosting publish/unpublish.
 
 ## Scripts
 
