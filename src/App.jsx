@@ -238,6 +238,7 @@ const STORAGE_KEY = "titonova_ai_projects";
 const DRAFT_STORAGE_KEY = "titonova_builder_draft_v1";
 const PUBLISH_LOG_STORAGE_KEY = "titonova_publish_logs_v1";
 const DEFAULT_PAGE = "index.html";
+const SESSION_USER_KEY = "titonova_user";
 
 const PAGE_CONFIG = [
   { key: "index.html", label: "Home" },
@@ -513,6 +514,8 @@ const parseJsonSafe = (value) => {
     return null;
   }
 };
+
+const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
 
 const extractResponseText = (payload) => {
   if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
@@ -3088,7 +3091,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const [showSignup, setShowSignup] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
   const [isSignedIn, setIsSignedIn] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -3510,9 +3513,10 @@ export default function App() {
   };
 
   useEffect(() => {
-    const savedUser = localStorage.getItem("titonova_user");
+    const savedUser = normalizeEmail(localStorage.getItem(SESSION_USER_KEY));
     if (!savedUser) return;
 
+    localStorage.setItem(SESSION_USER_KEY, savedUser);
     setEmail(savedUser);
     setIsSignedIn(true);
 
@@ -3902,7 +3906,7 @@ export default function App() {
       addProjectsForUser(email, [project]);
     } else {
       setDraftProject(project);
-      setShowSignup(true);
+      setShowAuthModal(true);
     }
 
     return project;
@@ -4000,7 +4004,7 @@ export default function App() {
         addProjectsForUser(email, batch);
       } else {
         setDraftProject(batch[0]);
-        setShowSignup(true);
+        setShowAuthModal(true);
       }
     } catch {
       setError("Failed to generate projects. Check LLM key/model if TitoNova Cloud Engine mode is enabled.");
@@ -5174,7 +5178,7 @@ Rules:
   const checkoutDomains = async () => {
     if (domainCart.length === 0) return;
     if (!isSignedIn || !email) {
-      setDomainMessage("Sign in to complete domain checkout.");
+      setDomainMessage("Use Local Sign In to complete domain checkout.");
       return;
     }
 
@@ -5224,7 +5228,7 @@ Rules:
 
   const activateSellerMode = () => {
     if (!isSignedIn || !email) {
-      setDomainMessage("Sign in to activate seller mode.");
+      setDomainMessage("Use Local Sign In to activate seller mode.");
       return;
     }
     setSellerMode(true);
@@ -5852,22 +5856,24 @@ Return practical text for headlines, CTA, contact info, and section filler copy.
   };
 
   const handleSignup = () => {
-    if (!email || !password) {
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail || !password) {
       alert("Enter email and password");
       return;
     }
 
-    localStorage.setItem("titonova_user", email);
+    setEmail(normalizedEmail);
+    localStorage.setItem(SESSION_USER_KEY, normalizedEmail);
     setIsSignedIn(true);
-    setShowSignup(false);
+    setShowAuthModal(false);
 
     if (draftProject) {
-      addProjectsForUser(email, [draftProject]);
+      addProjectsForUser(normalizedEmail, [draftProject]);
       setDraftProject(null);
     } else {
-      setProjects(getUserProjects(email).map(normalizeProject));
+      setProjects(getUserProjects(normalizedEmail).map(normalizeProject));
     }
-    const domains = getUserDomainData(email);
+    const domains = getUserDomainData(normalizedEmail);
     setOwnedDomains(domains.owned || []);
     setDomainCart(domains.cart || []);
     setSellerMode(Boolean(domains.seller?.active));
@@ -5875,8 +5881,11 @@ Return practical text for headlines, CTA, contact info, and section filler copy.
   };
 
   const handleSignout = () => {
-    localStorage.removeItem("titonova_user");
+    localStorage.removeItem(SESSION_USER_KEY);
     setIsSignedIn(false);
+    setShowAuthModal(false);
+    setEmail("");
+    setPassword("");
     setProjects([]);
     setOwnedDomains([]);
     setDomainCart([]);
@@ -5946,8 +5955,8 @@ Return practical text for headlines, CTA, contact info, and section filler copy.
           </div>
         </div>
         <div className="topbar-actions">
-          <button className="ghost" onClick={() => setShowSignup(true)}>
-            {isSignedIn ? "Account" : "Sign in"}
+          <button className="ghost" onClick={() => setShowAuthModal(true)}>
+            {isSignedIn ? "Account" : "Local Sign In"}
           </button>
           {isSignedIn && (
             <button className="ghost" onClick={handleSignout}>
@@ -7456,29 +7465,45 @@ Return practical text for headlines, CTA, contact info, and section filler copy.
         </aside>
       </main>
 
-      {showSignup && !isSignedIn && (
+      {showAuthModal && (
         <div className="modal-overlay">
           <div className="signup-modal">
-            <h3>Create account to save projects</h3>
-            <p>Sign in is local-only for this demo workspace.</p>
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="Email"
-            />
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Password"
-            />
-            <div className="modal-actions">
-              <button onClick={handleSignup}>Create Account</button>
-              <button className="ghost" onClick={() => setShowSignup(false)}>
-                Cancel
-              </button>
-            </div>
+            {isSignedIn ? (
+              <>
+                <h3>Account</h3>
+                <p>Local profile mode is active on this browser only.</p>
+                <input type="email" value={email} readOnly />
+                <div className="modal-actions">
+                  <button onClick={handleSignout}>Sign out</button>
+                  <button className="ghost" onClick={() => setShowAuthModal(false)}>
+                    Close
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3>Continue with local profile</h3>
+                <p>This mode stores profile data in this browser, not a secure backend.</p>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(normalizeEmail(event.target.value))}
+                  placeholder="Email"
+                />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="Password (local only)"
+                />
+                <div className="modal-actions">
+                  <button onClick={handleSignup}>Continue Locally</button>
+                  <button className="ghost" onClick={() => setShowAuthModal(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
