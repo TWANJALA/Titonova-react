@@ -330,6 +330,7 @@ const IMAGE_UPLOAD_TARGETS = [
   { key: "first", label: "First image on page" },
   { key: "hero", label: "Hero image" },
   { key: "about", label: "About section image" },
+  { key: "portfolio_one", label: "Portfolio one image" },
   { key: "gallery", label: "Gallery and portfolio images" },
   { key: "all", label: "All images on page" },
 ];
@@ -2933,6 +2934,15 @@ const updatePageImages = (html, { target, src, alt }) =>
     } else if (target === "about") {
       const about = doc.querySelector(".about img") || allImages[1] || allImages[0];
       if (about) candidates = [about];
+    } else if (target === "portfolio_one") {
+      const portfolioPrimary =
+        doc.querySelector(".portfolio-grid article:first-child img") || doc.querySelector(".portfolio-grid img");
+      if (portfolioPrimary) {
+        candidates = [portfolioPrimary];
+      } else {
+        const galleryPrimary = doc.querySelector(".gallery img") || allImages[0];
+        if (galleryPrimary) candidates = [galleryPrimary];
+      }
     } else if (target === "gallery") {
       candidates = Array.from(doc.querySelectorAll(".gallery img, .portfolio-grid img, .luxury-gallery img"));
       if (candidates.length === 0) candidates = allImages.slice(1);
