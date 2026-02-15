@@ -350,8 +350,18 @@ const slugify = (value) =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 70);
 
-const imageFor = (query, seed) =>
-  `https://source.unsplash.com/1600x900/?${encodeURIComponent(query)}&sig=${seed}`;
+const imageFor = (query, seed) => {
+  const tags = String(query || "business")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ",")
+    .replace(/^,+|,+$/g, "")
+    .split(",")
+    .filter(Boolean)
+    .slice(0, 4)
+    .join(",");
+  const lock = Math.abs(domainHash(String(seed || query || "0")));
+  return `https://loremflickr.com/1600/900/${tags || "business"}?lock=${lock}`;
+};
 
 const normalizeDomain = (value) =>
   value
@@ -516,6 +526,27 @@ const parseJsonSafe = (value) => {
 };
 
 const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
+const resolvePreviewPageFromHref = (href) => {
+  const value = String(href || "").trim();
+  if (!value) return null;
+  if (
+    value.startsWith("http://") ||
+    value.startsWith("https://") ||
+    value.startsWith("mailto:") ||
+    value.startsWith("tel:") ||
+    value.startsWith("#")
+  ) {
+    return null;
+  }
+
+  const cleaned = value.split("#")[0].split("?")[0].trim();
+  if (!cleaned) return null;
+  const normalized = cleaned.replace(/^\.\//, "").replace(/^\//, "");
+  const exact = PAGE_CONFIG.find((page) => page.key === normalized);
+  if (exact) return exact.key;
+  const withHtml = PAGE_CONFIG.find((page) => page.key === `${normalized}.html`);
+  return withHtml ? withHtml.key : null;
+};
 
 const extractResponseText = (payload) => {
   if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
@@ -806,6 +837,7 @@ const buildWebsiteFiles = ({
   const gallery = [1, 2, 3].map((index) =>
     imageFor(`${industry.query} commercial`, `${brandSlug}-${index}`)
   );
+  const contactImage = imageFor(`${industry.query} team support`, `${brandSlug}-contact`);
 
   const pageLinks = PAGE_CONFIG.map((page) => `<a href="${page.key}">${page.label}</a>`).join("");
   const pageChips = PAGE_CONFIG.map((page) => `<span>${page.label}</span>`).join("");
@@ -1813,6 +1845,14 @@ const buildWebsiteFiles = ({
     </section>
 
     ${detailedContactForm}
+    <section>
+      <h2 class="title">Inside ${safeName}</h2>
+      <div class="gallery">
+        <img src="${contactImage}" alt="${safeIndustry} team support" />
+        <img src="${gallery[1]}" alt="${safeIndustry} workspace" />
+        <img src="${aboutImage}" alt="${safeIndustry} operations" />
+      </div>
+    </section>
     <section>
       <h2 class="title">What Happens Next</h2>
       <p class="muted">${contactTrustCopy}</p>
@@ -3139,6 +3179,7 @@ export default function App() {
   const [quickEditStep, setQuickEditStep] = useState(1);
   const [lastQuickEditUndo, setLastQuickEditUndo] = useState(null);
   const [showAdvancedEditor, setShowAdvancedEditor] = useState(false);
+  const [showAdvancedLandingActions, setShowAdvancedLandingActions] = useState(false);
 
   const iframeRef = useRef(null);
   const iframeListenerRef = useRef(null);
@@ -3841,6 +3882,48 @@ export default function App() {
       }
     };
   }, [isInlineEditing, previewHtml]);
+
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+
+    let cleanupDocListeners = null;
+    const attachPreviewHandlers = () => {
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+
+      const onLinkClick = (event) => {
+        if (isInlineEditing) return;
+        const target = event.target;
+        if (!target || typeof target.closest !== "function") return;
+        const anchor = target.closest("a[href]");
+        if (!anchor) return;
+
+        const targetPage = resolvePreviewPageFromHref(anchor.getAttribute("href"));
+        if (!targetPage) return;
+        event.preventDefault();
+        setPreviewPage(targetPage);
+      };
+
+      doc.addEventListener("click", onLinkClick);
+      cleanupDocListeners = () => {
+        doc.removeEventListener("click", onLinkClick);
+      };
+    };
+
+    const onLoad = () => {
+      cleanupDocListeners?.();
+      attachPreviewHandlers();
+    };
+
+    iframe.addEventListener("load", onLoad);
+    onLoad();
+
+    return () => {
+      iframe.removeEventListener("load", onLoad);
+      cleanupDocListeners?.();
+    };
+  }, [previewHtml, isInlineEditing]);
 
   const buildProjectConfig = (industry) => ({
     businessName,
@@ -6284,23 +6367,14 @@ Return practical text for headlines, CTA, contact info, and section filler copy.
           <div className="panel-card landing-hero">
             <h1>Launch a website in minutes</h1>
             <p>
-              Start with your business name, choose a quick preset, then generate and publish.
-              The builder will auto-create pages, copy, SEO data, and domain suggestions.
+              Pick a starter template, generate your pages, then publish live.
             </p>
-            <div className="landing-steps">
-              <article>
-                <strong>1. Set business profile</strong>
-                <span>Business name, industry, and primary goal.</span>
-              </article>
-              <article>
-                <strong>2. Generate website</strong>
-                <span>Create full multi-page drafts with conversion-focused structure.</span>
-              </article>
-              <article>
-                <strong>3. Pick domain and publish</strong>
-                <span>Use ranked domain options and push live from Project Library.</span>
-              </article>
+            <div className="landing-simple-steps">
+              <span className="landing-simple-step">1. Set profile</span>
+              <span className="landing-simple-step">2. Generate site</span>
+              <span className="landing-simple-step">3. Go live</span>
             </div>
+            <span className="quick-preset-label">Quick start templates</span>
             <div className="quick-preset-row">
               {QUICK_START_PRESETS.map((preset) => (
                 <button
@@ -6357,10 +6431,9 @@ Return practical text for headlines, CTA, contact info, and section filler copy.
           </div>
 
           <div className="panel-card">
-            <h1>Describe the website you want</h1>
+            <h1>Quick Project Brief</h1>
             <p>
-              Advanced generation includes SEO metadata, extra sections, conversion-focused layouts,
-              and multipage export artifacts.
+              Add your core offer and call to action, then generate. You can fine-tune after preview.
             </p>
 
             <label htmlFor="prompt">Project prompt</label>
@@ -6409,9 +6482,6 @@ Return practical text for headlines, CTA, contact info, and section filler copy.
               <button onClick={handleGenerateOne} disabled={loading}>
                 {loading ? "Generating..." : "Generate Website"}
               </button>
-              <button className="ghost" onClick={handleGenerateAll} disabled={loading}>
-                {loading ? "Generating..." : "Generate All Industries"}
-              </button>
               <button
                 className="go-live-btn"
                 onClick={handleQuickPublishActive}
@@ -6419,31 +6489,45 @@ Return practical text for headlines, CTA, contact info, and section filler copy.
               >
                 {hostingBusyId === activeProjectId ? "Publishing..." : "Go Live Now"}
               </button>
+              <button
+                className="ghost"
+                type="button"
+                onClick={() => setShowAdvancedLandingActions((prev) => !prev)}
+              >
+                {showAdvancedLandingActions ? "Hide Advanced" : "Show Advanced"}
+              </button>
             </div>
             <p className="muted">Go Live publishes the opened project and opens its live URL automatically.</p>
 
-            <div className="command-center">
-              <div className="command-row">
-                <strong>Builder Draft</strong>
-                <span className="muted">
-                  {draftSavedAt ? `Autosaved ${new Date(draftSavedAt).toLocaleTimeString()}` : "No draft saved yet"}
-                </span>
+            {showAdvancedLandingActions && (
+              <div className="command-center">
+                <div className="action-row">
+                  <button className="ghost" onClick={handleGenerateAll} disabled={loading}>
+                    {loading ? "Generating..." : "Generate All Industries"}
+                  </button>
+                </div>
+                <div className="command-row">
+                  <strong>Builder Draft</strong>
+                  <span className="muted">
+                    {draftSavedAt ? `Autosaved ${new Date(draftSavedAt).toLocaleTimeString()}` : "No draft saved yet"}
+                  </span>
+                </div>
+                <div className="shortcut-grid">
+                  <span>
+                    <kbd>Ctrl/Cmd + Enter</kbd> Generate website
+                  </span>
+                  <span>
+                    <kbd>Ctrl/Cmd + Shift + Enter</kbd> Generate all industries
+                  </span>
+                  <span>
+                    <kbd>Ctrl/Cmd + S</kbd> Save inline edits
+                  </span>
+                </div>
+                <button className="ghost small" type="button" onClick={handleResetDraft}>
+                  Reset builder draft
+                </button>
               </div>
-              <div className="shortcut-grid">
-                <span>
-                  <kbd>Ctrl/Cmd + Enter</kbd> Generate website
-                </span>
-                <span>
-                  <kbd>Ctrl/Cmd + Shift + Enter</kbd> Generate all industries
-                </span>
-                <span>
-                  <kbd>Ctrl/Cmd + S</kbd> Save inline edits
-                </span>
-              </div>
-              <button className="ghost small" type="button" onClick={handleResetDraft}>
-                Reset builder draft
-              </button>
-            </div>
+            )}
           </div>
 
           <div className="panel-card">
@@ -7456,7 +7540,7 @@ Return practical text for headlines, CTA, contact info, and section filler copy.
                 ref={iframeRef}
                 title="Website preview"
                 srcDoc={isInlineEditing ? editableHtml : previewHtml}
-                sandbox="allow-same-origin"
+                sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
               />
             ) : (
               <div className="preview-empty">Generate a website to preview your draft here.</div>
