@@ -8,9 +8,14 @@
     "dev:gateway": "node --env-file=.env.local server/registrarGateway.mjs",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy",
+    "prisma:push": "prisma db push",
+    "migrate:filedb-to-prisma": "node scripts/migrate-filedb-to-prisma.mjs"
   },
   "dependencies": {
+    "@prisma/client": "^6.8.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
@@ -23,6 +28,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "prisma": "^6.8.2",
     "vite": "^7.2.4"
   }
 }
