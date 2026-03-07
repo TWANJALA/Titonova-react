@@ -7197,7 +7197,7 @@ ${uiDesignClause}`,
       setDnsVerifyStatus("idle");
       setDnsVerifyMessage("");
       setNewPageName("");
-      setIsInlineEditing(false);
+      setIsInlineEditing(true);
       if (resolvedProjectName !== projectName) setProjectName(resolvedProjectName);
       let savedProjectId = "";
       if (authToken && authUser?.id) {
@@ -7392,7 +7392,7 @@ ${industryBlueprintPrompt || "Use standard pages, service offers, pricing packag
       setDnsVerifyStatus("idle");
       setDnsVerifyMessage("");
       setNewPageName("");
-      setIsInlineEditing(false);
+      setIsInlineEditing(true);
       if (!projectName.trim()) setProjectName(insights.brand);
       await runMarketingAutopilot({ source: "redesign" });
       await runMonetizationEngine();
