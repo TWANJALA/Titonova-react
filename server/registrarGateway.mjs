@@ -8,6 +8,7 @@ import dns from "node:dns/promises";
 const PORT = Number(process.env.REGISTRAR_GATEWAY_PORT || 8787);
 const GATEWAY_TOKEN = process.env.REGISTRAR_GATEWAY_TOKEN || "";
 const HOST_BASE_URL = process.env.HOST_BASE_URL || `http://localhost:${PORT}`;
+const APP_BASE_URL = process.env.APP_BASE_URL || "http://localhost:5175";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -338,6 +339,14 @@ const sendText = (res, status, body, contentType = "text/plain; charset=utf-8") 
   res.end(body);
 };
 
+const sendRedirect = (res, status, location) => {
+  res.writeHead(status, {
+    Location: location,
+    "Access-Control-Allow-Origin": "*",
+  });
+  res.end();
+};
+
 const readJsonBody = async (req) => {
   const chunks = [];
   for await (const chunk of req) {
@@ -429,10 +438,11 @@ const createStripeCheckoutSession = async ({ user, plan }) => {
     throw error;
   }
   const amountCents = Math.max(100, Math.round(Number(plan.monthlyPrice || 0) * 100));
+  const appBase = String(APP_BASE_URL || HOST_BASE_URL).replace(/\/$/, "");
   const body = new URLSearchParams({
     mode: "subscription",
-    success_url: `${HOST_BASE_URL}/billing/success?plan=${plan.key}`,
-    cancel_url: `${HOST_BASE_URL}/billing/cancel?plan=${plan.key}`,
+    success_url: `${appBase}/dashboard?billing=success&plan=${plan.key}`,
+    cancel_url: `${appBase}/dashboard?billing=cancel&plan=${plan.key}`,
     "metadata[user_id]": String(user.id),
     "metadata[plan]": String(plan.key),
     "line_items[0][price_data][currency]": "usd",
@@ -2101,11 +2111,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if ((req.method === "POST" || req.method === "GET") && req.url?.startsWith("/api/billing/")) {
-    await handleApiAction(req, res, "billing", billingActions, { authMode: "none" });
-    return;
-  }
-
   if ((req.method === "POST" || req.method === "GET") && req.url?.startsWith("/api/workspaces/")) {
     await handleApiAction(req, res, "workspaces", workspacesActions, { authMode: "none" });
     return;
@@ -2118,6 +2123,29 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && req.url?.startsWith("/sites/")) {
     await serveHostedSite(req, res);
+    return;
+  }
+
+  if (req.method === "GET" && (req.url?.startsWith("/billing/success") || req.url?.startsWith("/billing/cancel"))) {
+    const urlObj = new URL(req.url || "/", HOST_BASE_URL);
+    const plan = urlObj.searchParams.get("plan") || "";
+    const status = req.url.includes("/billing/success") ? "success" : "cancel";
+    const appBase = String(APP_BASE_URL || HOST_BASE_URL).replace(/\/$/, "");
+    sendRedirect(res, 302, `${appBase}/dashboard?billing=${status}&plan=${encodeURIComponent(plan)}`);
+    return;
+  }
+
+  if (req.method === "GET" && (req.url?.startsWith("/api/billing/success") || req.url?.startsWith("/api/billing/cancel"))) {
+    const urlObj = new URL(req.url || "/", HOST_BASE_URL);
+    const plan = urlObj.searchParams.get("plan") || "";
+    const status = req.url.includes("/success") ? "success" : "cancel";
+    const appBase = String(APP_BASE_URL || HOST_BASE_URL).replace(/\/$/, "");
+    sendRedirect(res, 302, `${appBase}/dashboard?billing=${status}&plan=${encodeURIComponent(plan)}`);
+    return;
+  }
+
+  if ((req.method === "POST" || req.method === "GET") && req.url?.startsWith("/api/billing/")) {
+    await handleApiAction(req, res, "billing", billingActions, { authMode: "none" });
     return;
   }
 
