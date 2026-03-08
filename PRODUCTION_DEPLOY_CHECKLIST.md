@@ -43,3 +43,5 @@
 - [ ] `npm run prisma:generate` passes.
 - [ ] Apply DB migration in production (`npm run prisma:migrate`).
 - [ ] Monitor logs for `/api/generate`, `/api/billing/webhook`, `/api/domain/*`.
+
+<!-- deploy-trigger: 2026-03-08T14:50:00-06:00 -->
