@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const HOSTING_BASE_URL = String(import.meta.env.VITE_HOSTING_API_BASE_URL || "").replace(/\/$/, "");
+const REGISTRAR_BASE_URL = String(import.meta.env.VITE_REGISTRAR_API_BASE_URL || "").replace(/\/$/, "");
 const HOSTING_GATEWAY_TOKEN = String(import.meta.env.VITE_REGISTRAR_GATEWAY_TOKEN || "");
 const DEFAULT_DNS_RECORDS = [
   { type: "A", host: "@", value: "76.76.21.21" },
@@ -6376,41 +6377,53 @@ ${JSON.stringify(sourceTexts)}`,
       if (fallbackKey) files["index.html"] = files[fallbackKey];
     }
 
-    const publishUrl = HOSTING_BASE_URL
-      ? `${HOSTING_BASE_URL}/api/hosting/publish`
-      : "/api/hosting/publish";
+    const publishUrls = Array.from(
+      new Set(
+        [
+          HOSTING_BASE_URL ? `${HOSTING_BASE_URL}/api/hosting/publish` : "",
+          REGISTRAR_BASE_URL ? `${REGISTRAR_BASE_URL}/api/hosting/publish` : "",
+          "/api/hosting/publish",
+          "http://localhost:8787/api/hosting/publish",
+        ].filter(Boolean)
+      )
+    );
 
-    let response;
-    try {
-      response = await fetch(publishUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(HOSTING_GATEWAY_TOKEN ? { "x-registrar-token": HOSTING_GATEWAY_TOKEN } : {}),
-        },
-        body: JSON.stringify({
-          siteId,
-          projectName: projectName || "Generated Site",
-          customDomain: domain || "",
-          files,
-        }),
-      });
-    } catch {
-      throw new Error("Hosting gateway unreachable. Start `npm run dev:gateway` and retry publish.");
+    const requestBody = JSON.stringify({
+      siteId,
+      projectName: projectName || "Generated Site",
+      customDomain: domain || "",
+      files,
+    });
+
+    let lastError = null;
+    for (const publishUrl of publishUrls) {
+      try {
+        const response = await fetch(publishUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(HOSTING_GATEWAY_TOKEN ? { "x-registrar-token": HOSTING_GATEWAY_TOKEN } : {}),
+          },
+          body: requestBody,
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (response.ok) return payload;
+
+        const rawMessage = String(payload?.details || payload?.error || "").trim();
+        // Retry all configured endpoints before failing hard. This avoids early exits on 404
+        // when one base URL is misconfigured but another is valid.
+        lastError = new Error(
+          rawMessage || `Publish failed (HTTP ${response.status}) via ${publishUrl}.`
+        );
+        continue;
+      } catch (error) {
+        lastError = error;
+      }
     }
 
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const rawMessage = String(payload?.details || payload?.error || "").trim();
-      if (response.status >= 500 && !rawMessage) {
-        throw new Error("Hosting gateway is unavailable. Start `npm run dev:gateway` and retry publish.");
-      }
-      if (/(connect|econnrefused|enotfound|gateway|upstream)/i.test(rawMessage)) {
-        throw new Error("Hosting gateway is not reachable. Start `npm run dev:gateway` and retry publish.");
-      }
-      throw new Error(rawMessage || `Publish failed (HTTP ${response.status}).`);
-    }
-    return payload;
+    throw new Error(
+      `${String(lastError?.message || "Go Live publish failed.")} Check VITE_HOSTING_API_BASE_URL / VITE_REGISTRAR_API_BASE_URL and ensure gateway is reachable.`
+    );
   };
 
   const handleExportHtml = () => {
