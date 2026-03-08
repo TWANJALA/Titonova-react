@@ -6308,7 +6308,24 @@ ${JSON.stringify(sourceTexts)}`,
   };
 
   const handleResetThemeColors = () => {
-    setThemeColors({ ...DEFAULT_THEME_COLORS });
+    const nextColors = { ...DEFAULT_THEME_COLORS };
+    setThemeColors(nextColors);
+    const working = getWorkingPages();
+    const keys = orderPageKeys(Object.keys(working));
+    if (keys.length > 0) {
+      const nextPages = keys.reduce((acc, key) => {
+        const themed = applyThemeToHtml(working[key] || "", nextColors);
+        acc[key] = applyTypographyToHtml(themed, textStyle);
+        return acc;
+      }, {});
+      const active = nextPages[activePage] || nextPages[keys[0]] || "";
+      setGeneratedPages(nextPages);
+      setGeneratedSite(active);
+      setDraftHtml(active);
+      setEditHistory(active ? [active] : []);
+    }
+    setPublishStatus("success");
+    setPublishMessage("Default colors reset and applied.");
   };
 
   const handleTextStylePresetChange = (presetKey) => {
@@ -6323,7 +6340,24 @@ ${JSON.stringify(sourceTexts)}`,
   };
 
   const handleResetTextStyles = () => {
-    setTextStyle({ ...DEFAULT_TEXT_STYLE });
+    const nextStyle = { ...DEFAULT_TEXT_STYLE };
+    setTextStyle(nextStyle);
+    const working = getWorkingPages();
+    const keys = orderPageKeys(Object.keys(working));
+    if (keys.length > 0) {
+      const nextPages = keys.reduce((acc, key) => {
+        const themed = applyThemeToHtml(working[key] || "", themeColors);
+        acc[key] = applyTypographyToHtml(themed, nextStyle);
+        return acc;
+      }, {});
+      const active = nextPages[activePage] || nextPages[keys[0]] || "";
+      setGeneratedPages(nextPages);
+      setGeneratedSite(active);
+      setDraftHtml(active);
+      setEditHistory(active ? [active] : []);
+    }
+    setPublishStatus("success");
+    setPublishMessage("Text defaults reset and applied.");
   };
 
   const handleApplyTextStyles = () => {
@@ -6375,6 +6409,15 @@ ${JSON.stringify(sourceTexts)}`,
     if (!files["index.html"]) {
       const fallbackKey = Object.keys(files)[0];
       if (fallbackKey) files["index.html"] = files[fallbackKey];
+    }
+
+    const isLocalHost =
+      typeof window !== "undefined" &&
+      /^(localhost|127\.0\.0\.1)$/i.test(String(window.location.hostname || ""));
+    if (!isLocalHost && !HOSTING_BASE_URL && !REGISTRAR_BASE_URL) {
+      throw new Error(
+        "Go Live is not configured for production. Set VITE_HOSTING_API_BASE_URL (or VITE_REGISTRAR_API_BASE_URL) in Vercel to your deployed gateway URL, then redeploy."
+      );
     }
 
     const publishUrls = Array.from(
