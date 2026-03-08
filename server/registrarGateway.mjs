@@ -8,7 +8,7 @@ import dns from "node:dns/promises";
 const PORT = Number(process.env.REGISTRAR_GATEWAY_PORT || 8787);
 const GATEWAY_TOKEN = process.env.REGISTRAR_GATEWAY_TOKEN || "";
 const HOST_BASE_URL = process.env.HOST_BASE_URL || `http://localhost:${PORT}`;
-const APP_BASE_URL = process.env.APP_BASE_URL || "http://localhost:5175";
+const APP_BASE_URL = process.env.APP_BASE_URL || "http://localhost:5173/";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
