@@ -45,3 +45,4 @@
 - [ ] Monitor logs for `/api/generate`, `/api/billing/webhook`, `/api/domain/*`.
 
 <!-- deploy-trigger: 2026-03-08T14:50:00-06:00 -->
+<!-- deploy-trigger: 2026-03-08T15:16:27-0500 -->
