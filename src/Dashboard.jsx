@@ -3,6 +3,19 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 const HOSTING_BASE_URL = String(import.meta.env.VITE_HOSTING_API_BASE_URL || "").replace(/\/$/, "");
 const REGISTRAR_BASE_URL = String(import.meta.env.VITE_REGISTRAR_API_BASE_URL || "").replace(/\/$/, "");
 const HOSTING_GATEWAY_TOKEN = String(import.meta.env.VITE_REGISTRAR_GATEWAY_TOKEN || "");
+const isLocalHostName = (value) => /^(localhost|127\.0\.0\.1)$/i.test(String(value || ""));
+const isUsableApiBaseUrl = (rawUrl, allowLocalHost = false) => {
+  const value = String(rawUrl || "").trim();
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    if (!/^https?:$/i.test(parsed.protocol)) return false;
+    if (!allowLocalHost && isLocalHostName(parsed.hostname)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+};
 const DEFAULT_DNS_RECORDS = [
   { type: "A", host: "@", value: "76.76.21.21" },
   { type: "CNAME", host: "www", value: "cname.vercel-dns.com" },
@@ -6412,24 +6425,28 @@ ${JSON.stringify(sourceTexts)}`,
     }
 
     const isLocalHost =
-      typeof window !== "undefined" &&
-      /^(localhost|127\.0\.0\.1)$/i.test(String(window.location.hostname || ""));
-    if (!isLocalHost && !HOSTING_BASE_URL && !REGISTRAR_BASE_URL) {
-      throw new Error(
-        "Go Live is not configured for production. Set VITE_HOSTING_API_BASE_URL (or VITE_REGISTRAR_API_BASE_URL) in Vercel to your deployed gateway URL, then redeploy."
-      );
-    }
-
+      typeof window !== "undefined" && isLocalHostName(String(window.location.hostname || ""));
+    const envBaseUrls = [HOSTING_BASE_URL, REGISTRAR_BASE_URL].filter((value) =>
+      isUsableApiBaseUrl(value, isLocalHost)
+    );
+    const sameOriginBase =
+      typeof window !== "undefined" ? String(window.location.origin || "").replace(/\/$/, "") : "";
     const publishUrls = Array.from(
       new Set(
         [
-          HOSTING_BASE_URL ? `${HOSTING_BASE_URL}/api/hosting/publish` : "",
-          REGISTRAR_BASE_URL ? `${REGISTRAR_BASE_URL}/api/hosting/publish` : "",
+          ...envBaseUrls.map((base) => `${base}/api/hosting/publish`),
+          sameOriginBase ? `${sameOriginBase}/api/hosting/publish` : "",
           "/api/hosting/publish",
-          "http://localhost:8787/api/hosting/publish",
+          isLocalHost ? "http://localhost:8787/api/hosting/publish" : "",
         ].filter(Boolean)
       )
     );
+
+    if (!isLocalHost && envBaseUrls.length === 0) {
+      throw new Error(
+        "Go Live is not configured for production. Set VITE_HOSTING_API_BASE_URL (or VITE_REGISTRAR_API_BASE_URL) in Vercel to a deployed gateway URL (https://...)."
+      );
+    }
 
     const requestBody = JSON.stringify({
       siteId,
@@ -6464,8 +6481,12 @@ ${JSON.stringify(sourceTexts)}`,
       }
     }
 
+    const configuredHint =
+      !isLocalHost && envBaseUrls.length === 0
+        ? "No production gateway URL is configured."
+        : "Check VITE_HOSTING_API_BASE_URL / VITE_REGISTRAR_API_BASE_URL and ensure gateway is reachable.";
     throw new Error(
-      `${String(lastError?.message || "Go Live publish failed.")} Check VITE_HOSTING_API_BASE_URL / VITE_REGISTRAR_API_BASE_URL and ensure gateway is reachable.`
+      `${String(lastError?.message || "Go Live publish failed.")} ${configuredHint} Tried: ${publishUrls.join(", ")}`
     );
   };
 
