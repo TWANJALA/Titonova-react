@@ -748,6 +748,17 @@ export default function Dashboard() {
     }
   };
 
+  const inferClonePageCandidates = (pathParts) => {
+    const joined = pathParts.join(" ");
+    const set = new Set(["Home", "About", "Services", "Contact"]);
+    if (/(pricing|plans|packages|rates)/i.test(joined)) set.add("Pricing");
+    if (/(blog|news|articles|insights)/i.test(joined)) set.add("Blog");
+    if (/(book|booking|appointment|schedule|calendar)/i.test(joined)) set.add("Booking");
+    if (/(faq|questions|help)/i.test(joined)) set.add("FAQ");
+    if (/(gallery|portfolio|projects)/i.test(joined)) set.add("Gallery");
+    return Array.from(set);
+  };
+
   const deriveRedesignInsights = (url) => {
     const normalized = normalizeWebsiteUrl(url);
     if (!normalized) return null;
@@ -757,11 +768,27 @@ export default function Dashboard() {
     const tokens = slug.split(/[-_]/g).filter(Boolean);
     const brand = tokens.map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ") || "Brand";
     const segment = parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : "homepage";
+    const pathParts = String(parsed.pathname || "")
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    const queryKeys = Array.from(parsed.searchParams.keys()).slice(0, 10);
+    const sourceSignals = [host, ...tokens, ...pathParts, ...queryKeys]
+      .map((token) => String(token || "").toLowerCase())
+      .filter(Boolean);
+    const suggestedPages = inferClonePageCandidates(pathParts);
+    const cloneScore = Math.min(99, 65 + suggestedPages.length * 4 + (queryKeys.length > 0 ? 3 : 0));
     return {
       normalizedUrl: normalized,
       host,
       brand,
       segment,
+      pathParts,
+      queryKeys,
+      sourceSignals,
+      suggestedPages,
+      structuralFingerprint: `${host}|${segment}|${pathParts.join("-") || "root"}`,
+      cloneScore,
       layoutFindings: [
         "Rebuild with clearer navigation hierarchy and stronger conversion CTAs.",
         "Upgrade section spacing rhythm and responsive breakpoints for mobile.",
@@ -773,6 +800,12 @@ export default function Dashboard() {
       uiFindings: [
         "Modernize typography scale and interaction states.",
         "Elevate trust sections with outcome cards and proof components.",
+      ],
+      cloneDirectives: [
+        "Preserve source page order and nav labels unless broken/duplicated.",
+        "Preserve section intent and heading semantics while modernizing style.",
+        "Keep service naming and offer architecture aligned with the source.",
+        "Maintain conversion path continuity from hero -> proof -> CTA.",
       ],
     };
   };
@@ -7411,6 +7444,18 @@ ${uiDesignClause}`,
           : solutionMode === "app"
             ? requestedAutomationPages || "Client Dashboard, Login Portal"
             : `${requestedWebsitePages}, ${requestedAutomationPages}`;
+      const cloneBlueprint = {
+        source_url: insights.normalizedUrl,
+        source_host: insights.host,
+        segment: insights.segment,
+        path_parts: insights.pathParts,
+        query_keys: insights.queryKeys,
+        source_signals: insights.sourceSignals,
+        structural_fingerprint: insights.structuralFingerprint,
+        suggested_pages: insights.suggestedPages,
+        clone_score_target: insights.cloneScore,
+        directives: insights.cloneDirectives,
+      };
 
       const response = await fetch("/api/generate", {
         method: "POST",
@@ -7423,6 +7468,8 @@ Detected path focus: ${insights.segment}
 Instant layout findings: ${insights.layoutFindings.join(" ")}
 Instant SEO findings: ${insights.seoFindings.join(" ")}
 Instant UI findings: ${insights.uiFindings.join(" ")}
+Source clone blueprint:
+${JSON.stringify(cloneBlueprint, null, 2)}
 TitoNova Cloud Engine UI Design Spec:
 - Layout variant: ${effectiveUiDesign.layoutVariant}
 - Palette accents: ${effectivePalette.heroStart} to ${effectivePalette.heroEnd}, accent ${effectivePalette.accent}
@@ -7432,7 +7479,7 @@ TitoNova Cloud Engine UI Design Spec:
 Create a significantly improved multi-page ${solutionMode === "website-app" ? "website and web app" : solutionMode === "app" ? "web app" : "website"}.
 Return JSON with a "pages" array containing these pages: ${requestedPageList}.
 ${exactRedesignMode
-  ? "Exact mode is ON: keep the original website's page structure, section order, core headings, service naming, and content intent as close as possible. Do not invent a different sitemap. Modernize only visual design, responsiveness, accessibility, and SEO markup/copy quality."
+  ? "Exact mode is ON: preserve source IA and page sequence with high-fidelity cloning. Keep nav labels, section order, and service architecture tightly aligned to source intent. Do not invent a different sitemap unless source is clearly broken."
   : "Exact mode is OFF: redesign freely with improved UX and content architecture."}
 Apply modern UX, strong conversion, and SEO improvements (semantic structure, metadata-ready copy, internal linking, and intent-focused headings).
 Industry template: ${selectedIndustryPackage?.label || "General"}.
@@ -7440,7 +7487,19 @@ Include these capabilities: ${enabledAutomationLabels.join(", ") || "client dash
 Automatic revenue requirements: include subscriptions, bookings, digital product sales, memberships, and affiliate/referral systems so the project can monetize immediately.
 Industry-specific requirements: ${industryFocus}.
 Industry template blueprint:
-${industryBlueprintPrompt || "Use standard pages, service offers, pricing packages, and workflows for this industry."}.`,
+${industryBlueprintPrompt || "Use standard pages, service offers, pricing packages, and workflows for this industry."}.
+
+Return strict JSON with:
+{
+  "source_clone": {
+    "url": "string",
+    "clone_score": 0-100,
+    "navigation": ["Home", "..."],
+    "page_map": [{"name":"Home","source_path":"/","intent":"...","sections":["hero","..."]}]
+  },
+  "pages": [{"name":"Home","sections":[...]}]
+}
+Ensure navigation labels and page intents stay close to the source blueprint while improving quality.`,
         }),
       });
       const payload = await response.json().catch(() => ({}));
