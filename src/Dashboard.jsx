@@ -10454,14 +10454,16 @@ const styles = {
     maxWidth: "1240px",
     margin: "0 auto",
     display: "flex",
-    alignItems: "flex-start",
-    gap: "18px",
+    alignItems: "stretch",
+    gap: "22px",
     flexWrap: "wrap"
   },
   commandPane: {
     flex: "1 1 460px",
     minWidth: "320px",
-    maxWidth: "760px"
+    maxWidth: "760px",
+    display: "grid",
+    gap: "14px"
   },
   resizeHandle: {
     width: "12px",
@@ -10490,18 +10492,22 @@ const styles = {
     minWidth: "320px",
     position: "sticky",
     top: "16px",
-    alignSelf: "flex-start"
+    alignSelf: "flex-start",
+    display: "grid",
+    gap: "12px"
   },
   card: {
     background:
-      "radial-gradient(820px 280px at 50% 0%, rgba(45,212,191,0.12), rgba(45,212,191,0) 62%), linear-gradient(160deg, rgba(18,30,58,0.95), rgba(23,36,64,0.93))",
+      "radial-gradient(820px 280px at 50% 0%, rgba(45,212,191,0.1), rgba(45,212,191,0) 62%), linear-gradient(160deg, rgba(15,26,52,0.95), rgba(20,33,61,0.93))",
     padding: "26px",
     borderRadius: "24px",
     maxWidth: "100%",
     margin: 0,
     backdropFilter: "blur(16px)",
     border: "1px solid rgba(76,117,168,0.45)",
-    boxShadow: "0 28px 70px rgba(2,6,23,0.45)"
+    boxShadow: "0 28px 70px rgba(2,6,23,0.45)",
+    display: "grid",
+    gap: "14px"
   },
   sectionTitle: {
     margin: "0 0 14px",
@@ -11776,7 +11782,9 @@ const styles = {
     padding: "20px",
     borderRadius: "18px",
     border: "1px solid #b7ebcc",
-    boxShadow: "0 20px 55px rgba(15,23,42,0.14)"
+    boxShadow: "0 20px 55px rgba(15,23,42,0.14)",
+    display: "grid",
+    gap: "12px"
   },
   previewCanvasWrap: {
     position: "relative"
@@ -13517,7 +13525,7 @@ const styles = {
 };
 
 // Normalize card surfaces across the dashboard for stronger hierarchy and cleaner organization.
-const CARD_KEY_PATTERN = /(Card|Item)$/;
+const CARD_KEY_PATTERN = /Card$/;
 Object.keys(styles).forEach((key) => {
   if (!CARD_KEY_PATTERN.test(key)) return;
   const current = styles[key] || {};
@@ -13527,6 +13535,7 @@ Object.keys(styles).forEach((key) => {
     border: String(current.border || "1px solid rgba(255,255,255,0.18)").replace(/^1px/, "2px"),
     boxShadow: current.boxShadow || "0 10px 28px rgba(2, 6, 23, 0.32)",
     padding: current.padding || "12px",
+    marginBottom: current.marginBottom || "10px",
   };
 });
 
