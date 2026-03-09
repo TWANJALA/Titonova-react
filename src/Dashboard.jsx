@@ -552,6 +552,10 @@ export default function Dashboard() {
   const [redesigning, setRedesigning] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
   const [exactRedesignMode, setExactRedesignMode] = useState(true);
+  const [cloneDepth, setCloneDepth] = useState("full-stack");
+  const [clonePixelPerfect, setClonePixelPerfect] = useState(true);
+  const [cloneAiRedesign, setCloneAiRedesign] = useState(true);
+  const [cloneRevenueAutomation, setCloneRevenueAutomation] = useState(true);
   const [autoRevenueFeatures, setAutoRevenueFeatures] = useState(true);
   const [solutionMode, setSolutionMode] = useState("website-app");
   const [industryTemplate, setIndustryTemplate] = useState(DEFAULT_INDUSTRY_TEMPLATE);
@@ -7457,6 +7461,27 @@ ${uiDesignClause}`,
           : solutionMode === "app"
             ? requestedAutomationPages || "Client Dashboard, Login Portal"
             : `${requestedWebsitePages}, ${requestedAutomationPages}`;
+      const cloneLayerDirectives = [
+        "Layout scanner: extract page structure, sections, containers, nav, and hero blocks.",
+        "Design AI: replicate colors, typography, spacing, and responsive breakpoints.",
+        "Component extractor: identify buttons, forms, sliders, cards, popups, CTA blocks.",
+        "Behavior AI: replicate animations, hover effects, modals, and interactions.",
+        "Content AI: rewrite content to remain unique and SEO-safe while preserving intent.",
+      ];
+      const cloneModeDirective =
+        cloneDepth === "visual"
+          ? "Clone depth: Visual clone. Prioritize visual layout and styling fidelity."
+          : cloneDepth === "full-ui"
+            ? "Clone depth: Full UI clone. Prioritize component and interaction fidelity."
+            : "Clone depth: Full-stack clone. Prioritize UI fidelity + business/revenue modules + deployable structure.";
+      const cloneOptionsDirective = [
+        clonePixelPerfect ? "Pixel-match mode ON (high visual fidelity)." : "Pixel-match mode OFF.",
+        cloneAiRedesign ? "AI redesign improvements ON (UX + clarity)." : "AI redesign improvements OFF.",
+        cloneRevenueAutomation
+          ? "Revenue automation ON (subscriptions, bookings, products, memberships, affiliates)."
+          : "Revenue automation OFF.",
+      ].join(" ");
+      const competitorListForPrompt = parseCompetitorUrls(competitorUrlsInput);
       const cloneBlueprint = {
         source_url: insights.normalizedUrl,
         source_host: insights.host,
@@ -7483,6 +7508,12 @@ Instant SEO findings: ${insights.seoFindings.join(" ")}
 Instant UI findings: ${insights.uiFindings.join(" ")}
 Source clone blueprint:
 ${JSON.stringify(cloneBlueprint, null, 2)}
+Cloning engine layers:
+${cloneLayerDirectives.join("\n")}
+${cloneModeDirective}
+${cloneOptionsDirective}
+Competitor URLs:
+${competitorListForPrompt.length > 0 ? competitorListForPrompt.join(", ") : "none provided"}
 TitoNova Cloud Engine UI Design Spec:
 - Layout variant: ${effectiveUiDesign.layoutVariant}
 - Palette accents: ${effectivePalette.heroStart} to ${effectivePalette.heroEnd}, accent ${effectivePalette.accent}
@@ -8649,43 +8680,88 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
             </button>
           </div>
         )}
-        <label style={styles.autoSearchLabel}>
-          <input
-            type="checkbox"
-            checked={autoRevenueFeatures}
-            onChange={(event) => setAutoRevenueFeatures(event.target.checked)}
-          />
-          Automatic revenue features (subscriptions, bookings, products, memberships, affiliates)
-        </label>
-        <div style={styles.solutionRow}>
-          <label style={styles.solutionLabel}>TitoNova Cloud Engine Redesign URL</label>
-          <input
-            style={styles.solutionInput}
-            placeholder="Paste website URL (example.com)"
-            value={sourceWebsiteUrl}
-            onChange={(event) => setSourceWebsiteUrl(event.target.value)}
-          />
-        </div>
-        <div style={styles.solutionRow}>
-          <label style={styles.solutionLabel}>Competitor URLs (comma or new line)</label>
-          <textarea
-            style={styles.solutionTextarea}
-            placeholder={"example.com\ncompetitor.com"}
-            value={competitorUrlsInput}
-            onChange={(event) => setCompetitorUrlsInput(event.target.value)}
-          />
-          <button style={styles.smokeSecondaryButton} onClick={() => handleCompetitorScan()} disabled={competitorLoading}>
-            {competitorLoading ? "Scanning competitors..." : "TitoNova Cloud Engine Competitor Intelligence"}
-          </button>
-        </div>
-        <label style={styles.autoSearchLabel}>
-          <input
-            type="checkbox"
-            checked={exactRedesignMode}
-            onChange={(event) => setExactRedesignMode(event.target.checked)}
-          />
-          Exact redesign mode (match source structure/content closely)
-        </label>
+        <section style={styles.cloneGeneratorCard}>
+          <div style={styles.cloneGeneratorHeader}>
+            <strong style={styles.cloneGeneratorTitle}>TITONOVA CLOUD ENGINE - AI CLONING GENERATOR (REDESIGN)</strong>
+            <small style={styles.cloneGeneratorMeta}>90-95% visual accuracy target with production-ready output</small>
+          </div>
+          <div style={styles.solutionRow}>
+            <label style={styles.solutionLabel}>TARGET URL</label>
+            <input
+              style={styles.solutionInput}
+              placeholder="Paste Website URL"
+              value={sourceWebsiteUrl}
+              onChange={(event) => setSourceWebsiteUrl(event.target.value)}
+            />
+          </div>
+          <div style={styles.solutionRow}>
+            <label style={styles.solutionLabel}>COMPETITOR URLS</label>
+            <textarea
+              style={styles.solutionTextarea}
+              placeholder={"site1.com\nsite2.com\nsite3.com"}
+              value={competitorUrlsInput}
+              onChange={(event) => setCompetitorUrlsInput(event.target.value)}
+            />
+          </div>
+          <div style={styles.solutionRow}>
+            <label style={styles.solutionLabel}>CLONE DEPTH</label>
+            <select style={styles.solutionSelect} value={cloneDepth} onChange={(event) => setCloneDepth(event.target.value)}>
+              <option value="visual">Visual clone</option>
+              <option value="full-ui">Full UI clone</option>
+              <option value="full-stack">Full-stack clone (recommended)</option>
+            </select>
+          </div>
+          <div style={styles.cloneOptionsGrid}>
+            <label style={styles.autoSearchLabel}>
+              <input
+                type="checkbox"
+                checked={clonePixelPerfect}
+                onChange={(event) => setClonePixelPerfect(event.target.checked)}
+              />
+              Pixel-perfect clone
+            </label>
+            <label style={styles.autoSearchLabel}>
+              <input
+                type="checkbox"
+                checked={cloneAiRedesign}
+                onChange={(event) => setCloneAiRedesign(event.target.checked)}
+              />
+              AI redesign
+            </label>
+            <label style={styles.autoSearchLabel}>
+              <input
+                type="checkbox"
+                checked={cloneRevenueAutomation}
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  setCloneRevenueAutomation(checked);
+                  setAutoRevenueFeatures(checked);
+                }}
+              />
+              Revenue automation
+            </label>
+            <label style={styles.autoSearchLabel}>
+              <input
+                type="checkbox"
+                checked={exactRedesignMode}
+                onChange={(event) => setExactRedesignMode(event.target.checked)}
+              />
+              Exact structure match mode
+            </label>
+          </div>
+          <div style={styles.cloneActionsRow}>
+            <button style={styles.smokeSecondaryButton} onClick={() => handleCompetitorScan()} disabled={competitorLoading}>
+              {competitorLoading ? "Scanning competitors..." : "Competitor Intelligence"}
+            </button>
+            <button
+              style={{ ...styles.redesignButton, width: "auto", flex: "1 1 240px", marginTop: 0 }}
+              onClick={handleRedesignFromUrl}
+              disabled={redesigning || !sourceWebsiteUrl.trim()}
+            >
+              {redesigning ? "Generating clone..." : "GENERATE WEBSITE"}
+            </button>
+          </div>
+        </section>
         {redesignInsights && (
           <div style={styles.redesignInsights}>
             <strong style={styles.redesignTitle}>Instant Analysis: {redesignInsights.host}</strong>
@@ -8963,13 +9039,6 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
           </div>
         </section>
 
-        <button
-          style={styles.redesignButton}
-          onClick={handleRedesignFromUrl}
-          disabled={redesigning || !sourceWebsiteUrl.trim()}
-        >
-          {redesigning ? "Redesigning..." : exactRedesignMode ? "TitoNova Cloud Engine Exact Redesign" : "TitoNova Cloud Engine Redesign Website"}
-        </button>
         <button style={styles.recommendedFlowButton} onClick={handleRunRecommendedFlow} disabled={runningRecommendedFlow}>
           {runningRecommendedFlow ? "Running flow..." : "One-click recommended flow"}
         </button>
@@ -11499,6 +11568,40 @@ const styles = {
     color: "#f8fafc",
     fontSize: "13px",
     resize: "vertical"
+  },
+  cloneGeneratorCard: {
+    background: "linear-gradient(180deg, rgba(8,47,73,0.3), rgba(15,23,42,0.55))",
+    border: "1px solid rgba(56,189,248,0.38)",
+    borderRadius: "12px",
+    padding: "12px",
+    marginBottom: "12px",
+    display: "grid",
+    gap: "10px"
+  },
+  cloneGeneratorHeader: {
+    display: "grid",
+    gap: "4px"
+  },
+  cloneGeneratorTitle: {
+    color: "#e0f2fe",
+    fontSize: "12px",
+    letterSpacing: "0.05em",
+    textTransform: "uppercase"
+  },
+  cloneGeneratorMeta: {
+    color: "#bae6fd",
+    fontSize: "12px"
+  },
+  cloneOptionsGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: "8px 10px"
+  },
+  cloneActionsRow: {
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap",
+    alignItems: "center"
   },
   redesignInsights: {
     background: "rgba(15,118,110,0.18)",
