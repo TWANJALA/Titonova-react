@@ -6488,25 +6488,22 @@ ${JSON.stringify(sourceTexts)}`,
     );
     const sameOriginBase =
       typeof window !== "undefined" ? String(window.location.origin || "").replace(/\/$/, "") : "";
-    const localFallbackUrls = [
+    const sameOriginFallbackUrls = [
       sameOriginBase ? `${sameOriginBase}/api/hosting/publish` : "",
       "/api/hosting/publish",
+    ];
+    const localFallbackUrls = [
+      ...sameOriginFallbackUrls,
       "http://localhost:8787/api/hosting/publish",
     ];
     const publishUrls = Array.from(
       new Set(
         [
           ...envBaseUrls.map((base) => `${base}/api/hosting/publish`),
-          ...(isLocalHost ? localFallbackUrls : []),
+          ...(isLocalHost ? localFallbackUrls : sameOriginFallbackUrls),
         ].filter(Boolean)
       )
     );
-
-    if (!isLocalHost && envBaseUrls.length === 0) {
-      throw new Error(
-        "Go Live is not configured for production. Set VITE_HOSTING_API_BASE_URL (or VITE_REGISTRAR_API_BASE_URL) in Vercel to a deployed gateway URL (https://...)."
-      );
-    }
 
     const requestBody = JSON.stringify({
       siteId,
@@ -6543,7 +6540,7 @@ ${JSON.stringify(sourceTexts)}`,
 
     const configuredHint =
       !isLocalHost && envBaseUrls.length === 0
-        ? "No production gateway URL is configured."
+        ? "No production gateway URL is configured. Tried same-origin /api fallback."
         : "Check VITE_HOSTING_API_BASE_URL / VITE_REGISTRAR_API_BASE_URL and ensure gateway is reachable.";
     throw new Error(
       `${String(lastError?.message || "Go Live publish failed.")} ${configuredHint} Tried: ${publishUrls.join(", ")}`
