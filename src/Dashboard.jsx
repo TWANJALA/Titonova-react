@@ -7629,6 +7629,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
   const handleStartInlineEdit = () => {
     const currentHtml = generatedPages[activePage] || generatedSite || "";
     if (!currentHtml) return;
+    setFieldLockMode(true);
     setDraftHtml(currentHtml);
     setEditHistory([currentHtml]);
     setIsInlineEditing(true);
@@ -9404,26 +9405,18 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               </button>
               {!isInlineEditing ? (
                 <button style={styles.editButton} onClick={handleStartInlineEdit}>
-                  Edit Preview
+                  Start Editing
                 </button>
               ) : (
                 <div style={styles.editActions}>
-                  <label style={styles.lockLabel}>
-                    <input
-                      type="checkbox"
-                      checked={fieldLockMode}
-                      onChange={(event) => setFieldLockMode(event.target.checked)}
-                    />
-                    Field-Locked
-                  </label>
                   <button style={styles.undoButton} onClick={handleUndoInlineEdit}>
                     Undo
                   </button>
                   <button style={styles.saveButton} onClick={handleSaveInlineEdit}>
-                    Save Edits
+                    Done (Save)
                   </button>
                   <button style={styles.cancelButton} onClick={handleCancelInlineEdit}>
-                    Cancel
+                    Discard
                   </button>
                 </div>
               )}
@@ -10433,9 +10426,9 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
           </section>
           <div style={styles.previewCanvasWrap}>
             <div style={shouldShowGuestPreviewPrompt ? styles.previewCanvasFaint : undefined}>
-              {isInlineEditing && fieldLockMode && (
+              {isInlineEditing && (
                 <p style={styles.lockHint}>
-                  Field-Locked mode edits text only (headings, paragraphs, lists, links, buttons, labels, and inline text).
+                  Inline text edit is active. Click headings, paragraphs, links, buttons, and list text to edit.
                 </p>
               )}
               <div
@@ -10445,13 +10438,18 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
                 style={isInlineEditing ? styles.previewEditable : undefined}
                 onClick={handlePreviewLinkNavigation}
                 onKeyDown={(event) => {
-                  if (isInlineEditing && fieldLockMode && event.key === "Enter") {
+                  if (!isInlineEditing) return;
+                  if (fieldLockMode && event.key === "Enter") {
                     event.preventDefault();
+                    return;
+                  }
+                  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+                    event.preventDefault();
+                    handleSaveInlineEdit();
                   }
                 }}
                 onInput={(event) => {
                   if (!isInlineEditing) return;
-                  if (fieldLockMode) return;
                   const nextHtml = event.currentTarget.innerHTML;
                   setDraftHtml(nextHtml);
                   setEditHistory((previous) => {
@@ -10460,7 +10458,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
                   });
                 }}
                 onBlurCapture={() => {
-                  if (isInlineEditing && fieldLockMode) snapshotInlineDraft();
+                  if (isInlineEditing) snapshotInlineDraft();
                 }}
                 dangerouslySetInnerHTML={{ __html: isInlineEditing ? draftHtml : generatedSite }}
               />
