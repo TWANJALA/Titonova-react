@@ -7333,38 +7333,40 @@ ${uiDesignClause}`,
       setNewPageName("");
       setIsInlineEditing(true);
       if (resolvedProjectName !== projectName) setProjectName(resolvedProjectName);
-      let savedProjectId = "";
       if (authToken && authUser?.id) {
-        try {
-          const projectPayload = await apiJson({
-            path: "/api/projects/create",
-            method: "POST",
-            body: {
-              project_name: resolvedProjectName,
-              ai_prompt: String(options.businessOsPrompt || businessOsPrompt || ""),
-            },
-            token: authToken,
-          });
-          savedProjectId = String(projectPayload?.project?.id || "");
-          if (savedProjectId) {
-            await apiJson({
-              path: "/api/websites/save",
+        setShowGuestAuthPrompt(false);
+        runDeferred(async () => {
+          try {
+            const projectPayload = await apiJson({
+              path: "/api/projects/create",
               method: "POST",
               body: {
-                project_id: savedProjectId,
-                html: firstHtml,
-                css: "",
-                pages,
-                domain: normalizeDomain(customDomain),
+                project_name: resolvedProjectName,
+                ai_prompt: String(options.businessOsPrompt || businessOsPrompt || ""),
               },
               token: authToken,
             });
+            const savedProjectId = String(projectPayload?.project?.id || "");
+            if (savedProjectId) {
+              await apiJson({
+                path: "/api/websites/save",
+                method: "POST",
+                body: {
+                  project_id: savedProjectId,
+                  html: firstHtml,
+                  css: "",
+                  pages,
+                  domain: normalizeDomain(customDomain),
+                },
+                token: authToken,
+              });
+            }
+            await refreshUserProjects(authToken).catch(() => []);
+          } catch (storageError) {
+            setPublishStatus("info");
+            setPublishMessage(`Website generated, but account save failed: ${String(storageError?.message || "save error")}`);
           }
-          await refreshUserProjects(authToken).catch(() => []);
-        } catch (storageError) {
-          setPublishStatus("info");
-          setPublishMessage(`Website generated, but account save failed: ${String(storageError?.message || "save error")}`);
-        }
+        });
       } else {
         setShowGuestAuthPrompt(true);
         setPublishStatus("info");
