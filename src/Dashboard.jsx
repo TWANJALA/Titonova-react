@@ -3288,6 +3288,16 @@ ${content || ""}
     return payload || {};
   };
 
+  const runDeferred = (task) => {
+    void (async () => {
+      try {
+        await task();
+      } catch {
+        // Keep async post-processing non-blocking for UX responsiveness.
+      }
+    })();
+  };
+
   const handleLogout = () => {
     setAuthToken("");
     setAuthUser(null);
@@ -7363,53 +7373,67 @@ ${uiDesignClause}`,
         setPublishStatus("info");
         setPublishMessage("Website generated in guest mode. Create an account to save, publish, and manage projects.");
       }
-      await runMarketingAutopilot({ source: "generation" });
-      await runMonetizationEngine();
-      await runGrowthCoach({ silent: true });
+      runDeferred(async () => {
+        await runMarketingAutopilot({ source: "generation" });
+      });
+      runDeferred(async () => {
+        await runMonetizationEngine();
+      });
+      runDeferred(async () => {
+        await runGrowthCoach({ silent: true });
+      });
       if (autonomousModeEnabled) {
-        await runAutonomousBusinessMode({ silent: true });
+        runDeferred(async () => {
+          await runAutonomousBusinessMode({ silent: true });
+        });
       }
       if (autoSearchOnGenerate) {
-        await handleDomainSearch();
+        runDeferred(async () => {
+          await handleDomainSearch();
+        });
       }
       if (parseCompetitorUrls(competitorUrlsInput).length > 0) {
-        await handleCompetitorScan({ silent: true });
+        runDeferred(async () => {
+          await handleCompetitorScan({ silent: true });
+        });
       }
       const domainCandidate = normalizeDomain(customDomain);
       if (domainCandidate) {
-        const siteId = makeSiteId(resolvedProjectName);
-        try {
-          const publishPayload = await publishToHosting({ siteId, pages, domain: domainCandidate });
-          const nextUrl = String(publishPayload?.url || "");
-          setPublishedSiteId(siteId);
-          setLiveUrl(nextUrl);
-          setCustomDomain(domainCandidate);
-          setHostingProfile((previous) => ({
-            ...previous,
-            domain: domainCandidate,
-            sslEnabled: Boolean(publishPayload?.ssl?.enabled ?? previous.sslEnabled),
-            cdnEnabled: Boolean(publishPayload?.cdn?.enabled ?? previous.cdnEnabled),
-            tier: String(publishPayload?.hosting?.tier || previous.tier || "Fast Hosting"),
-            provider: String(publishPayload?.provider || previous.provider || "gateway"),
-            liveUrl: nextUrl || previous.liveUrl || "",
-            updatedAt: new Date().toISOString(),
-          }));
+        runDeferred(async () => {
+          const siteId = makeSiteId(resolvedProjectName);
           try {
-            await handleAttachDomain(siteId, domainCandidate);
-            setPublishStatus("success");
-            setPublishMessage(`Website generated and domain attached: ${domainCandidate}`);
-          } catch {
-            setPublishStatus("info");
-            setPublishMessage(buildDomainPendingMessage(domainCandidate, "published"));
+            const publishPayload = await publishToHosting({ siteId, pages, domain: domainCandidate });
+            const nextUrl = String(publishPayload?.url || "");
+            setPublishedSiteId(siteId);
+            setLiveUrl(nextUrl);
+            setCustomDomain(domainCandidate);
+            setHostingProfile((previous) => ({
+              ...previous,
+              domain: domainCandidate,
+              sslEnabled: Boolean(publishPayload?.ssl?.enabled ?? previous.sslEnabled),
+              cdnEnabled: Boolean(publishPayload?.cdn?.enabled ?? previous.cdnEnabled),
+              tier: String(publishPayload?.hosting?.tier || previous.tier || "Fast Hosting"),
+              provider: String(publishPayload?.provider || previous.provider || "gateway"),
+              liveUrl: nextUrl || previous.liveUrl || "",
+              updatedAt: new Date().toISOString(),
+            }));
+            try {
+              await handleAttachDomain(siteId, domainCandidate);
+              setPublishStatus("success");
+              setPublishMessage(`Website generated and domain attached: ${domainCandidate}`);
+            } catch {
+              setPublishStatus("info");
+              setPublishMessage(buildDomainPendingMessage(domainCandidate, "published"));
+            }
+          } catch (publishErr) {
+            setPublishStatus("error");
+            setPublishMessage(
+              `Website generated, but domain connection failed: ${String(
+                publishErr?.message || "publish/connect error"
+              )}`
+            );
           }
-        } catch (publishErr) {
-          setPublishStatus("error");
-          setPublishMessage(
-            `Website generated, but domain connection failed: ${String(
-              publishErr?.message || "publish/connect error"
-            )}`
-          );
-        }
+        });
       }
       return {
         resolvedProjectName,
@@ -7574,17 +7598,29 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       setNewPageName("");
       setIsInlineEditing(true);
       if (!projectName.trim()) setProjectName(insights.brand);
-      await runMarketingAutopilot({ source: "redesign" });
-      await runMonetizationEngine();
-      await runGrowthCoach({ silent: true });
+      runDeferred(async () => {
+        await runMarketingAutopilot({ source: "redesign" });
+      });
+      runDeferred(async () => {
+        await runMonetizationEngine();
+      });
+      runDeferred(async () => {
+        await runGrowthCoach({ silent: true });
+      });
       if (autonomousModeEnabled) {
-        await runAutonomousBusinessMode({ silent: true });
+        runDeferred(async () => {
+          await runAutonomousBusinessMode({ silent: true });
+        });
       }
       if (autoSearchOnGenerate) {
-        await handleDomainSearch();
+        runDeferred(async () => {
+          await handleDomainSearch();
+        });
       }
       if (parseCompetitorUrls(competitorUrlsInput).length > 0) {
-        await handleCompetitorScan({ silent: true });
+        runDeferred(async () => {
+          await handleCompetitorScan({ silent: true });
+        });
       }
     } catch (err) {
       setError(String(err?.message || "Unknown redesign error."));
