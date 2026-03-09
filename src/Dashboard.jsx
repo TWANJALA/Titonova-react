@@ -576,7 +576,7 @@ export default function Dashboard() {
   const [marketBuying, setMarketBuying] = useState("");
   const [marketTlds, setMarketTlds] = useState([".com", ".net", ".org", ".io"]);
   const [marketSort, setMarketSort] = useState("available");
-  const [authMode, setAuthMode] = useState("login");
+  const [authMode, setAuthMode] = useState("signup");
   const [authLoading, setAuthLoading] = useState(false);
   const [authNameInput, setAuthNameInput] = useState("");
   const [authEmailInput, setAuthEmailInput] = useState("");
@@ -3439,9 +3439,17 @@ ${content || ""}
         method: "POST",
         body: { name, email, password },
       });
-      await persistAuthSession({ token: payload?.token, user: payload?.user });
-      setPublishStatus("success");
-      setPublishMessage(`Welcome ${payload?.user?.name || name}. Account created.`);
+      if (payload?.token && payload?.user) {
+        await persistAuthSession({ token: payload?.token, user: payload?.user });
+        setPublishStatus("success");
+        setPublishMessage(`Welcome ${payload?.user?.name || name}. Account created.`);
+      } else {
+        setPublishStatus("info");
+        setPublishMessage(
+          String(payload?.message || "Account created. Awaiting super admin approval before dashboard access.")
+        );
+        setAuthPasswordInput("");
+      }
     } catch (err) {
       setPublishStatus("error");
       setPublishMessage(String(err?.message || "Signup failed."));
@@ -5538,6 +5546,8 @@ Return strict JSON:
 
   const normalizedCustomDomain = normalizeDomain(customDomain);
   const redesignInsights = deriveRedesignInsights(sourceWebsiteUrl);
+  const hasDashboardAccess = true;
+  const shouldShowGuestPreviewPrompt = Boolean(showGuestAuthPrompt && !authUser && hasGeneratedContent);
   const currentPageHtml = generatedPages[activePage] || generatedSite || "";
   const seoChecklist = computeSeoChecklist(currentPageHtml);
   const currentMapQuery = extractMapQueryFromHtml(currentPageHtml);
@@ -7918,6 +7928,102 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     };
   }, [isResizingPane]);
 
+  if (!hasDashboardAccess) {
+    return (
+      <div style={styles.wrapper}>
+        <div style={styles.hero}>
+          <span style={styles.eyebrow}>TITONOVA CLOUD  BUSINESS ENGINE</span>
+          <h1 style={styles.title}>TitoNova Cloud Business &amp; Website Engine</h1>
+          <p style={styles.subtitle}>
+            Dashboard access is locked. Create an account and wait for super admin approval.
+          </p>
+        </div>
+        <div style={{ ...styles.card, maxWidth: 760, margin: "0 auto" }}>
+          <h2 style={styles.sectionTitle}>Create Account</h2>
+          <p style={styles.sectionIntro}>
+            New users are set to pending status until approved by super admin.
+          </p>
+          {authUser ? (
+            <div style={styles.authCard}>
+              <div style={styles.authHeader}>
+                <strong style={styles.authTitle}>Approval Pending</strong>
+                <button type="button" style={styles.authGhostButton} onClick={handleLogout}>
+                  Logout
+                </button>
+              </div>
+              <small style={styles.authMeta}>
+                Account: {authUser?.email || "unknown"} · Status: {authUser?.approval_status || "pending"}.
+                You will gain dashboard access after super admin approval.
+              </small>
+            </div>
+          ) : (
+            <div style={styles.authFormGrid}>
+              <div style={styles.authModeRow}>
+                <button
+                  type="button"
+                  style={authMode === "signup" ? styles.authModeButtonActive : styles.authModeButton}
+                  onClick={() => setAuthMode("signup")}
+                >
+                  Sign Up
+                </button>
+                <button
+                  type="button"
+                  style={authMode === "login" ? styles.authModeButtonActive : styles.authModeButton}
+                  onClick={() => setAuthMode("login")}
+                >
+                  Login (Approved Users)
+                </button>
+              </div>
+              {authMode === "signup" ? (
+                <input
+                  style={styles.solutionInput}
+                  placeholder="Full name"
+                  value={authNameInput}
+                  onChange={(event) => setAuthNameInput(event.target.value)}
+                />
+              ) : null}
+              <input
+                style={styles.solutionInput}
+                placeholder="Email"
+                type="email"
+                value={authEmailInput}
+                onChange={(event) => setAuthEmailInput(event.target.value)}
+              />
+              <input
+                style={styles.solutionInput}
+                placeholder="Password"
+                type="password"
+                value={authPasswordInput}
+                onChange={(event) => setAuthPasswordInput(event.target.value)}
+              />
+              <button
+                type="button"
+                style={styles.authPrimaryButton}
+                onClick={authMode === "signup" ? handleSignup : handleLogin}
+                disabled={authLoading}
+              >
+                {authLoading ? "Please wait..." : authMode === "signup" ? "Create Account" : "Login"}
+              </button>
+            </div>
+          )}
+          {publishMessage ? (
+            <p
+              style={
+                publishStatus === "error"
+                  ? styles.publishError
+                  : publishStatus === "success"
+                    ? styles.publishSuccess
+                    : styles.publishInfo
+              }
+            >
+              {publishMessage}
+            </p>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={styles.wrapper}>
       <div style={styles.hero}>
@@ -10223,37 +10329,65 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               </button>
             </div>
           </section>
-          {isInlineEditing && fieldLockMode && (
-            <p style={styles.lockHint}>
-              Field-Locked mode edits text only (headings, paragraphs, lists, links, buttons, labels, and inline text).
-            </p>
-          )}
-          <div
-            ref={previewEditableRef}
-            contentEditable={isInlineEditing && !fieldLockMode}
-            suppressContentEditableWarning
-            style={isInlineEditing ? styles.previewEditable : undefined}
-            onClick={handlePreviewLinkNavigation}
-            onKeyDown={(event) => {
-              if (isInlineEditing && fieldLockMode && event.key === "Enter") {
-                event.preventDefault();
-              }
-            }}
-            onInput={(event) => {
-              if (!isInlineEditing) return;
-              if (fieldLockMode) return;
-              const nextHtml = event.currentTarget.innerHTML;
-              setDraftHtml(nextHtml);
-              setEditHistory((previous) => {
-                if (previous[previous.length - 1] === nextHtml) return previous;
-                return [...previous.slice(-49), nextHtml];
-              });
-            }}
-            onBlurCapture={() => {
-              if (isInlineEditing && fieldLockMode) snapshotInlineDraft();
-            }}
-            dangerouslySetInnerHTML={{ __html: isInlineEditing ? draftHtml : generatedSite }}
-          />
+          <div style={styles.previewCanvasWrap}>
+            <div style={shouldShowGuestPreviewPrompt ? styles.previewCanvasFaint : undefined}>
+              {isInlineEditing && fieldLockMode && (
+                <p style={styles.lockHint}>
+                  Field-Locked mode edits text only (headings, paragraphs, lists, links, buttons, labels, and inline text).
+                </p>
+              )}
+              <div
+                ref={previewEditableRef}
+                contentEditable={isInlineEditing && !fieldLockMode}
+                suppressContentEditableWarning
+                style={isInlineEditing ? styles.previewEditable : undefined}
+                onClick={handlePreviewLinkNavigation}
+                onKeyDown={(event) => {
+                  if (isInlineEditing && fieldLockMode && event.key === "Enter") {
+                    event.preventDefault();
+                  }
+                }}
+                onInput={(event) => {
+                  if (!isInlineEditing) return;
+                  if (fieldLockMode) return;
+                  const nextHtml = event.currentTarget.innerHTML;
+                  setDraftHtml(nextHtml);
+                  setEditHistory((previous) => {
+                    if (previous[previous.length - 1] === nextHtml) return previous;
+                    return [...previous.slice(-49), nextHtml];
+                  });
+                }}
+                onBlurCapture={() => {
+                  if (isInlineEditing && fieldLockMode) snapshotInlineDraft();
+                }}
+                dangerouslySetInnerHTML={{ __html: isInlineEditing ? draftHtml : generatedSite }}
+              />
+            </div>
+            {shouldShowGuestPreviewPrompt && (
+              <div style={styles.previewGuestOverlay}>
+                <strong style={styles.previewGuestTitle}>Create an account to save and publish this website</strong>
+                <small style={styles.previewGuestMeta}>
+                  Your generated site is ready. Sign up here to unlock dashboard saves, publishing, and project access.
+                </small>
+                <div style={styles.previewGuestActions}>
+                  <button
+                    type="button"
+                    style={styles.authPrimaryButton}
+                    onClick={() => setAuthMode("signup")}
+                  >
+                    Create Account
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.authGhostButton}
+                    onClick={() => setAuthMode("login")}
+                  >
+                    Login
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
             </div>
           ) : (
             <div style={styles.previewEmpty}>
@@ -11643,6 +11777,45 @@ const styles = {
     borderRadius: "18px",
     border: "1px solid #b7ebcc",
     boxShadow: "0 20px 55px rgba(15,23,42,0.14)"
+  },
+  previewCanvasWrap: {
+    position: "relative"
+  },
+  previewCanvasFaint: {
+    opacity: 0.24,
+    filter: "saturate(0.8) blur(0.6px)",
+    pointerEvents: "none"
+  },
+  previewGuestOverlay: {
+    position: "absolute",
+    inset: "20px 14px 14px",
+    display: "grid",
+    alignContent: "center",
+    justifyItems: "center",
+    gap: "10px",
+    textAlign: "center",
+    background: "rgba(255,255,255,0.7)",
+    border: "1px solid #99f6c0",
+    borderRadius: "12px",
+    boxShadow: "0 18px 40px rgba(15,23,42,0.18)",
+    backdropFilter: "blur(2px)"
+  },
+  previewGuestTitle: {
+    color: "#14532d",
+    fontSize: "18px",
+    lineHeight: 1.3,
+    maxWidth: "560px"
+  },
+  previewGuestMeta: {
+    color: "#334155",
+    fontSize: "13px",
+    maxWidth: "620px"
+  },
+  previewGuestActions: {
+    display: "flex",
+    gap: "10px",
+    flexWrap: "wrap",
+    justifyContent: "center"
   },
   previewEmpty: {
     background: "linear-gradient(180deg, rgba(6,24,18,0.95), rgba(7,38,28,0.9))",
