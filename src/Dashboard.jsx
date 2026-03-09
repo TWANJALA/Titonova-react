@@ -6464,13 +6464,16 @@ ${JSON.stringify(sourceTexts)}`,
     );
     const sameOriginBase =
       typeof window !== "undefined" ? String(window.location.origin || "").replace(/\/$/, "") : "";
+    const localFallbackUrls = [
+      sameOriginBase ? `${sameOriginBase}/api/hosting/publish` : "",
+      "/api/hosting/publish",
+      "http://localhost:8787/api/hosting/publish",
+    ];
     const publishUrls = Array.from(
       new Set(
         [
           ...envBaseUrls.map((base) => `${base}/api/hosting/publish`),
-          sameOriginBase ? `${sameOriginBase}/api/hosting/publish` : "",
-          "/api/hosting/publish",
-          isLocalHost ? "http://localhost:8787/api/hosting/publish" : "",
+          ...(isLocalHost ? localFallbackUrls : []),
         ].filter(Boolean)
       )
     );
