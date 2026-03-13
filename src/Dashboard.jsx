@@ -1055,7 +1055,13 @@ export default function Dashboard() {
   const [inlineBulkImproving, setInlineBulkImproving] = useState(false);
   const [inlineLastPublishSnapshot, setInlineLastPublishSnapshot] = useState(null);
   const [inlineCheckpoints, setInlineCheckpoints] = useState([]);
+  const [inlineSiteModel, setInlineSiteModel] = useState({});
+  const [selectedEditableMeta, setSelectedEditableMeta] = useState(null);
+  const [floatingToolbarPos, setFloatingToolbarPos] = useState({ top: 0, left: 0 });
   const [fieldLockMode, setFieldLockMode] = useState(true);
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth : 1280
+  );
   const [commandPaneWidth, setCommandPaneWidth] = useState(460);
   const [isResizingPane, setIsResizingPane] = useState(false);
   const [showAdvancedTools, setShowAdvancedTools] = useState(false);
@@ -1101,6 +1107,7 @@ export default function Dashboard() {
   const [invoiceAmountInput, setInvoiceAmountInput] = useState("150");
   const previewEditableRef = useRef(null);
   const inlineHoverNodeRef = useRef(null);
+  const selectedEditableNodeRef = useRef(null);
   const appShellRef = useRef(null);
   const promptTextareaRef = useRef(null);
 
@@ -6800,6 +6807,51 @@ Return strict JSON:
   ];
   const checklistDoneCount = checklistSteps.filter((step) => step.done).length;
   const checklistProgress = Math.round((checklistDoneCount / checklistSteps.length) * 100);
+  const isCompactInlineEditor = viewportWidth < 960;
+  const inlineEditToolbarStyle = isCompactInlineEditor
+    ? {
+        ...styles.inlineEditToolbar,
+        position: "sticky",
+        top: "8px",
+        zIndex: 12,
+        alignItems: "stretch",
+        padding: "10px",
+      }
+    : styles.inlineEditToolbar;
+  const inlineEditMetaStyle = isCompactInlineEditor
+    ? {
+        ...styles.inlineEditMeta,
+        minWidth: 0,
+        width: "100%",
+      }
+    : styles.inlineEditMeta;
+  const inlineEditActionsStyle = isCompactInlineEditor
+    ? {
+        ...styles.inlineEditActions,
+        width: "100%",
+        justifyContent: "stretch",
+      }
+    : styles.inlineEditActions;
+  const inlineSmartInputStyle = isCompactInlineEditor
+    ? {
+        ...styles.inlineSmartInput,
+        minWidth: "100%",
+      }
+    : styles.inlineSmartInput;
+  const previewEditableStyle = isCompactInlineEditor
+    ? {
+        ...styles.previewEditable,
+        minHeight: "320px",
+        padding: "8px",
+        outlineOffset: "3px",
+      }
+    : styles.previewEditable;
+  const previewGuestOverlayStyle = isCompactInlineEditor
+    ? {
+        ...styles.previewGuestOverlay,
+        inset: "12px",
+      }
+    : styles.previewGuestOverlay;
 
   const applyImageUpdate = (imageId, nextSrc, scope = imageApplyScope) => {
     if (!imageId || !nextSrc) return;
@@ -8690,6 +8742,133 @@ ${JSON.stringify(sourceTexts)}`,
     URL.revokeObjectURL(url);
   };
 
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleViewportResize = () => setViewportWidth(window.innerWidth || 1280);
+    handleViewportResize();
+    window.addEventListener("resize", handleViewportResize);
+    return () => window.removeEventListener("resize", handleViewportResize);
+  }, []);
+
+  const INLINE_EDITABLE_QUERY =
+    "h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label, img";
+
+  const getInlineEditableType = (node) => {
+    if (!(node instanceof HTMLElement)) return "";
+    const tag = String(node.tagName || "").toLowerCase();
+    if (tag === "img") return "image";
+    if (tag === "button") return "button";
+    if (tag === "a") return "link";
+    if (!/^(h1|h2|h3|h4|p|li|span|small|strong|em|summary|label)$/.test(tag)) return "";
+    const text = String(node.textContent || "").replace(/\s+/g, " ").trim();
+    if (!text) return "";
+    if (Array.from(node.children).some((child) => child instanceof HTMLElement && child.matches(INLINE_EDITABLE_QUERY))) {
+      return "";
+    }
+    return "text";
+  };
+
+  const getInlineComponentName = (node, root) => {
+    if (!(node instanceof HTMLElement) || !(root instanceof HTMLElement)) return "page";
+    const sectionRoot =
+      node.closest("[data-tn-section], section, article, main, header, footer, [id], [class]") || root;
+    const explicit =
+      String(sectionRoot?.getAttribute?.("data-tn-section") || "").trim() ||
+      String(sectionRoot?.getAttribute?.("data-section") || "").trim() ||
+      String(sectionRoot?.getAttribute?.("id") || "").trim();
+    if (explicit) return explicit.toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+    return String(sectionRoot?.tagName || "page").toLowerCase();
+  };
+
+  const readInlineEditableValue = (node, type) => {
+    if (!(node instanceof HTMLElement)) return "";
+    if (type === "image") return String(node.getAttribute("src") || "").trim();
+    if (type === "link") return String(node.getAttribute("href") || "").trim();
+    return String(node.textContent || "").replace(/\s+/g, " ").trim();
+  };
+
+  const syncInlineSiteModelFromDom = useCallback(() => {
+    const root = previewEditableRef.current;
+    if (!(root instanceof HTMLElement)) return;
+    const nextModel = {};
+    const editableNodes = Array.from(root.querySelectorAll("[data-editable][data-id]"));
+    editableNodes.forEach((node) => {
+      if (!(node instanceof HTMLElement)) return;
+      const id = String(node.dataset.id || "").trim();
+      const type = String(node.dataset.editable || "").trim();
+      if (!id || !type) return;
+      const binding = String(node.dataset.binding || "").trim();
+      const component = String(node.dataset.component || "").trim();
+      nextModel[id] = {
+        id,
+        type,
+        binding,
+        component,
+        ...(type === "image"
+          ? { src: readInlineEditableValue(node, type), alt: String(node.getAttribute("alt") || "").trim() }
+          : type === "link"
+            ? { href: readInlineEditableValue(node, type), content: String(node.textContent || "").trim() }
+            : { content: readInlineEditableValue(node, type) }),
+      };
+    });
+    setInlineSiteModel(nextModel);
+  }, []);
+
+  const updateFloatingToolbarPosition = useCallback((node) => {
+    if (!(node instanceof HTMLElement) || typeof window === "undefined") return;
+    const rect = node.getBoundingClientRect();
+    const toolbarWidth = viewportWidth < 640 ? Math.max(220, viewportWidth - 24) : 320;
+    const top = Math.max(12, rect.top - 56);
+    const left = Math.min(
+      Math.max(12, rect.left),
+      Math.max(12, viewportWidth - toolbarWidth - 12)
+    );
+    setFloatingToolbarPos({ top, left });
+  }, [viewportWidth]);
+
+  const selectInlineEditableNode = useCallback((node) => {
+    const root = previewEditableRef.current;
+    if (!(node instanceof HTMLElement) || !(root instanceof HTMLElement)) return;
+    const editableNode = node.closest("[data-editable][data-id]");
+    if (!(editableNode instanceof HTMLElement)) return;
+    const type = String(editableNode.dataset.editable || "").trim();
+    const id = String(editableNode.dataset.id || "").trim();
+    const component = String(editableNode.dataset.component || "").trim();
+    const value = readInlineEditableValue(editableNode, type);
+    selectedEditableNodeRef.current = editableNode;
+    setSelectedEditableMeta({ id, type, component, value });
+    updateFloatingToolbarPosition(editableNode);
+    if (type === "image") {
+      const imageId = String(editableNode.getAttribute("data-image-id") || id).trim();
+      if (imageId) setSelectedImageId(imageId);
+    }
+  }, [updateFloatingToolbarPosition]);
+
+  const annotateInlineEditableDom = useCallback(() => {
+    const root = previewEditableRef.current;
+    if (!(root instanceof HTMLElement)) return;
+    const pagePrefix = makeProjectSlug(activePage || "page");
+    let sequence = 0;
+    const editableNodes = Array.from(root.querySelectorAll(INLINE_EDITABLE_QUERY));
+    editableNodes.forEach((node) => {
+      if (!(node instanceof HTMLElement)) return;
+      const type = getInlineEditableType(node);
+      if (!type) return;
+      const component = getInlineComponentName(node, root);
+      const existingId = String(node.dataset.id || "").trim();
+      const id = existingId || `${pagePrefix}-${component}-${type}-${sequence += 1}`;
+      node.dataset.editable = type;
+      node.dataset.id = id;
+      node.dataset.component = component;
+      node.dataset.binding =
+        type === "image" ? "src" : type === "link" ? "href" : "content";
+      if (type === "text") {
+        node.dataset.editRole = "content";
+      }
+    });
+    syncInlineSiteModelFromDom();
+  }, [activePage, syncInlineSiteModelFromDom]);
+
   const handleGenerate = async (options = {}) => {
     const resolvedProjectName = String(options.projectNameOverride || projectName || "").trim();
     if (!resolvedProjectName) {
@@ -9301,6 +9480,32 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     }
   };
 
+  const focusInlineEditableNode = useCallback((targetNode = null, { placeCursorAtEnd = true } = {}) => {
+    const root = previewEditableRef.current;
+    if (!root || typeof window === "undefined") return;
+    const editableSelector =
+      "[data-editable='text'][data-id], [data-locked-edit='true'], h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label";
+    const selectedTarget =
+      targetNode instanceof Element ? targetNode.closest(editableSelector) : null;
+    const fallbackTarget = root.querySelector(editableSelector);
+    const focusTarget = selectedTarget instanceof HTMLElement ? selectedTarget : fallbackTarget;
+
+    if (fieldLockMode) {
+      if (!(focusTarget instanceof HTMLElement)) return;
+      focusTarget.focus({ preventScroll: true });
+      const selection = window.getSelection();
+      if (!selection) return;
+      const range = document.createRange();
+      range.selectNodeContents(focusTarget);
+      range.collapse(!placeCursorAtEnd);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return;
+    }
+
+    root.focus({ preventScroll: true });
+  }, [fieldLockMode]);
+
   const handleStartInlineEdit = () => {
     const currentHtml = generatedPages[activePage] || generatedSite || "";
     if (!currentHtml) return;
@@ -9327,22 +9532,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       },
     ]);
     setIsInlineEditing(true);
-    window.requestAnimationFrame(() => {
-      const root = previewEditableRef.current;
-      if (!root) return;
-      const firstEditable =
-        root.querySelector("[data-locked-edit='true']") ||
-        root.querySelector("h1, h2, h3, p, li, a, button, span, small, label");
-      if (!(firstEditable instanceof HTMLElement)) return;
-      firstEditable.focus();
-      const selection = window.getSelection();
-      if (!selection) return;
-      const range = document.createRange();
-      range.selectNodeContents(firstEditable);
-      range.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(range);
-    });
+    window.requestAnimationFrame(() => focusInlineEditableNode());
   };
 
   const handleSaveInlineEdit = () => {
@@ -9448,7 +9638,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     if (!isInlineEditing) return;
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
-    const node = target.closest("h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label");
+    const node = target.closest("[data-editable], h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label");
     if (!(node instanceof HTMLElement)) {
       clearInlineHoverNode();
       return;
@@ -9460,14 +9650,24 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     node.dataset.tnOldCursor = node.style.cursor || "";
     node.dataset.tnOldTransition = node.style.transition || "";
     node.style.transition = node.style.transition || "box-shadow 120ms ease, background-color 120ms ease";
-    node.style.boxShadow = "inset 0 0 0 1px rgba(34,197,94,0.75)";
-    node.style.backgroundColor = "rgba(34,197,94,0.08)";
+    node.style.boxShadow = "inset 0 0 0 2px rgba(59,130,246,0.78)";
+    node.style.backgroundColor = "rgba(59,130,246,0.09)";
     node.style.cursor = "text";
     inlineHoverNodeRef.current = node;
   };
 
   const handleInlineHoverLeave = () => {
     clearInlineHoverNode();
+  };
+
+  const handleInlinePointerActivate = (event) => {
+    if (!isInlineEditing) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+    window.requestAnimationFrame(() => {
+      selectInlineEditableNode(target);
+      focusInlineEditableNode(target);
+    });
   };
 
   const parseInlineSmartAction = (rawValue) => {
@@ -9765,6 +9965,13 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       return;
     }
     const sectionType = detectInlineSectionType(ancestorNode, root);
+    selectInlineEditableNode(
+      ancestorNode instanceof HTMLElement
+        ? ancestorNode
+        : fallbackNode instanceof HTMLElement
+          ? fallbackNode
+          : root
+    );
     setInlineSelectionText(effectiveText);
     setInlineSelectionSection(sectionType);
     const nextSuggestions = buildInlineSuggestions(effectiveText, sectionType);
@@ -10196,6 +10403,8 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
   useEffect(() => {
     if (isInlineEditing) return undefined;
     clearInlineHoverNode();
+    selectedEditableNodeRef.current = null;
+    setSelectedEditableMeta(null);
     setInlineSmartStatus("");
     setInlineSmartCommand("");
     setInlineSelectionText("");
@@ -10209,13 +10418,15 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
   useEffect(() => {
     const root = previewEditableRef.current;
     if (!root) return;
-    const selector = "h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label";
+    const selector = `${INLINE_EDITABLE_QUERY}`;
     const lockedNodes = Array.from(root.querySelectorAll(selector));
 
     if (isInlineEditing && fieldLockMode) {
       lockedNodes.forEach((node) => {
         node.setAttribute("contenteditable", "true");
         node.setAttribute("data-locked-edit", "true");
+        node.setAttribute("tabindex", "0");
+        node.setAttribute("spellcheck", "true");
       });
       return;
     }
@@ -10224,9 +10435,48 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       if (node.getAttribute("data-locked-edit") === "true") {
         node.removeAttribute("contenteditable");
         node.removeAttribute("data-locked-edit");
+        node.removeAttribute("tabindex");
+        node.removeAttribute("spellcheck");
       }
     });
-  }, [isInlineEditing, fieldLockMode, draftHtml]);
+    if (isInlineEditing) annotateInlineEditableDom();
+  }, [isInlineEditing, fieldLockMode, draftHtml, annotateInlineEditableDom]);
+
+  useEffect(() => {
+    if (!isInlineEditing) return;
+    const root = previewEditableRef.current;
+    if (!root) return;
+    window.requestAnimationFrame(() => {
+      if (!previewEditableRef.current) return;
+      const activeElement = document.activeElement;
+      if (root.contains(activeElement)) return;
+      focusInlineEditableNode();
+    });
+  }, [activePage, isInlineEditing, fieldLockMode, focusInlineEditableNode]);
+
+  useEffect(() => {
+    if (!selectedEditableMeta) return undefined;
+    const syncToolbar = () => {
+      if (selectedEditableNodeRef.current instanceof HTMLElement) {
+        updateFloatingToolbarPosition(selectedEditableNodeRef.current);
+        setSelectedEditableMeta((previous) =>
+          previous
+            ? {
+                ...previous,
+                value: readInlineEditableValue(selectedEditableNodeRef.current, previous.type),
+              }
+            : previous
+        );
+      }
+    };
+    syncToolbar();
+    window.addEventListener("scroll", syncToolbar, { passive: true });
+    window.addEventListener("resize", syncToolbar);
+    return () => {
+      window.removeEventListener("scroll", syncToolbar);
+      window.removeEventListener("resize", syncToolbar);
+    };
+  }, [selectedEditableMeta, updateFloatingToolbarPosition]);
 
   useEffect(() => {
     const onScrollOrResize = () => applyParallaxTransforms();
@@ -13095,13 +13345,16 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
           <div style={styles.previewCanvasWrap}>
             <div style={shouldShowGuestPreviewPrompt ? styles.previewCanvasFaint : undefined}>
               {isInlineEditing && (
-                <div style={styles.inlineEditToolbar}>
-                  <div style={styles.inlineEditMeta}>
+                <div style={inlineEditToolbarStyle}>
+                  <div style={inlineEditMetaStyle}>
                     <strong style={styles.inlineEditTitle}>Inline edit mode</strong>
                     <small style={styles.inlineEditHint}>
                       Click text, edit, then Save. Shortcuts: Cmd/Ctrl+S save, Cmd/Ctrl+Z undo, Cmd/Ctrl+Y redo.
                     </small>
                     {inlineSmartStatus ? <small style={styles.inlineSmartStatus}>{inlineSmartStatus}</small> : null}
+                    <small style={styles.inlineSelectionMeta}>
+                      Synced editable elements: {Object.keys(inlineSiteModel).length}
+                    </small>
                     {inlineSelectionText ? (
                       <small style={styles.inlineSelectionMeta}>
                         Section: {inlineSelectionSection || "general"} | Selected:{" "}
@@ -13129,7 +13382,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
                       <>
                         <div style={styles.inlineSmartRow}>
                           <input
-                            style={styles.inlineSmartInput}
+                            style={inlineSmartInputStyle}
                             value={inlineSmartCommand}
                             onChange={(event) => setInlineSmartCommand(event.target.value)}
                             onKeyDown={(event) => {
@@ -13187,7 +13440,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
                       </>
                     )}
                   </div>
-                  <div style={styles.inlineEditActions}>
+                  <div style={inlineEditActionsStyle}>
                     <span style={inlineDraftDirty ? styles.inlineDirtyBadge : styles.inlineCleanBadge}>
                       {inlineDraftDirty ? "Unsaved changes" : "Saved"}
                     </span>
@@ -13247,12 +13500,61 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
                   </div>
                 </div>
               )}
+              {isInlineEditing && selectedEditableMeta ? (
+                <div
+                  style={{
+                    ...styles.inlineFloatingToolbar,
+                    top: `${floatingToolbarPos.top}px`,
+                    left: `${floatingToolbarPos.left}px`,
+                    width: isCompactInlineEditor ? `min(${Math.max(220, viewportWidth - 24)}px, calc(100vw - 24px))` : "320px",
+                  }}
+                >
+                  <small style={styles.inlineFloatingEyebrow}>
+                    {selectedEditableMeta.type.toUpperCase()} • {selectedEditableMeta.component || "page"}
+                  </small>
+                  <strong style={styles.inlineFloatingTitle}>
+                    {selectedEditableMeta.id}
+                  </strong>
+                  <small style={styles.inlineFloatingValue}>
+                    {String(selectedEditableMeta.value || "").slice(0, 140) || "No value"}
+                  </small>
+                  <div style={styles.inlineFloatingActions}>
+                    {selectedEditableMeta.type === "text" ? (
+                      <button style={styles.inlineSuggestionApply} onClick={() => focusInlineEditableNode(selectedEditableNodeRef.current)}>
+                        Edit Text
+                      </button>
+                    ) : null}
+                    {selectedEditableMeta.type === "image" ? (
+                      <button
+                        style={styles.inlineSuggestionApply}
+                        onClick={() => setPublishMessage(`Selected ${selectedEditableMeta.id}. Use Image Customization to replace this asset.`)}
+                      >
+                        Edit Image
+                      </button>
+                    ) : null}
+                    <button style={styles.inlineSmartChip} onClick={() => syncInlineSiteModelFromDom()}>
+                      Sync Model
+                    </button>
+                    <button
+                      style={styles.inlineSmartChip}
+                      onClick={() => {
+                        selectedEditableNodeRef.current = null;
+                        setSelectedEditableMeta(null);
+                      }}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div
                 ref={previewEditableRef}
                 contentEditable={isInlineEditing && !fieldLockMode}
                 suppressContentEditableWarning
-                style={isInlineEditing ? styles.previewEditable : undefined}
+                style={isInlineEditing ? previewEditableStyle : undefined}
                 onClick={handlePreviewLinkNavigation}
+                onMouseDownCapture={handleInlinePointerActivate}
+                onTouchStartCapture={handleInlinePointerActivate}
                 onKeyDown={(event) => {
                   if (!isInlineEditing) return;
                   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
@@ -13266,9 +13568,14 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
                   setDraftHtml(nextHtml);
                   setInlineDraftDirty(true);
                   appendInlineHistory(nextHtml);
+                  syncInlineSiteModelFromDom();
+                  if (event.target instanceof Element) selectInlineEditableNode(event.target);
                 }}
                 onBlurCapture={() => {
-                  if (isInlineEditing) snapshotInlineDraft();
+                  if (isInlineEditing) {
+                    snapshotInlineDraft();
+                    syncInlineSiteModelFromDom();
+                  }
                 }}
                 onMouseUpCapture={captureInlineSelection}
                 onKeyUpCapture={captureInlineSelection}
@@ -13278,7 +13585,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               />
             </div>
             {shouldShowGuestPreviewPrompt && (
-              <div style={styles.previewGuestOverlay}>
+              <div style={previewGuestOverlayStyle}>
                 <strong style={styles.previewGuestTitle}>Create an account to save and publish this website</strong>
                 <small style={styles.previewGuestMeta}>
                   Your generated site is ready. Sign up here to unlock dashboard saves, publishing, and project access.
@@ -16283,6 +16590,43 @@ const styles = {
     borderRadius: "10px",
     padding: "8px 10px",
     marginBottom: "10px"
+  },
+  inlineFloatingToolbar: {
+    position: "fixed",
+    zIndex: 30,
+    display: "grid",
+    gap: "5px",
+    padding: "10px",
+    borderRadius: "12px",
+    border: "1px solid rgba(59,130,246,0.32)",
+    background: "rgba(15,23,42,0.94)",
+    boxShadow: "0 18px 40px rgba(15,23,42,0.32)",
+    backdropFilter: "blur(10px)"
+  },
+  inlineFloatingEyebrow: {
+    color: "#93c5fd",
+    fontSize: "10px",
+    fontWeight: 800,
+    letterSpacing: "0.08em"
+  },
+  inlineFloatingTitle: {
+    color: "#f8fafc",
+    fontSize: "12px",
+    lineHeight: 1.35,
+    wordBreak: "break-word"
+  },
+  inlineFloatingValue: {
+    color: "#cbd5e1",
+    fontSize: "11px",
+    lineHeight: 1.4,
+    wordBreak: "break-word"
+  },
+  inlineFloatingActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    flexWrap: "wrap",
+    marginTop: "4px"
   },
   inlineEditMeta: {
     display: "grid",
