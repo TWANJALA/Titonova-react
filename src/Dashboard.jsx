@@ -1,8 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import JSZip from "jszip";
 
 const HOSTING_BASE_URL = String(import.meta.env.VITE_HOSTING_API_BASE_URL || "").replace(/\/$/, "");
 const REGISTRAR_BASE_URL = String(import.meta.env.VITE_REGISTRAR_API_BASE_URL || "").replace(/\/$/, "");
 const HOSTING_GATEWAY_TOKEN = String(import.meta.env.VITE_REGISTRAR_GATEWAY_TOKEN || "");
+const EXPORT_FRAMEWORK_OPTIONS = ["html", "react", "nextjs", "vue", "webflow", "tailwind"];
+const GENERATE_REQUEST_TIMEOUT_MS = 45000;
+const fetchWithTimeout = async (url, options = {}, timeoutMs = GENERATE_REQUEST_TIMEOUT_MS) => {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs) || GENERATE_REQUEST_TIMEOUT_MS));
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("Generation timed out. Please try again.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+};
 const isLocalHostName = (value) => /^(localhost|127\.0\.0\.1)$/i.test(String(value || ""));
 const isUsableApiBaseUrl = (rawUrl, allowLocalHost = false) => {
   const value = String(rawUrl || "").trim();
@@ -492,6 +510,395 @@ const safeJsonParse = (value, fallback = {}) => {
   }
 };
 
+const SECTION_KEY_ALIASES = {
+  hero: "hero",
+  feature: "features",
+  features: "features",
+  service: "services",
+  services: "services",
+  pricing: "pricing",
+  plans: "pricing",
+  testimonial: "testimonials",
+  testimonials: "testimonials",
+  faq: "faq",
+  faqs: "faq",
+  cta: "cta",
+  "call to action": "cta",
+  contact: "contact_form",
+  "contact form": "contact_form",
+  booking: "booking_widget",
+  "booking widget": "booking_widget",
+  about: "about",
+  team: "team",
+  blog: "blog",
+  gallery: "gallery",
+};
+
+const normalizeSectionKey = (value) => {
+  const raw = String(value || "")
+    .toLowerCase()
+    .replace(/\(.*?\)/g, "")
+    .replace(/[^a-z0-9\s_-]/g, " ")
+    .trim();
+  if (!raw) return "";
+  if (SECTION_KEY_ALIASES[raw]) return SECTION_KEY_ALIASES[raw];
+  const compact = raw.replace(/\s+/g, " ");
+  if (SECTION_KEY_ALIASES[compact]) return SECTION_KEY_ALIASES[compact];
+  return "";
+};
+
+const extractStructuredSectionsFromPrompt = (promptText) => {
+  const lines = String(promptText || "")
+    .split(/\n+/)
+    .map((line) => String(line || "").trim())
+    .filter(Boolean);
+  const sections = [];
+  let inSectionsBlock = false;
+  const pushSection = (value) => {
+    const normalized = normalizeSectionKey(value);
+    if (!normalized || sections.includes(normalized)) return;
+    sections.push(normalized);
+  };
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    const isSectionHeader = /^(include|required|add)?\s*sections?\s*:/.test(lower);
+    if (isSectionHeader) {
+      inSectionsBlock = true;
+        const afterColon = line.split(":").slice(1).join(":").trim();
+        if (afterColon) {
+          afterColon
+          .split(/[,|]/)
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .forEach(pushSection);
+        }
+      continue;
+    }
+
+    const bulletCandidate = line.replace(/^[-*•\d.)\s]+/, "").trim();
+    const looksLikeStandaloneSection = /^[a-z][a-z0-9\s_-]{1,40}$/i.test(bulletCandidate);
+    if (inSectionsBlock && looksLikeStandaloneSection) {
+      pushSection(bulletCandidate);
+      continue;
+    }
+
+    if (inSectionsBlock && /^[a-z][a-z0-9\s_-]{1,40}\s*:/i.test(line)) {
+      const headingOnly = line.replace(/:.*/, "").trim();
+      pushSection(headingOnly);
+      continue;
+    }
+
+    if (inSectionsBlock && /^(brand|style|tone|color|colors)\b/i.test(lower)) {
+      inSectionsBlock = false;
+    }
+  }
+
+  return sections.slice(0, 12);
+};
+
+const parseStructuredBusinessPrompt = (promptText) => {
+  const result = {
+    businessName: "",
+    industry: "",
+    pages: [],
+    services: [],
+    contact: {},
+    style: "",
+    colors: [],
+    features: [],
+  };
+  const lines = String(promptText || "")
+    .split(/\n/)
+    .map((line) => String(line || "").trim());
+  let currentBlock = "";
+  const pushUnique = (list, value, max = 20) => {
+    const safe = String(value || "").trim();
+    if (!safe) return;
+    if (!list.includes(safe) && list.length < max) list.push(safe);
+  };
+  const normalizeBlockLabel = (label) => {
+    const normalized = String(label || "").trim().toLowerCase();
+    if (["pages", "sections", "services", "features", "contact"].includes(normalized)) return normalized;
+    return "";
+  };
+  const assignStructuredValue = (label, value) => {
+    if (label === "business name" || label === "company name" || label === "brand name") {
+      result.businessName = value;
+      currentBlock = "";
+      return true;
+    }
+    if (label === "industry") {
+      result.industry = value;
+      currentBlock = "";
+      return true;
+    }
+    if (label === "phone") {
+      result.contact.phone = value;
+      currentBlock = "contact";
+      return true;
+    }
+    if (label === "email") {
+      result.contact.email = value;
+      currentBlock = "contact";
+      return true;
+    }
+    if (label === "contact person" || label === "contact" || label === "owner") {
+      if (value) result.contact.person = value;
+      currentBlock = "contact";
+      return true;
+    }
+    if (label === "style" || label === "design style") {
+      result.style = value;
+      currentBlock = "";
+      return true;
+    }
+    if (label === "colors" || label === "brand colors" || label === "color scheme") {
+      result.colors = value
+        .split(/[,|]/)
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .slice(0, 12);
+      currentBlock = "";
+      return true;
+    }
+    const blockLabel = normalizeBlockLabel(label);
+    if (!blockLabel) return false;
+    currentBlock = blockLabel;
+    value
+      .split(/[,|]/)
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .forEach((token) => {
+        if (blockLabel === "pages") pushUnique(result.pages, token, 24);
+        if (blockLabel === "services") pushUnique(result.services, token, 24);
+        if (blockLabel === "sections" || blockLabel === "features") pushUnique(result.features, token, 24);
+      });
+    return true;
+  };
+
+  lines.forEach((line) => {
+    if (!line) return;
+    const normalizedLine = line.replace(/^[-*•\d.)\s]+/, "").trim();
+    const kv = normalizedLine.match(/^([a-z][a-z0-9\s&/_-]{1,60})\s*:\s*(.*)$/i);
+    if (kv) {
+      const label = kv[1].trim().toLowerCase();
+      const value = kv[2].trim();
+      if (assignStructuredValue(label, value)) return;
+    }
+
+    const bullet = normalizedLine;
+    if (!bullet) return;
+    if (currentBlock === "pages") {
+      pushUnique(result.pages, bullet, 24);
+      return;
+    }
+    if (currentBlock === "services") {
+      pushUnique(result.services, bullet, 24);
+      return;
+    }
+    if (currentBlock === "sections" || currentBlock === "features") {
+      pushUnique(result.features, bullet, 24);
+      return;
+    }
+    if (currentBlock === "contact") {
+      const bulletKv = bullet.match(/^([a-z][a-z0-9\s&/_-]{1,60})\s*:\s*(.+)$/i);
+      if (bulletKv) {
+        const bulletLabel = bulletKv[1].trim().toLowerCase();
+        const bulletValue = bulletKv[2].trim();
+        if (assignStructuredValue(bulletLabel, bulletValue)) return;
+      }
+      if (/@/.test(bullet)) result.contact.email = bullet.replace(/^email\s*:\s*/i, "").trim();
+      else if (/\+?\d[\d\s().-]{6,}/.test(bullet)) result.contact.phone = bullet.replace(/^phone\s*:\s*/i, "").trim();
+      else if (!result.contact.person) result.contact.person = bullet.replace(/^contact person\s*:\s*/i, "").trim();
+      return;
+    }
+  });
+
+  return result;
+};
+
+const inferConversionLayoutSections = (industryText) => {
+  const lower = String(industryText || "").toLowerCase();
+  if (/(saas|software|startup|ai|tech|platform)/.test(lower)) {
+    return ["hero", "features", "pricing", "testimonials", "faq", "cta", "contact_form"];
+  }
+  if (/(health|healthcare|medical|clinic|hcbs|care|therapy|rehab)/.test(lower)) {
+    return ["hero", "services", "about", "testimonials", "faq", "contact_form", "cta"];
+  }
+  if (/(ecommerce|store|shop|retail|products|catalog)/.test(lower)) {
+    return ["hero", "features", "pricing", "testimonials", "cta", "contact_form"];
+  }
+  if (/(agency|consult|law|attorney|real estate|realtor)/.test(lower)) {
+    return ["hero", "services", "about", "testimonials", "faq", "cta", "contact_form"];
+  }
+  return ["hero", "features", "services", "pricing", "testimonials", "faq", "cta", "contact_form"];
+};
+
+const derivePromptIntelligence = ({
+  rawPrompt = "",
+  parsedPrompt = {},
+  industryHint = "",
+  packagePages = [],
+  packageServices = [],
+} = {}) => {
+  const normalizedPrompt = String(rawPrompt || "").trim();
+  const structuredSections = extractStructuredSectionsFromPrompt(normalizedPrompt);
+  const inferredIndustry = String(parsedPrompt?.industry || industryHint || "").trim();
+  const suggestedSections =
+    structuredSections.length > 0
+      ? structuredSections
+      : inferConversionLayoutSections(inferredIndustry).map((token) => normalizeSectionKey(token) || token);
+  const suggestedPages =
+    Array.isArray(parsedPrompt?.pages) && parsedPrompt.pages.length > 0
+      ? parsedPrompt.pages
+      : Array.isArray(packagePages) && packagePages.length > 0
+        ? packagePages
+        : ["Home", "About", "Services", "Pricing", "Contact"];
+  const suggestedServices =
+    Array.isArray(parsedPrompt?.services) && parsedPrompt.services.length > 0
+      ? parsedPrompt.services
+      : Array.isArray(packageServices) && packageServices.length > 0
+        ? packageServices.slice(0, 6)
+        : ["Core Service 1", "Core Service 2", "Core Service 3"];
+  const lower = normalizedPrompt.toLowerCase();
+  const featureSet = new Set();
+  if (/(book|booking|appointment|calendar|schedule)/.test(lower)) featureSet.add("booking");
+  if (/(crm|lead|pipeline|contacts)/.test(lower)) featureSet.add("crm");
+  if (/(pay|payment|checkout|invoice|billing|stripe)/.test(lower)) featureSet.add("payments");
+  if (/(seo|keyword|ranking|search)/.test(lower)) featureSet.add("seo");
+  if (/(email|automation|drip|campaign)/.test(lower)) featureSet.add("email_automation");
+  if (/(analytics|metrics|dashboard|tracking)/.test(lower)) featureSet.add("analytics");
+  if (/(hcbs|care|health|medical|clinic)/.test(lower)) {
+    featureSet.add("booking");
+    featureSet.add("crm");
+    featureSet.add("payments");
+    featureSet.add("email_automation");
+  }
+  const missing = [];
+  if (!String(parsedPrompt?.businessName || "").trim()) missing.push({ key: "business_name", label: "Business Name" });
+  if (!String(parsedPrompt?.industry || "").trim()) missing.push({ key: "industry", label: "Industry" });
+  if (!Array.isArray(parsedPrompt?.pages) || parsedPrompt.pages.length === 0) missing.push({ key: "pages", label: "Pages" });
+  if (!Array.isArray(parsedPrompt?.services) || parsedPrompt.services.length === 0) missing.push({ key: "services", label: "Services" });
+  const hasContact =
+    String(parsedPrompt?.contact?.phone || "").trim() ||
+    String(parsedPrompt?.contact?.email || "").trim() ||
+    String(parsedPrompt?.contact?.person || "").trim();
+  if (!hasContact) missing.push({ key: "contact", label: "Contact Details" });
+  if (!String(parsedPrompt?.style || "").trim()) missing.push({ key: "style", label: "Design Style" });
+  if (!Array.isArray(parsedPrompt?.colors) || parsedPrompt.colors.length === 0) missing.push({ key: "colors", label: "Color Scheme" });
+  const structureSignals =
+    Number(Boolean(parsedPrompt?.businessName)) +
+    Number(Boolean(parsedPrompt?.industry)) +
+    Number((parsedPrompt?.pages || []).length > 0) +
+    Number((parsedPrompt?.services || []).length > 0) +
+    Number(Boolean(hasContact)) +
+    Number(Boolean(parsedPrompt?.style)) +
+    Number((parsedPrompt?.colors || []).length > 0);
+  const score = Math.max(10, Math.min(100, 32 + structureSignals * 9 + Math.min(20, featureSet.size * 3) - missing.length * 4));
+  return {
+    score,
+    missing,
+    suggestedSections: suggestedSections.slice(0, 12),
+    suggestedPages: suggestedPages.slice(0, 12),
+    suggestedServices: suggestedServices.slice(0, 8),
+    inferredFeatures: Array.from(featureSet),
+  };
+};
+
+const buildInstantSectionTemplate = ({ sectionType, projectName, promptText, parsedPrompt }) => {
+  const normalizedType = normalizeSectionKey(sectionType) || String(sectionType || "").toLowerCase().trim();
+  const safeProject = String(projectName || "Your Business").trim() || "Your Business";
+  const safePrompt = String(promptText || "").trim();
+  const promptSnippet = safePrompt ? safePrompt.slice(0, 120) : "Built from your prompt details.";
+
+  if (normalizedType === "hero") {
+    return {
+      type: "hero",
+      title: `${safeProject} Website`,
+      subtitle: promptSnippet,
+      cta: "Get Started",
+    };
+  }
+  if (normalizedType === "features") {
+    return { type: "features", items: ["Fast setup", "Modern design", "Conversion-focused sections"] };
+  }
+  if (normalizedType === "services") {
+    const items =
+      Array.isArray(parsedPrompt?.services) && parsedPrompt.services.length > 0
+        ? parsedPrompt.services.slice(0, 8)
+        : ["Core Service 1", "Core Service 2", "Core Service 3"];
+    return { type: "services", items };
+  }
+  if (normalizedType === "pricing") {
+    return {
+      type: "pricing",
+      plans: [
+        { name: "Starter", price: "$99" },
+        { name: "Growth", price: "$249" },
+        { name: "Scale", price: "$499" },
+      ],
+    };
+  }
+  if (normalizedType === "testimonials") {
+    return { type: "testimonials", items: ["Trusted by teams", "Excellent support", "Fast results"] };
+  }
+  if (normalizedType === "faq") {
+    return { type: "faq", items: ["What is included?", "How fast can we launch?", "Can this be customized?"] };
+  }
+  if (normalizedType === "contact_form") {
+    const contactPerson = String(parsedPrompt?.contact?.person || "").trim();
+    const phone = String(parsedPrompt?.contact?.phone || "").trim();
+    const email = String(parsedPrompt?.contact?.email || "").trim();
+    const contactBits = [contactPerson, phone, email].filter(Boolean).join(" • ");
+    return {
+      type: "contact_form",
+      title: "Contact Us",
+      subtitle: contactBits
+        ? `Reach us directly: ${contactBits}`
+        : "Send us your details and we will follow up quickly.",
+    };
+  }
+  if (normalizedType === "booking_widget") {
+    return { type: "booking_widget", title: "Book a Consultation" };
+  }
+  if (normalizedType === "cta") {
+    return { type: "cta", text: "Launch Now" };
+  }
+  if (normalizedType === "about") {
+    return { type: "about", title: `About ${safeProject}`, subtitle: "Our mission, approach, and values." };
+  }
+  if (normalizedType === "gallery") {
+    return { type: "gallery", items: ["Showcase Item 1", "Showcase Item 2", "Showcase Item 3"] };
+  }
+  return { type: normalizedType || "custom", title: normalizedType || "Section", subtitle: promptSnippet };
+};
+
+const buildInstantPagesFromPrompt = ({ projectName, promptText, pageNames, structuredSections, parsedPrompt }) => {
+  const sections = structuredSections.length > 0
+    ? structuredSections
+    : ["hero", "features", "services", "pricing", "testimonials", "faq", "cta", "contact_form"];
+  const uniquePages = Array.from(new Set(pageNames.filter(Boolean))).slice(0, 16);
+  return uniquePages.map((pageName) => ({
+    name: pageName,
+    sections: sections.map((sectionType) =>
+      buildInstantSectionTemplate({ sectionType, projectName, promptText, parsedPrompt })
+    ),
+  }));
+};
+
+const POWER_PROMPT_MARKER = "[TITONOVA_POWER_BRIEF]";
+const POWER_PROMPT_DEFAULT_SECTIONS = [
+  "hero",
+  "features",
+  "services",
+  "pricing",
+  "testimonials",
+  "faq",
+  "cta",
+  "contact_form",
+];
+
 export default function Dashboard() {
 
   const [projectName, setProjectName] = useState("");
@@ -631,13 +1038,31 @@ export default function Dashboard() {
   const [mapQueryInput, setMapQueryInput] = useState("");
   const [themeColors, setThemeColors] = useState({ ...DEFAULT_THEME_COLORS });
   const [textStyle, setTextStyle] = useState({ ...DEFAULT_TEXT_STYLE });
-  const [isInlineEditing, setIsInlineEditing] = useState(false);
+  const [exportFramework, setExportFramework] = useState("html");
+  const [exportBundleLoading, setExportBundleLoading] = useState(false);
+  const [isInlineEditing, setIsInlineEditing] = useState(true);
   const [draftHtml, setDraftHtml] = useState("");
-  const [_editHistory, setEditHistory] = useState([]);
+  const [editHistory, setEditHistory] = useState([]);
+  const [redoHistory, setRedoHistory] = useState([]);
+  const [inlineDraftDirty, setInlineDraftDirty] = useState(false);
+  const [inlineSmartCommand, setInlineSmartCommand] = useState("");
+  const [inlineSmartStatus, setInlineSmartStatus] = useState("");
+  const [inlineSelectionText, setInlineSelectionText] = useState("");
+  const [inlineSelectionSection, setInlineSelectionSection] = useState("");
+  const [inlineSuggestions, setInlineSuggestions] = useState([]);
+  const [inlineAutoApplyHighConfidence, setInlineAutoApplyHighConfidence] = useState(false);
+  const [inlineAdvancedOpen, setInlineAdvancedOpen] = useState(false);
+  const [inlineBulkImproving, setInlineBulkImproving] = useState(false);
+  const [inlineLastPublishSnapshot, setInlineLastPublishSnapshot] = useState(null);
+  const [inlineCheckpoints, setInlineCheckpoints] = useState([]);
   const [fieldLockMode, setFieldLockMode] = useState(true);
   const [commandPaneWidth, setCommandPaneWidth] = useState(460);
   const [isResizingPane, setIsResizingPane] = useState(false);
   const [showAdvancedTools, setShowAdvancedTools] = useState(false);
+  const [powerPromptEnabled, setPowerPromptEnabled] = useState(true);
+  const [ultraSmartModeEnabled, setUltraSmartModeEnabled] = useState(true);
+  const [lastGenerationPlan, setLastGenerationPlan] = useState(null);
+  const [lastGenerationAudit, setLastGenerationAudit] = useState(null);
   const [businessGeneratorLoading, setBusinessGeneratorLoading] = useState(false);
   const [businessGeneratorOutput, setBusinessGeneratorOutput] = useState(null);
   const [pipelineRunning, setPipelineRunning] = useState(false);
@@ -675,13 +1100,334 @@ export default function Dashboard() {
   const [invoiceServiceInput, setInvoiceServiceInput] = useState("Full Detail");
   const [invoiceAmountInput, setInvoiceAmountInput] = useState("150");
   const previewEditableRef = useRef(null);
+  const inlineHoverNodeRef = useRef(null);
   const appShellRef = useRef(null);
+  const promptTextareaRef = useRef(null);
 
   const selectedAutomationDefs = AUTOMATION_PAGE_DEFS.filter(
     (page) => Boolean(automationFeatures[page.key]) || (autoRevenueFeatures && REVENUE_MODULE_KEYS.includes(page.key))
   );
   const selectedIndustryPackage = INDUSTRY_TEMPLATE_PACKAGES.find((pkg) => pkg.key === industryTemplate) || INDUSTRY_TEMPLATE_PACKAGES[0];
   const selectedIndustryBlueprint = selectedIndustryPackage?.blueprint || null;
+  const buildPowerPromptBrief = (rawPrompt, options = {}) => {
+    const base = String(rawPrompt || "").trim();
+    if (!base) return "";
+    if (base.includes(POWER_PROMPT_MARKER)) return base;
+    const parsedPrompt = parseStructuredBusinessPrompt(base);
+    const inferredTemplateKey = inferIndustryTemplateFromPrompt(base);
+    const inferredPackage =
+      INDUSTRY_TEMPLATE_PACKAGES.find((pkg) => pkg.key === inferredTemplateKey) || selectedIndustryPackage;
+    const industryLabel = String(options.industryLabel || inferredPackage?.label || "Professional Services");
+    const promptIntel = derivePromptIntelligence({
+      rawPrompt: base,
+      parsedPrompt,
+      industryHint: industryLabel,
+      packagePages: inferredPackage?.blueprint?.pages || [],
+      packageServices: inferredPackage?.blueprint?.services || [],
+    });
+    const promptSections = extractStructuredSectionsFromPrompt(base);
+    const requiredSections = promptSections.length > 0 ? promptSections : (promptIntel.suggestedSections.length > 0 ? promptIntel.suggestedSections : POWER_PROMPT_DEFAULT_SECTIONS);
+    const mode = String(options.solutionMode || solutionMode || "website-app");
+    const requiredPages = (Array.isArray(parsedPrompt.pages) && parsedPrompt.pages.length > 0)
+      ? parsedPrompt.pages.join(", ")
+      : promptIntel.suggestedPages.length > 0
+        ? promptIntel.suggestedPages.join(", ")
+      : mode === "website"
+        ? "Home, About, Services, Pricing, Contact, Landing Page, Blog"
+        : mode === "app"
+          ? "Client Dashboard, Login Portal, Booking, Payments, CRM, Analytics"
+          : "Home, About, Services, Pricing, Contact, Landing Page, Blog, Client Dashboard, Login Portal, Booking, Payments, CRM, Analytics";
+    const projectLabel = String(
+      options.projectName || parsedPrompt.businessName || projectName || "Generated Business"
+    ).trim();
+    const serviceList = ((parsedPrompt.services || []).length > 0 ? parsedPrompt.services : promptIntel.suggestedServices).join(", ");
+    const contactBits = [parsedPrompt.contact?.person, parsedPrompt.contact?.phone, parsedPrompt.contact?.email]
+      .filter(Boolean)
+      .join(" | ");
+    const styleLine = [parsedPrompt.style, (parsedPrompt.colors || []).join(", ")].filter(Boolean).join(" | ");
+    const featureLine = (parsedPrompt.features || []).join(", ");
+    return `${POWER_PROMPT_MARKER}
+Project: ${projectLabel}
+Industry: ${industryLabel}
+Generation mode: ${mode}
+
+USER REQUEST:
+${base}
+
+SECTIONS:
+${requiredSections.join(", ")}
+
+REQUIRED PAGES:
+${requiredPages}
+
+STRUCTURED PROMPT DATA:
+- Business name: ${parsedPrompt.businessName || projectLabel}
+- Industry: ${parsedPrompt.industry || industryLabel}
+- Services: ${serviceList || "Use industry-standard service packages"}
+- Contact: ${contactBits || "Generate professional contact details placeholders"}
+- Style/colors: ${styleLine || "Modern, conversion-focused design with trustworthy brand palette"}
+- Features: ${featureLine || "Lead capture, trust signals, CTA hierarchy, conversion-focused sections"}
+
+PROMPT INTELLIGENCE:
+- Quality score: ${promptIntel.score}/100
+- Missing fields: ${promptIntel.missing.length > 0 ? promptIntel.missing.map((item) => item.label).join(", ") : "None"}
+- Suggested pages: ${promptIntel.suggestedPages.join(", ")}
+- Suggested sections: ${promptIntel.suggestedSections.join(", ")}
+- Inferred business features: ${promptIntel.inferredFeatures.length > 0 ? promptIntel.inferredFeatures.join(", ") : "booking, crm, payments, seo"}
+
+CONVERSION REQUIREMENTS:
+- Include clear primary and secondary CTAs above the fold and near each decision block.
+- Add trust signals: proof, testimonials, guarantees, and clear benefit-oriented copy.
+- Build conversion flow: Awareness -> Consideration -> Proof -> Action.
+
+QUALITY REQUIREMENTS:
+- SEO-ready headings and metadata-friendly section copy.
+- Accessibility-ready structure with readable hierarchy and inclusive wording.
+- Mobile-first layout decisions and fast-loading section structure.
+- Business-ready components for leads/bookings/payments where applicable.
+
+OUTPUT INTENT:
+Generate a complete, production-style multi-page website that follows all required sections exactly and reflects the user request in detail.`;
+  };
+
+  const buildUltraSmartGenerationPlan = ({
+    projectLabel,
+    mode,
+    parsedPrompt,
+    promptIntel,
+    industryPackage,
+    structuredSections,
+    automationDefs,
+  }) => {
+    const sectionFlowByIntent = {
+      home: ["hero", "proof", "services", "benefits", "cta"],
+      about: ["hero", "story", "team", "trust", "cta"],
+      services: ["hero", "service_grid", "outcomes", "faq", "cta"],
+      pricing: ["hero", "plans", "comparison", "guarantee", "cta"],
+      contact: ["hero", "contact_options", "form", "faq", "cta"],
+      landing: ["hero", "problem", "solution", "proof", "cta"],
+      blog: ["hero", "featured_articles", "categories", "newsletter_cta"],
+      default: ["hero", "features", "proof", "cta"],
+    };
+    const pageIntent = (name) => {
+      const lower = String(name || "").toLowerCase();
+      if (lower.includes("about")) return "about";
+      if (lower.includes("service")) return "services";
+      if (lower.includes("pricing") || lower.includes("plan")) return "pricing";
+      if (lower.includes("contact")) return "contact";
+      if (lower.includes("landing")) return "landing";
+      if (lower.includes("blog")) return "blog";
+      return "home";
+    };
+    const conversionGoalByIntent = {
+      home: "Move visitors to core CTA within first scroll depth.",
+      about: "Build trust and reduce objection risk.",
+      services: "Match service intent to clear next action.",
+      pricing: "Drive plan selection with transparent value framing.",
+      contact: "Maximize qualified leads and booked conversations.",
+      landing: "Single-goal conversion with focused CTA.",
+      blog: "Capture SEO traffic and route to offer CTA.",
+      default: "Improve clarity, trust, and conversion flow.",
+    };
+    const defaultPagesByMode =
+      mode === "website"
+        ? ["Home", "About", "Services", "Pricing", "Contact", "Landing Page", "Blog"]
+        : mode === "app"
+          ? ["Client Dashboard", "Login Portal", "Booking", "Payments", "CRM", "Analytics"]
+          : ["Home", "About", "Services", "Pricing", "Contact", "Landing Page", "Blog", "Client Dashboard", "Login Portal"];
+    const pageNames =
+      parsedPrompt?.pages?.length > 0
+        ? parsedPrompt.pages
+        : promptIntel?.suggestedPages?.length > 0
+          ? promptIntel.suggestedPages
+          : defaultPagesByMode;
+    const activeSections = Array.isArray(structuredSections) && structuredSections.length > 0
+      ? [...structuredSections]
+      : null;
+    const pagePlan = pageNames.map((name) => {
+      const intent = pageIntent(name);
+      const sections = activeSections || sectionFlowByIntent[intent] || sectionFlowByIntent.default;
+      return {
+        name,
+        intent,
+        conversion_goal: conversionGoalByIntent[intent] || conversionGoalByIntent.default,
+        section_order: sections,
+      };
+    });
+    const confidenceBase = Number(promptIntel?.score || 60);
+    const confidenceBoost =
+      (parsedPrompt?.businessName ? 6 : 0) +
+      (parsedPrompt?.industry ? 4 : 0) +
+      (Array.isArray(parsedPrompt?.pages) && parsedPrompt.pages.length > 0 ? 6 : 0) +
+      (Array.isArray(parsedPrompt?.services) && parsedPrompt.services.length > 0 ? 5 : 0) +
+      (Array.isArray(structuredSections) && structuredSections.length > 0 ? 5 : 0) +
+      (Array.isArray(automationDefs) && automationDefs.length > 0 ? 4 : 0);
+    const confidence = Math.max(65, Math.min(99, confidenceBase + confidenceBoost));
+    return {
+      engine: "TitoNova Ultra Smart Planner",
+      confidence,
+      project: {
+        name: projectLabel || parsedPrompt?.businessName || "Generated Business",
+        industry: parsedPrompt?.industry || industryPackage?.label || "General Services",
+        generation_mode: mode,
+      },
+      audience: parsedPrompt?.industry
+        ? `People searching for ${parsedPrompt.industry} services and decision-makers evaluating providers.`
+        : "High-intent visitors seeking a trustworthy provider and clear next steps.",
+      tone: parsedPrompt?.style || "Professional, modern, friendly, conversion-focused.",
+      color_direction: parsedPrompt?.colors?.length > 0 ? parsedPrompt.colors : ["Blue", "Green"],
+      required_features: [
+        ...(promptIntel?.inferredFeatures || []),
+        ...((automationDefs || []).map((item) => String(item?.label || "").toLowerCase())),
+      ].filter(Boolean),
+      page_plan: pagePlan,
+      seo_framework: {
+        keyword_clusters: promptIntel?.inferredFeatures?.includes("seo")
+          ? ["service keywords", "local intent keywords", "trust intent keywords"]
+          : ["service intent keywords", "brand keywords"],
+        metadata_rule: "Unique title + description per page with clear value proposition and CTA.",
+        schema: ["Organization", "Service", "FAQPage (where relevant)"],
+      },
+      trust_framework: [
+        "Testimonials or social proof above key CTA areas",
+        "Service guarantees and transparent process",
+        "Clear contact and response-time expectations",
+      ],
+      conversion_checks: [
+        "Primary CTA visible above the fold",
+        "Supporting CTA repeated after proof blocks",
+        "Pricing/offer clarity with low-friction next action",
+        "Contact path no more than 1 click from nav",
+      ],
+    };
+  };
+
+  const buildUltraSmartPromptClause = (plan) => {
+    if (!plan || typeof plan !== "object") return "";
+    return `
+ULTRA SMART PLANNER OUTPUT (STRICT):
+${JSON.stringify(plan)}
+
+Execution requirements:
+- Follow page_plan and section_order for each page exactly.
+- Ensure each page satisfies its conversion_goal.
+- Apply seo_framework, trust_framework, and conversion_checks across the generated output.
+- If user prompt conflicts with plan details, keep user intent and adapt while preserving conversion quality.`;
+  };
+
+  const buildSmartQaAudit = ({ promptIntel, plan, mode, automationDefs }) => {
+    const issues = [];
+    const suggestedLines = [];
+    const pageNames = Array.isArray(plan?.page_plan) ? plan.page_plan.map((page) => String(page?.name || "").trim()).filter(Boolean) : [];
+    const pageLower = pageNames.map((name) => name.toLowerCase());
+    const hasPage = (keyword) => pageLower.some((name) => name.includes(keyword));
+    const hasDuplicatePages = new Set(pageLower).size !== pageLower.length;
+    if (hasDuplicatePages) {
+      issues.push("Duplicate page names detected in plan.");
+    }
+    if (!hasPage("contact")) {
+      issues.push("No contact page detected.");
+      suggestedLines.push("Pages: Add Contact page with direct inquiry form and phone/email section.");
+    }
+    if (!hasPage("services")) {
+      issues.push("No services page detected.");
+      suggestedLines.push("Pages: Add Services page with detailed service cards and clear CTA.");
+    }
+    if (!hasPage("pricing") && mode !== "app") {
+      issues.push("No pricing page detected for website flow.");
+      suggestedLines.push("Pages: Add Pricing page with tier comparison and CTA.");
+    }
+    const weakCtaPages = (plan?.page_plan || []).filter((page) => {
+      const sections = Array.isArray(page?.section_order) ? page.section_order.map((item) => String(item || "").toLowerCase()) : [];
+      return !sections.includes("cta");
+    });
+    if (weakCtaPages.length > 0) {
+      issues.push(`Missing CTA section in ${weakCtaPages.length} page(s).`);
+      suggestedLines.push("Sections: Ensure each primary page includes a CTA section near decision points.");
+    }
+    if ((promptIntel?.missing || []).some((item) => item?.key === "contact")) {
+      issues.push("Prompt is missing structured contact details.");
+      suggestedLines.push("Contact: Add phone, email, and contact person for trust and lead routing.");
+    }
+    if (mode !== "website" && (!Array.isArray(automationDefs) || automationDefs.length === 0)) {
+      issues.push("Automation mode selected without automation modules enabled.");
+      suggestedLines.push("Features: Enable booking, CRM, payments, analytics, and email automation modules.");
+    }
+    const score = Math.max(58, Math.min(99, 98 - issues.length * 7));
+    const directives = [
+      "Enforce single H1 and semantic H2/H3 hierarchy per page.",
+      "Ensure primary CTA appears above the fold and after social proof.",
+      "Guarantee contact route in top navigation and footer.",
+      "Keep copy concise, benefit-driven, and audience-specific.",
+      ...issues.map((issue) => `Resolve QA issue: ${issue}`),
+    ];
+    return {
+      score,
+      issues,
+      directives,
+      suggestedLines: suggestedLines.filter(Boolean),
+    };
+  };
+
+  const buildSmartQaPromptClause = (audit) => {
+    if (!audit || typeof audit !== "object") return "";
+    return `
+SMART QA GUARDRAILS:
+- QA score target: ${Number(audit.score || 0)}/100 or better.
+- Mandatory directives:
+${(audit.directives || []).map((line) => `  - ${line}`).join("\n")}
+- Never omit required pages or conversion CTA blocks.
+- Output must satisfy guardrails before finalizing page content.`;
+  };
+
+  const getEffectiveBusinessPrompt = (rawPrompt, options = {}) => {
+    const base = String(rawPrompt || "").trim();
+    if (!base) return "";
+    if (!powerPromptEnabled && !options.force) return base;
+    return buildPowerPromptBrief(base, options);
+  };
+
+  const syncPromptDerivedFields = (promptValue) => {
+    const parsed = parseStructuredBusinessPrompt(promptValue);
+    const intel = derivePromptIntelligence({
+      rawPrompt: promptValue,
+      parsedPrompt: parsed,
+      industryHint: selectedIndustryPackage?.label || "",
+      packagePages: selectedIndustryPackage?.blueprint?.pages || [],
+      packageServices: selectedIndustryPackage?.blueprint?.services || [],
+    });
+    if (parsed.businessName && (!String(projectName || "").trim() || projectName === deriveProjectNameFromBusinessPrompt(promptValue))) {
+      setProjectName(parsed.businessName);
+    }
+    if (parsed.industry) {
+      const inferredFromIndustry = inferIndustryTemplateFromPrompt(parsed.industry);
+      if (inferredFromIndustry && inferredFromIndustry !== industryTemplate) {
+        setIndustryTemplate(inferredFromIndustry);
+      }
+    }
+    const featureKeyMap = {
+      booking: ["booking.html"],
+      crm: ["crm.html", "client-dashboard.html"],
+      payments: ["payments.html", "invoicing.html", "pricing.html"],
+      seo: ["seo-pages.html", "marketing-pages.html"],
+      analytics: ["analytics.html"],
+      email_automation: ["email-automation.html"],
+    };
+    const inferredFeatureKeys = intel.inferredFeatures
+      .flatMap((feature) => featureKeyMap[feature] || [])
+      .filter(Boolean);
+    if (inferredFeatureKeys.length > 0) {
+      setSolutionMode("website-app");
+      setAutomationFeatures((previous) => {
+        const next = { ...previous };
+        inferredFeatureKeys.forEach((key) => {
+          if (Object.prototype.hasOwnProperty.call(next, key)) next[key] = true;
+        });
+        return next;
+      });
+    }
+  };
+
   const bookingSlots = String(bookingSlotsInput || "")
     .split(",")
     .map((slot) => slot.trim())
@@ -692,6 +1438,84 @@ export default function Dashboard() {
     .map((service) => service.trim())
     .filter(Boolean)
     .slice(0, 8);
+  const parsedPromptPreview = useMemo(
+    () => parseStructuredBusinessPrompt(businessOsPrompt),
+    [businessOsPrompt]
+  );
+  const promptIntelligence = useMemo(
+    () =>
+      derivePromptIntelligence({
+        rawPrompt: businessOsPrompt,
+        parsedPrompt: parsedPromptPreview,
+        industryHint: selectedIndustryPackage?.label || "",
+        packagePages: selectedIndustryPackage?.blueprint?.pages || [],
+        packageServices: selectedIndustryPackage?.blueprint?.services || [],
+      }),
+    [businessOsPrompt, parsedPromptPreview, selectedIndustryPackage]
+  );
+  const parsedPromptPreviewText = useMemo(
+    () => JSON.stringify(parsedPromptPreview, null, 2),
+    [parsedPromptPreview]
+  );
+  const ultraSmartPlanPreview = useMemo(() => {
+    if (!ultraSmartModeEnabled) return null;
+    const structuredSections = extractStructuredSectionsFromPrompt(businessOsPrompt);
+    return buildUltraSmartGenerationPlan({
+      projectLabel: projectName,
+      mode: solutionMode,
+      parsedPrompt: parsedPromptPreview,
+      promptIntel: promptIntelligence,
+      industryPackage: selectedIndustryPackage,
+      structuredSections,
+      automationDefs: selectedAutomationDefs,
+    });
+  }, [
+    ultraSmartModeEnabled,
+    businessOsPrompt,
+    projectName,
+    solutionMode,
+    parsedPromptPreview,
+    promptIntelligence,
+    selectedIndustryPackage,
+    selectedAutomationDefs,
+  ]);
+  const ultraSmartPlanPreviewText = useMemo(
+    () => JSON.stringify(lastGenerationPlan || ultraSmartPlanPreview || {}, null, 2),
+    [lastGenerationPlan, ultraSmartPlanPreview]
+  );
+  const smartQaAuditPreview = useMemo(() => {
+    const plan = lastGenerationPlan || ultraSmartPlanPreview;
+    if (!plan) return null;
+    return buildSmartQaAudit({
+      promptIntel: promptIntelligence,
+      plan,
+      mode: solutionMode,
+      automationDefs: selectedAutomationDefs,
+    });
+  }, [
+    lastGenerationPlan,
+    ultraSmartPlanPreview,
+    promptIntelligence,
+    solutionMode,
+    selectedAutomationDefs,
+  ]);
+
+  const handleAutoFixSmartGaps = () => {
+    const audit = smartQaAuditPreview;
+    if (!audit || !Array.isArray(audit.suggestedLines) || audit.suggestedLines.length === 0) {
+      setPublishStatus("info");
+      setPublishMessage("Smart QA found no critical gaps to auto-fix.");
+      return;
+    }
+    const current = String(businessOsPrompt || "").trim();
+    const additions = audit.suggestedLines.filter(Boolean);
+    const nextPrompt = `${current}\n\n${additions.join("\n")}`.slice(0, 5000);
+    setBusinessOsPrompt(nextPrompt);
+    setUiDesignPrompt(nextPrompt);
+    syncPromptDerivedFields(nextPrompt);
+    setPublishStatus("success");
+    setPublishMessage(`Smart QA auto-fixed ${additions.length} gap${additions.length === 1 ? "" : "s"} in the prompt.`);
+  };
   const crmStageCounts = CRM_LEAD_STAGES.reduce((acc, stage) => {
     acc[stage] = crmCustomers.filter((item) => item.stage === stage).length;
     return acc;
@@ -761,6 +1585,641 @@ export default function Dashboard() {
     if (/(faq|questions|help)/i.test(joined)) set.add("FAQ");
     if (/(gallery|portfolio|projects)/i.test(joined)) set.add("Gallery");
     return Array.from(set);
+  };
+
+  const absolutizeCloneUrl = (value, baseUrl = "") => {
+    try {
+      if (!value) return "";
+      const next = baseUrl ? new URL(value, baseUrl) : new URL(value);
+      if (!/^https?:$/i.test(next.protocol)) return "";
+      next.hash = "";
+      return next.toString();
+    } catch {
+      return "";
+    }
+  };
+
+  const extractInternalLinksFromHtml = (html, baseUrl) => {
+    if (!html || !baseUrl) return [];
+    try {
+      const origin = new URL(baseUrl).origin;
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(String(html), "text/html");
+      const anchors = Array.from(doc.querySelectorAll("a[href]"));
+      const links = anchors
+        .map((node) => absolutizeCloneUrl(node.getAttribute("href") || "", baseUrl))
+        .filter(Boolean)
+        .filter((href) => {
+          try {
+            const parsed = new URL(href);
+            if (parsed.origin !== origin) return false;
+            if (!/^https?:$/i.test(parsed.protocol)) return false;
+            if (/\.(pdf|zip|rar|7z|mp4|mp3|avi|mov)$/i.test(parsed.pathname)) return false;
+            return true;
+          } catch {
+            return false;
+          }
+        })
+        .map((href) => {
+          const parsed = new URL(href);
+          parsed.search = "";
+          parsed.hash = "";
+          return parsed.toString();
+        });
+      return Array.from(new Set(links)).slice(0, 80);
+    } catch {
+      return [];
+    }
+  };
+
+  const extractAssetManifestFromHtml = (html, baseUrl) => {
+    const empty = { images: [], css: [], js: [], fonts: [], videos: [], icons: [] };
+    if (!html || !baseUrl) return empty;
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(String(html), "text/html");
+      const toAbs = (value) => absolutizeCloneUrl(value, baseUrl);
+      const uniq = (items) => Array.from(new Set(items.filter(Boolean)));
+
+      const images = uniq(
+        Array.from(doc.querySelectorAll("img[src], source[srcset], [style*='background-image']"))
+          .map((node) => {
+            if (node.hasAttribute("src")) return toAbs(node.getAttribute("src") || "");
+            if (node.hasAttribute("srcset")) return toAbs(String(node.getAttribute("srcset") || "").split(",")[0].trim().split(" ")[0]);
+            const style = String(node.getAttribute("style") || "");
+            const match = style.match(/url\((['"]?)(.*?)\1\)/i);
+            return match ? toAbs(match[2]) : "";
+          })
+      );
+      const css = uniq(Array.from(doc.querySelectorAll("link[rel~='stylesheet'][href]")).map((node) => toAbs(node.getAttribute("href") || "")));
+      const js = uniq(Array.from(doc.querySelectorAll("script[src]")).map((node) => toAbs(node.getAttribute("src") || "")));
+      const fonts = uniq(
+        Array.from(doc.querySelectorAll("link[rel*='preload'][as='font'][href], link[href*='fonts'], style"))
+          .map((node) => {
+            if (node.hasAttribute("href")) return toAbs(node.getAttribute("href") || "");
+            const text = String(node.textContent || "");
+            const match = text.match(/url\((['"]?)(.*?)\1\)/i);
+            return match ? toAbs(match[2]) : "";
+          })
+      );
+      const videos = uniq(Array.from(doc.querySelectorAll("video[src], source[src]")).map((node) => toAbs(node.getAttribute("src") || "")));
+      const icons = uniq(Array.from(doc.querySelectorAll("link[rel*='icon'][href], svg use[href], svg use[xlink\\:href]")).map((node) => toAbs(node.getAttribute("href") || node.getAttribute("xlink:href") || "")));
+
+      return {
+        images: images.slice(0, 120),
+        css: css.slice(0, 80),
+        js: js.slice(0, 80),
+        fonts: fonts.slice(0, 60),
+        videos: videos.slice(0, 40),
+        icons: icons.slice(0, 40),
+      };
+    } catch {
+      return empty;
+    }
+  };
+
+  const summarizeDomForClone = (html) => {
+    const fallback = {
+      title: "",
+      sectionLabels: [],
+      componentHints: [],
+      layoutHints: [],
+      contentMap: { hero: [], features: [], cta: [], pricing: [], faq: [] },
+    };
+    if (!html) return fallback;
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(String(html), "text/html");
+      const title = String(doc.querySelector("title")?.textContent || "").trim();
+      const sectionNodes = Array.from(doc.querySelectorAll("header, nav, section, main, article, aside, footer"));
+      const sectionLabels = sectionNodes
+        .map((node) => {
+          const id = String(node.getAttribute("id") || "");
+          const cls = String(node.getAttribute("class") || "");
+          const aria = String(node.getAttribute("aria-label") || "");
+          const heading = String(node.querySelector("h1,h2,h3")?.textContent || "").trim();
+          return [id, cls, aria, heading].filter(Boolean).join(" ").trim();
+        })
+        .filter(Boolean)
+        .slice(0, 36);
+
+      const hintSelectors = [
+        ["form", "form"],
+        ["button,[role='button']", "cta_button"],
+        ["[class*='card'],[data-card],article", "card"],
+        ["[class*='testimonial'],[id*='testimonial']", "testimonial"],
+        ["[class*='pricing'],[id*='pricing']", "pricing"],
+        ["details,[class*='faq'],[id*='faq']", "faq"],
+        ["[class*='hero'],[id*='hero'],header h1", "hero"],
+        ["nav a", "navigation_link"],
+      ];
+      const componentHints = hintSelectors
+        .filter(([selector]) => doc.querySelector(selector))
+        .map(([, token]) => token);
+
+      const layoutHints = [];
+      const nodeClassBlob = sectionNodes.map((node) => String(node.getAttribute("class") || "")).join(" ").toLowerCase();
+      if (/(grid|col-|columns|masonry)/.test(nodeClassBlob)) layoutHints.push("grid");
+      if (/(flex|row|stack|inline)/.test(nodeClassBlob)) layoutHints.push("flex");
+      if (/(container|wrapper|shell)/.test(nodeClassBlob)) layoutHints.push("container");
+      if (layoutHints.length === 0) layoutHints.push("flow");
+
+      const textFor = (selector) =>
+        Array.from(doc.querySelectorAll(selector))
+          .map((node) => String(node.textContent || "").replace(/\s+/g, " ").trim())
+          .filter(Boolean)
+          .slice(0, 6);
+
+      const contentMap = {
+        hero: textFor("header h1, [class*='hero'] h1, [id*='hero'] h1, main h1"),
+        features: textFor("[class*='feature'] h2, [id*='feature'] h2, section h2"),
+        cta: textFor("a[class*='btn'], button, [class*='cta']"),
+        pricing: textFor("[class*='pricing'] h2, [id*='pricing'] h2, [class*='plan'] h3"),
+        faq: textFor("details summary, [class*='faq'] h3, [id*='faq'] h3"),
+      };
+
+      return { title, sectionLabels, componentHints, layoutHints, contentMap };
+    } catch {
+      return fallback;
+    }
+  };
+
+  const detectReusableClonePatterns = (pageSummaries = []) => {
+    const patternCount = {};
+    pageSummaries.forEach((page) => {
+      const uniqueTokens = Array.from(new Set([...(page?.componentHints || []), ...(page?.layoutHints || [])]));
+      uniqueTokens.forEach((token) => {
+        patternCount[token] = (patternCount[token] || 0) + 1;
+      });
+    });
+    return Object.entries(patternCount)
+      .filter(([, count]) => count >= 2)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 16)
+      .map(([token, count]) => ({ token, pageCount: count }));
+  };
+
+  const renderClonePageViaGateway = async (url) => {
+    const response = await fetch("/api/clone/render", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        waitUntil: "networkidle",
+        timeoutMs: 45000,
+        maxLinks: 80,
+        viewportWidth: 1440,
+        viewportHeight: 900,
+        includeComputedStyles: true,
+        styleSampleLimit: 1400,
+        includeVisionAnalysis: true,
+        includeScreenshot: false,
+        componentRepeatThreshold: 4,
+        includeResponsiveDetection: true,
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = String(payload?.error || "headless render failed");
+      throw new Error(message);
+    }
+    return payload;
+  };
+
+  const crawlWebsiteViaGateway = async (startUrl, options = {}) => {
+    const response = await fetch("/api/clone/crawl", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: startUrl,
+        maxPages: Math.max(1, Number(options.maxPages || 12)),
+        waitUntil: "networkidle",
+        timeoutMs: 45000,
+        maxLinks: 80,
+        viewportWidth: 1440,
+        viewportHeight: 900,
+        includeComputedStyles: true,
+        styleSampleLimit: 1400,
+        includeVisionAnalysis: true,
+        includeScreenshot: false,
+        componentRepeatThreshold: 4,
+        includeResponsiveDetection: true,
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = String(payload?.error || "multi-page crawl failed");
+      throw new Error(message);
+    }
+    return payload;
+  };
+
+  const crawlWebsiteForClone = async (startUrl, options = {}) => {
+    const maxPages = Math.max(1, Number(options.maxPages || 12));
+    try {
+      const gatewayCrawl = await crawlWebsiteViaGateway(startUrl, { maxPages });
+      const gatewayPages = Array.isArray(gatewayCrawl?.pages) ? gatewayCrawl.pages : [];
+      if (gatewayPages.length > 0) {
+        const assetRollup = { images: new Set(), css: new Set(), js: new Set(), fonts: new Set(), videos: new Set(), icons: new Set() };
+        const pages = gatewayPages.map((page) => {
+          const html = String(page?.html || "");
+          const domSummary = summarizeDomForClone(html);
+          const normalizedAssets = page?.assets && typeof page.assets === "object"
+            ? page.assets
+            : extractAssetManifestFromHtml(html, String(page?.url || startUrl));
+          Object.entries(normalizedAssets).forEach(([key, list]) => {
+            if (!assetRollup[key] || !Array.isArray(list)) return;
+            list.forEach((item) => assetRollup[key].add(item));
+          });
+          const computedStyles = page?.computed_styles && typeof page.computed_styles === "object" ? page.computed_styles : null;
+          const domComponentTree = page?.dom_component_tree && typeof page.dom_component_tree === "object" ? page.dom_component_tree : null;
+          return {
+            url: String(page?.url || startUrl),
+            renderMode: String(page?.mode || "headless-browser-render"),
+            title: String(page?.title || domSummary.title || ""),
+            sectionLabels: domSummary.sectionLabels,
+            componentHints: domSummary.componentHints,
+            layoutHints: domSummary.layoutHints,
+            contentMap: domSummary.contentMap,
+            computedStyleSummary: computedStyles
+              ? {
+                  totalElements: Number(computedStyles.total_elements || 0),
+                  sampledElements: Number(computedStyles.sampled_elements || 0),
+                  truncated: Boolean(computedStyles.truncated),
+                  displayHistogram: computedStyles.display_histogram || {},
+                  tagHistogram: computedStyles.tag_histogram || {},
+                }
+              : null,
+            domComponentTreeSummary: domComponentTree
+              ? {
+                  flatSections: Array.isArray(domComponentTree.flat_sections) ? domComponentTree.flat_sections : [],
+                  totalVisitedNodes: Number(domComponentTree.total_visited_nodes || 0),
+                  truncated: Boolean(domComponentTree.truncated),
+                }
+              : null,
+            layoutAnalysis: page?.layout_analysis && typeof page.layout_analysis === "object" ? page.layout_analysis : null,
+            visionAnalysis: page?.vision_analysis && typeof page.vision_analysis === "object" ? page.vision_analysis : null,
+            componentDetection: page?.component_detection && typeof page.component_detection === "object" ? page.component_detection : null,
+            responsiveDetection: page?.responsive_detection && typeof page.responsive_detection === "object" ? page.responsive_detection : null,
+            links: Array.isArray(page?.internal_links) ? page.internal_links.slice(0, 40) : [],
+            assetCounts: page?.asset_counts && typeof page.asset_counts === "object"
+              ? page.asset_counts
+              : Object.fromEntries(Object.entries(normalizedAssets).map(([key, list]) => [key, Array.isArray(list) ? list.length : 0])),
+          };
+        });
+        return {
+          crawlMode: "server-multi-page-crawl",
+          renderStats: {
+            headlessRenderedCount: pages.length,
+            fallbackFetchCount: 0,
+          },
+          pages,
+          failedPages: Array.isArray(gatewayCrawl?.failed_pages) ? gatewayCrawl.failed_pages.slice(0, 12) : [],
+          reusableComponents: detectReusableClonePatterns(pages),
+          assets: Object.fromEntries(
+            Object.entries(assetRollup).map(([key, set]) => [key, Array.from(set).slice(0, 160)])
+          ),
+          assetCounts: Object.fromEntries(
+            Object.entries(assetRollup).map(([key, set]) => [key, set.size])
+          ),
+          discoveredUrls: pages.map((page) => page.url),
+        };
+      }
+    } catch {
+      // Fallback to local client-side queue crawler below.
+    }
+
+    const queue = [startUrl];
+    const visited = new Set();
+    const pages = [];
+    const failedPages = [];
+    let headlessRenderedCount = 0;
+    let fallbackFetchCount = 0;
+    const assetRollup = { images: new Set(), css: new Set(), js: new Set(), fonts: new Set(), videos: new Set(), icons: new Set() };
+
+    while (queue.length > 0 && visited.size < maxPages) {
+      const current = queue.shift();
+      if (!current || visited.has(current)) continue;
+      visited.add(current);
+      try {
+        let html = "";
+        let links = [];
+        let assets = null;
+        let computedStyles = null;
+        let domComponentTree = null;
+        let layoutAnalysis = null;
+        let visionAnalysis = null;
+        let componentDetection = null;
+        let responsiveDetection = null;
+        let renderMode = "fetch-fallback";
+        let resolvedUrl = current;
+        try {
+          const rendered = await renderClonePageViaGateway(current);
+          if (rendered?.html) {
+            html = String(rendered.html);
+            links = Array.isArray(rendered.internal_links) ? rendered.internal_links : [];
+            assets = rendered.assets && typeof rendered.assets === "object" ? rendered.assets : null;
+            computedStyles = rendered.computed_styles && typeof rendered.computed_styles === "object"
+              ? rendered.computed_styles
+              : null;
+            domComponentTree = rendered.dom_component_tree && typeof rendered.dom_component_tree === "object"
+              ? rendered.dom_component_tree
+              : null;
+            layoutAnalysis = rendered.layout_analysis && typeof rendered.layout_analysis === "object"
+              ? rendered.layout_analysis
+              : null;
+            visionAnalysis = rendered.vision_analysis && typeof rendered.vision_analysis === "object"
+              ? rendered.vision_analysis
+              : null;
+            componentDetection = rendered.component_detection && typeof rendered.component_detection === "object"
+              ? rendered.component_detection
+              : null;
+            responsiveDetection = rendered.responsive_detection && typeof rendered.responsive_detection === "object"
+              ? rendered.responsive_detection
+              : null;
+            resolvedUrl = String(rendered.final_url || current);
+            renderMode = "headless-browser-render";
+            headlessRenderedCount += 1;
+          }
+        } catch {
+          // fallback to direct fetch for environments without Playwright
+        }
+        if (!html) {
+          const response = await fetch(current, { method: "GET" });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+          if (contentType && !contentType.includes("html")) throw new Error("Non-HTML response");
+          html = await response.text();
+          links = extractInternalLinksFromHtml(html, current);
+          assets = extractAssetManifestFromHtml(html, current);
+          fallbackFetchCount += 1;
+        }
+        const domSummary = summarizeDomForClone(html);
+        const normalizedAssets = assets || extractAssetManifestFromHtml(html, resolvedUrl);
+        Object.entries(normalizedAssets).forEach(([key, list]) => {
+          if (!assetRollup[key]) return;
+          list.forEach((item) => assetRollup[key].add(item));
+        });
+        pages.push({
+          url: resolvedUrl,
+          renderMode,
+          title: domSummary.title,
+          sectionLabels: domSummary.sectionLabels,
+          componentHints: domSummary.componentHints,
+          layoutHints: domSummary.layoutHints,
+          contentMap: domSummary.contentMap,
+          computedStyleSummary: computedStyles
+            ? {
+                totalElements: Number(computedStyles.total_elements || 0),
+                sampledElements: Number(computedStyles.sampled_elements || 0),
+                truncated: Boolean(computedStyles.truncated),
+                displayHistogram: computedStyles.display_histogram || {},
+                tagHistogram: computedStyles.tag_histogram || {},
+              }
+            : null,
+          domComponentTreeSummary: domComponentTree
+            ? {
+                flatSections: Array.isArray(domComponentTree.flat_sections) ? domComponentTree.flat_sections : [],
+                totalVisitedNodes: Number(domComponentTree.total_visited_nodes || 0),
+                truncated: Boolean(domComponentTree.truncated),
+              }
+            : null,
+          layoutAnalysis: layoutAnalysis || null,
+          visionAnalysis: visionAnalysis || null,
+          componentDetection: componentDetection || null,
+          responsiveDetection: responsiveDetection || null,
+          links: links.slice(0, 40),
+          assetCounts: Object.fromEntries(Object.entries(normalizedAssets).map(([key, list]) => [key, list.length])),
+        });
+        links.forEach((link) => {
+          if (!visited.has(link) && !queue.includes(link) && queue.length < maxPages * 5) queue.push(link);
+        });
+      } catch (error) {
+        failedPages.push({ url: current, reason: String(error?.message || "crawl failure") });
+      }
+    }
+
+    const reusable = detectReusableClonePatterns(pages);
+    const crawlMode =
+      headlessRenderedCount > 0
+        ? fallbackFetchCount > 0
+          ? "hybrid-headless+fetch"
+          : "headless-browser-render"
+        : pages.length > 0
+          ? "live-fetch"
+          : "url-inference-fallback";
+    return {
+      crawlMode,
+      renderStats: {
+        headlessRenderedCount,
+        fallbackFetchCount,
+      },
+      pages,
+      failedPages: failedPages.slice(0, 12),
+      reusableComponents: reusable,
+      assets: Object.fromEntries(
+        Object.entries(assetRollup).map(([key, set]) => [key, Array.from(set).slice(0, 160)])
+      ),
+      assetCounts: Object.fromEntries(
+        Object.entries(assetRollup).map(([key, set]) => [key, set.size])
+      ),
+      discoveredUrls: Array.from(visited),
+    };
+  };
+
+  const buildClonePipelineSummary = (crawlResult, insights) => {
+    const pages = Array.isArray(crawlResult?.pages) ? crawlResult.pages : [];
+    const styleSignals = pages
+      .map((page) => page?.computedStyleSummary?.displayHistogram || {})
+      .reduce((acc, histogram) => {
+        Object.entries(histogram || {}).forEach(([key, value]) => {
+          const token = String(key || "").trim() || "unknown";
+          acc[token] = (acc[token] || 0) + Number(value || 0);
+        });
+        return acc;
+      }, {});
+    const topDisplayModes = Object.entries(styleSignals)
+      .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
+      .slice(0, 8)
+      .map(([display, count]) => ({ display, count }));
+    const domSectionSignals = pages
+      .flatMap((page) => (Array.isArray(page?.domComponentTreeSummary?.flatSections) ? page.domComponentTreeSummary.flatSections : []))
+      .reduce((acc, label) => {
+        const key = String(label || "").trim();
+        if (!key) return acc;
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {});
+    const topDomSections = Object.entries(domSectionSignals)
+      .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
+      .slice(0, 12)
+      .map(([section, count]) => ({ section, count }));
+    const componentSignals = pages
+      .flatMap((page) => (Array.isArray(page?.componentDetection?.components) ? page.componentDetection.components : []))
+      .reduce((acc, item) => {
+        const key = String(item?.name || "").trim();
+        if (!key) return acc;
+        const count = Number(item?.repeat_count || 0);
+        acc[key] = (acc[key] || 0) + count;
+        return acc;
+      }, {});
+    const topDetectedComponents = Object.entries(componentSignals)
+      .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
+      .slice(0, 14)
+      .map(([component, total_repeat_count]) => ({ component, total_repeat_count }));
+    const layoutPatternSignals = pages.reduce(
+      (acc, page) => {
+        const patterns = page?.layoutAnalysis?.patterns || {};
+        const components = page?.layoutAnalysis?.components || {};
+        acc.flexbox += Number(patterns.flexbox || 0);
+        acc.grid += Number(patterns.grid || 0);
+        acc.overlay += Number(patterns.overlay || 0);
+        acc.cards += Number(components.cards || 0);
+        acc.columns += Number(components.columns || 0);
+        acc.hero_sections += Number(components.hero_sections || 0);
+        acc.sidebars += Number(components.sidebars || 0);
+        acc.navbars += Number(components.navbars || 0);
+        return acc;
+      },
+      {
+        flexbox: 0,
+        grid: 0,
+        overlay: 0,
+        cards: 0,
+        columns: 0,
+        hero_sections: 0,
+        sidebars: 0,
+        navbars: 0,
+      }
+    );
+    const visionSignals = {
+      sources: pages
+        .map((page) => String(page?.visionAnalysis?.source || "").trim())
+        .filter(Boolean),
+      spacing_distribution: pages.reduce(
+        (acc, page) => {
+          const key = String(page?.visionAnalysis?.spacing_signal || "").trim().toLowerCase();
+          if (key) acc[key] = (acc[key] || 0) + 1;
+          return acc;
+        },
+        {}
+      ),
+      detected_sections: pages
+        .flatMap((page) => (Array.isArray(page?.visionAnalysis?.detected_sections) ? page.visionAnalysis.detected_sections : []))
+        .reduce((acc, item) => {
+          const key = String(item || "").trim();
+          if (!key) return acc;
+          acc[key] = (acc[key] || 0) + 1;
+          return acc;
+        }, {}),
+    };
+    const responsiveSignals = {
+      inferred_breakpoints: pages
+        .flatMap((page) => (Array.isArray(page?.responsiveDetection?.inferred_breakpoints) ? page.responsiveDetection.inferred_breakpoints : []))
+        .reduce((acc, value) => {
+          const key = String(value || "").trim();
+          if (!key) return acc;
+          acc[key] = (acc[key] || 0) + 1;
+          return acc;
+        }, {}),
+      tested_modes: pages
+        .flatMap((page) => (Array.isArray(page?.responsiveDetection?.tested) ? page.responsiveDetection.tested : []))
+        .reduce((acc, mode) => {
+          const key = String(mode || "").trim().toLowerCase();
+          if (!key) return acc;
+          acc[key] = (acc[key] || 0) + 1;
+          return acc;
+        }, {}),
+      overflow_pages: pages.filter((page) =>
+        Array.isArray(page?.responsiveDetection?.viewports) &&
+        page.responsiveDetection.viewports.some((item) => Boolean(item?.horizontal_overflow))
+      ).length,
+    };
+    const primaryLayoutMode = layoutPatternSignals.grid > layoutPatternSignals.flexbox
+      ? "grid"
+      : layoutPatternSignals.flexbox > 0
+        ? "flexbox"
+        : layoutPatternSignals.overlay > 0
+          ? "overlay"
+          : "flow";
+    const pageMap = pages.slice(0, 20).map((page, index) => {
+      const parsed = absolutizeCloneUrl(page.url) ? new URL(page.url) : null;
+      const path = parsed?.pathname || "/";
+      const inferredSections = Array.from(
+        new Set(
+          []
+            .concat(page?.componentHints || [])
+            .concat(page?.layoutHints || [])
+            .map((token) => String(token || "").toLowerCase())
+        )
+      ).slice(0, 10);
+      return {
+        name: page?.title || `Page ${index + 1}`,
+        source_path: path,
+        intent: inferredSections.join(", ") || "content page",
+        sections: inferredSections.length > 0 ? inferredSections : ["hero", "content", "cta"],
+      };
+    });
+
+    const navLabels = pageMap.map((item) => {
+      const normalized = String(item.name || "").trim();
+      if (normalized) return normalized;
+      return String(item.source_path || "/").replace(/\//g, " ").trim() || "Home";
+    });
+
+    return {
+      crawl_mode: crawlResult?.crawlMode || "unknown",
+      pages_crawled: pages.length,
+      pages_failed: Array.isArray(crawlResult?.failedPages) ? crawlResult.failedPages.length : 0,
+      reusable_components: crawlResult?.reusableComponents || [],
+      computed_style_signals: {
+        top_display_modes: topDisplayModes,
+        sampled_pages: pages.filter((page) => page?.computedStyleSummary).length,
+      },
+      dom_component_signals: {
+        top_sections: topDomSections,
+        sampled_pages: pages.filter((page) => page?.domComponentTreeSummary).length,
+      },
+      layout_pattern_signals: {
+        primary_layout_mode: primaryLayoutMode,
+        totals: layoutPatternSignals,
+        sampled_pages: pages.filter((page) => page?.layoutAnalysis).length,
+      },
+      component_detection_signals: {
+        top_components: topDetectedComponents,
+        sampled_pages: pages.filter((page) => page?.componentDetection).length,
+      },
+      vision_signals: {
+        sources: Array.from(new Set(visionSignals.sources)).slice(0, 4),
+        spacing_distribution: visionSignals.spacing_distribution,
+        top_detected_sections: Object.entries(visionSignals.detected_sections)
+          .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
+          .slice(0, 12)
+          .map(([section, count]) => ({ section, count })),
+        sampled_pages: pages.filter((page) => page?.visionAnalysis).length,
+      },
+      responsive_signals: {
+        inferred_breakpoints: Object.entries(responsiveSignals.inferred_breakpoints)
+          .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
+          .map(([breakpoint, count]) => ({ breakpoint, count })),
+        tested_modes: responsiveSignals.tested_modes,
+        overflow_pages: responsiveSignals.overflow_pages,
+        sampled_pages: pages.filter((page) => page?.responsiveDetection).length,
+      },
+      navigation: navLabels.slice(0, 14),
+      page_map: pageMap.length > 0
+        ? pageMap
+        : (insights?.suggestedPages || []).map((name) => ({
+            name,
+            source_path: "/",
+            intent: "inferred from URL fingerprint",
+            sections: ["hero", "content", "cta"],
+          })),
+      assets: {
+        counts: crawlResult?.assetCounts || {},
+        folders: ["/assets", "/images", "/css", "/js", "/fonts"],
+      },
+    };
   };
 
   const deriveRedesignInsights = (url) => {
@@ -1736,6 +3195,8 @@ export default function Dashboard() {
 
     const resolveIndustryKey = (value) => {
       const text = String(value || "").toLowerCase();
+      if (/(saas|software|app|platform|b2b|cloud)/.test(text)) return "saas";
+      if (/(e-?commerce|online store|shop|retail|product catalog|checkout)/.test(text)) return "ecommerce";
       if (/(home\s*care|hcbs|caregiver|disability|support)/.test(text)) return "hcbs";
       if (/(beauty|salon|spa|cosmetic|skincare)/.test(text)) return "beauty";
       if (/(restaurant|cafe|food|bakery|kitchen)/.test(text)) return "restaurant";
@@ -1751,6 +3212,22 @@ export default function Dashboard() {
 
     const industryKey = resolveIndustryKey(`${projectName} ${hero.title} ${hero.subtitle}`);
     const INDUSTRY_IMAGE_BANK = {
+      saas: {
+        hero: "https://images.pexels.com/photos/3861969/pexels-photo-3861969.jpeg?auto=compress&cs=tinysrgb&w=1600",
+        gallery: [
+          "https://images.pexels.com/photos/3183150/pexels-photo-3183150.jpeg?auto=compress&cs=tinysrgb&w=800",
+          "https://images.pexels.com/photos/669615/pexels-photo-669615.jpeg?auto=compress&cs=tinysrgb&w=800",
+          "https://images.pexels.com/photos/326503/pexels-photo-326503.jpeg?auto=compress&cs=tinysrgb&w=800",
+        ],
+      },
+      ecommerce: {
+        hero: "https://images.pexels.com/photos/5632402/pexels-photo-5632402.jpeg?auto=compress&cs=tinysrgb&w=1600",
+        gallery: [
+          "https://images.pexels.com/photos/6169056/pexels-photo-6169056.jpeg?auto=compress&cs=tinysrgb&w=800",
+          "https://images.pexels.com/photos/6347546/pexels-photo-6347546.jpeg?auto=compress&cs=tinysrgb&w=800",
+          "https://images.pexels.com/photos/4968630/pexels-photo-4968630.jpeg?auto=compress&cs=tinysrgb&w=800",
+        ],
+      },
       hcbs: {
         hero: "https://images.pexels.com/photos/7551662/pexels-photo-7551662.jpeg?auto=compress&cs=tinysrgb&w=1600",
         gallery: [
@@ -1855,6 +3332,57 @@ export default function Dashboard() {
     );
     const sectionTitle = (label) =>
       `<h2 style="margin:0 0 10px;color:var(--tn-text-primary);font-family:var(--tn-font-heading);font-weight:var(--tn-heading-weight);letter-spacing:var(--tn-heading-spacing)">${label}</h2>`;
+
+    const visualIndustryKey =
+      industryKey === "healthcare" || industryKey === "hcbs"
+        ? "healthcare"
+        : industryKey === "saas"
+          ? "saas"
+          : industryKey === "ecommerce"
+            ? "ecommerce"
+            : "general";
+    const industryVisualProfile = {
+      healthcare: {
+        strapline: "Compassionate Care. Professional Support.",
+        supportLine: "Care planning, family communication, and dependable outcomes.",
+        logoPill: "HEALTHCARE & HCBS",
+        primaryHeaderCta: "Book Assessment",
+        heroEyebrow: "Trusted Care Team",
+        shadowSoft: "0 14px 34px rgba(14, 116, 144, .11)",
+        shadowHover: "0 20px 48px rgba(14, 116, 144, .22)",
+        cardRadius: "16px",
+      },
+      saas: {
+        strapline: "Ship Product Faster. Convert Better.",
+        supportLine: "Automation-ready workflows, analytics, and onboarding that scales.",
+        logoPill: "SAAS GROWTH PLATFORM",
+        primaryHeaderCta: "Start Free Trial",
+        heroEyebrow: "Built for Revenue Teams",
+        shadowSoft: "0 14px 34px rgba(37, 99, 235, .12)",
+        shadowHover: "0 22px 54px rgba(37, 99, 235, .25)",
+        cardRadius: "14px",
+      },
+      ecommerce: {
+        strapline: "Merchandise Beautifully. Sell Confidently.",
+        supportLine: "Storefront UX, checkout flow, and retention automation in one stack.",
+        logoPill: "E-COMMERCE EXPERIENCE",
+        primaryHeaderCta: "Shop Collections",
+        heroEyebrow: "Commerce-Optimized Layout",
+        shadowSoft: "0 14px 34px rgba(217, 119, 6, .12)",
+        shadowHover: "0 22px 54px rgba(217, 119, 6, .24)",
+        cardRadius: "18px",
+      },
+      general: {
+        strapline: "Build Credibility. Drive Growth.",
+        supportLine: "Premium website pages generated for speed, clarity, and conversion.",
+        logoPill: "BUSINESS WEBSITE ENGINE",
+        primaryHeaderCta: "Request Info",
+        heroEyebrow: "Welcome",
+        shadowSoft: "0 14px 38px rgba(15,23,42,.08)",
+        shadowHover: "0 18px 48px rgba(15,23,42,.16)",
+        cardRadius: "16px",
+      },
+    }[visualIndustryKey];
 
     const quickNavBlock = `
       <section style="padding:18px 20px 0">
@@ -2408,7 +3936,7 @@ export default function Dashboard() {
       layoutVariant === "stacked-hero"
         ? `<section style="padding:16px 20px 0">
              <article data-parallax-speed="0.05" style="background:linear-gradient(145deg,var(--tn-hero-start),var(--tn-hero-end));color:var(--tn-cta-text);padding:26px;border-radius:10px">
-               <p style="margin:0 0 8px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#dbeafe">Welcome</p>
+               <p style="margin:0 0 8px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#dbeafe">${escapeHtml(industryVisualProfile.heroEyebrow)}</p>
                <h2 style="margin:0 0 10px;font-family:var(--tn-font-heading);font-size:clamp(26px,4.2vw,40px);line-height:1.08;letter-spacing:var(--tn-heading-spacing)">${escapeHtml(hero.title || "Built for Modern Growth")}</h2>
                <p style="margin:0 0 14px;color:#e7f0fb;max-width:760px">${escapeHtml(hero.subtitle || "Personalized services with conversion-focused UX.")}</p>
                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
@@ -2425,7 +3953,7 @@ export default function Dashboard() {
                    <img data-image-id="hero-image" data-parallax-speed="0.12" src="${heroImageUrl}" alt="${escapeHtml(projectName || "Business")} hero visual" style="width:100%;height:100%;min-height:280px;object-fit:cover;display:block" onerror="this.onerror=null;this.src='https://placehold.co/1200x800/e2e8f0/0f172a?text=Industry+Image';" />
                  </article>
                  <article data-parallax-speed="0.06" style="background:var(--tn-surface);color:var(--tn-text-primary);padding:24px;border-radius:8px;border:1px solid var(--tn-border);display:flex;flex-direction:column;justify-content:center">
-                   <p style="margin:0 0 8px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--tn-accent)">Editorial Layout</p>
+                   <p style="margin:0 0 8px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--tn-accent)">${escapeHtml(industryVisualProfile.heroEyebrow)}</p>
                    <h2 style="margin:0 0 10px;font-family:var(--tn-font-heading);font-size:clamp(26px,4.1vw,38px);line-height:1.08;letter-spacing:var(--tn-heading-spacing)">${escapeHtml(hero.title || "Delivering Excellence in Care & Rehabilitation")}</h2>
                    <p style="margin:0 0 14px;color:var(--tn-text-secondary);max-width:640px">${escapeHtml(hero.subtitle || "Personalized nursing and therapy services with a patient-first approach.")}</p>
                    <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -2436,9 +3964,9 @@ export default function Dashboard() {
                </div>
              </section>`
           : `<section style="padding:16px 20px 0">
-               <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:14px;align-items:stretch">
+               <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;align-items:stretch">
                  <article data-parallax-speed="0.06" style="background:linear-gradient(145deg,var(--tn-hero-start),var(--tn-hero-end));color:var(--tn-cta-text);padding:24px;border-radius:8px;display:flex;flex-direction:column;justify-content:center">
-                   <p style="margin:0 0 8px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#dbeafe">Welcome</p>
+                   <p style="margin:0 0 8px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#dbeafe">${escapeHtml(industryVisualProfile.heroEyebrow)}</p>
                    <h2 style="margin:0 0 10px;font-family:var(--tn-font-heading);font-size:clamp(26px,4.2vw,38px);line-height:1.08;letter-spacing:var(--tn-heading-spacing)">${escapeHtml(hero.title || "Delivering Excellence in Care & Rehabilitation")}</h2>
                    <p style="margin:0 0 14px;color:#e7f0fb;max-width:640px">${escapeHtml(hero.subtitle || "Personalized nursing and therapy services with a patient-first approach.")}</p>
                    <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -2456,9 +3984,112 @@ export default function Dashboard() {
       <div
         id="tn-top"
         data-tn-theme-root="true"
-        style="--tn-hero-start:${theme.heroStart};--tn-hero-end:${theme.heroEnd};--tn-accent:${theme.accent};--tn-accent-strong:${theme.accentStrong};--tn-page-bg:${theme.pageBg};--tn-surface:${theme.cardBg};--tn-surface-subtle:#f8fafc;--tn-border:${theme.borderColor};--tn-text-primary:${theme.textPrimary};--tn-text-secondary:${theme.textSecondary};--tn-link:${theme.linkColor};--tn-cta-panel-bg:${theme.ctaPanelBg};--tn-cta-panel-border:${theme.ctaPanelBorder};--tn-cta-text:${theme.ctaText};--tn-nav-active-bg:var(--tn-accent);--tn-nav-active-text:${theme.ctaText};--tn-nav-bg:#e2e8f0;--tn-nav-text:${theme.textPrimary};--tn-nav-border:#cbd5e1;--tn-font-heading:${textTheme.headingFamily};--tn-font-body:${textTheme.bodyFamily};--tn-font-size-base:${textTheme.baseSizePx}px;--tn-line-height-base:${textTheme.lineHeight};--tn-heading-weight:${textTheme.headingWeight};--tn-body-weight:${textTheme.bodyWeight};--tn-heading-spacing:${textTheme.headingSpacingEm}em;font-family:var(--tn-font-body);font-size:var(--tn-font-size-base);line-height:var(--tn-line-height-base);font-weight:var(--tn-body-weight);width:min(100%,1200px);margin:0 auto;padding:0;background:var(--tn-page-bg);border-radius:0"
+        data-tn-industry="${visualIndustryKey}"
+        style="--tn-hero-start:${theme.heroStart};--tn-hero-end:${theme.heroEnd};--tn-accent:${theme.accent};--tn-accent-strong:${theme.accentStrong};--tn-page-bg:${theme.pageBg};--tn-surface:${theme.cardBg};--tn-surface-subtle:#f8fafc;--tn-border:${theme.borderColor};--tn-text-primary:${theme.textPrimary};--tn-text-secondary:${theme.textSecondary};--tn-link:${theme.linkColor};--tn-cta-panel-bg:${theme.ctaPanelBg};--tn-cta-panel-border:${theme.ctaPanelBorder};--tn-cta-text:${theme.ctaText};--tn-nav-active-bg:var(--tn-accent);--tn-nav-active-text:${theme.ctaText};--tn-nav-bg:#e2e8f0;--tn-nav-text:${theme.textPrimary};--tn-nav-border:#cbd5e1;--tn-font-heading:${textTheme.headingFamily};--tn-font-body:${textTheme.bodyFamily};--tn-font-size-base:${textTheme.baseSizePx}px;--tn-line-height-base:${textTheme.lineHeight};--tn-heading-weight:${textTheme.headingWeight};--tn-body-weight:${textTheme.bodyWeight};--tn-heading-spacing:${textTheme.headingSpacingEm}em;--tn-shadow-soft:${industryVisualProfile.shadowSoft};--tn-shadow-hover:${industryVisualProfile.shadowHover};--tn-radius-card:${industryVisualProfile.cardRadius};font-family:var(--tn-font-body);font-size:var(--tn-font-size-base);line-height:var(--tn-line-height-base);font-weight:var(--tn-body-weight);width:min(100%,1280px);margin:0 auto;padding:0 clamp(12px,2.1vw,26px) 30px;box-sizing:border-box;background:radial-gradient(circle at 16% 8%, color-mix(in srgb, var(--tn-hero-start) 9%, #ffffff 91%), transparent 48%),radial-gradient(circle at 84% 14%, color-mix(in srgb, var(--tn-accent) 10%, #ffffff 90%), transparent 46%),var(--tn-page-bg);border-radius:14px"
       >
         <style data-tn-typography="true">@import url("${textTheme.fontImport}");</style>
+        <style data-tn-fluid-beauty="true">
+          [data-tn-theme-root="true"] { color: var(--tn-text-primary); overflow-wrap: anywhere; }
+          [data-tn-theme-root="true"] section { position: relative; z-index: 1; }
+          [data-tn-theme-root="true"] article,
+          [data-tn-theme-root="true"] form,
+          [data-tn-theme-root="true"] details {
+            border-radius: var(--tn-radius-card) !important;
+            box-shadow: var(--tn-shadow-soft);
+            transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease, background 220ms ease;
+          }
+          [data-tn-theme-root="true"] article:hover,
+          [data-tn-theme-root="true"] form:hover,
+          [data-tn-theme-root="true"] details:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--tn-shadow-hover);
+            border-color: color-mix(in srgb, var(--tn-accent) 45%, var(--tn-border) 55%) !important;
+          }
+          [data-tn-theme-root="true"] a,
+          [data-tn-theme-root="true"] button {
+            transition: transform 180ms ease, filter 180ms ease, box-shadow 180ms ease, background-color 180ms ease, border-color 180ms ease;
+          }
+          [data-tn-theme-root="true"] a:hover,
+          [data-tn-theme-root="true"] button:hover {
+            transform: translateY(-1px);
+            filter: saturate(1.08);
+          }
+          [data-tn-theme-root="true"] h1,
+          [data-tn-theme-root="true"] h2,
+          [data-tn-theme-root="true"] h3,
+          [data-tn-theme-root="true"] h4 {
+            text-wrap: balance;
+          }
+          [data-tn-theme-root="true"] p,
+          [data-tn-theme-root="true"] li {
+            text-wrap: pretty;
+          }
+          [data-tn-theme-root="true"] [data-tn-reveal] {
+            opacity: 0;
+            transform: translate3d(0, 24px, 0);
+            transition: opacity 520ms ease, transform 520ms cubic-bezier(.2,.65,.2,1);
+          }
+          [data-tn-theme-root="true"] [data-tn-reveal].is-visible {
+            opacity: 1;
+            transform: translate3d(0, 0, 0);
+          }
+          [data-tn-theme-root="true"] .tn-main-nav {
+            backdrop-filter: blur(8px);
+          }
+          [data-tn-theme-root="true"] .tn-main-nav a {
+            font-size: 13px !important;
+            letter-spacing: .01em;
+          }
+          [data-tn-theme-root="true"][data-tn-industry="healthcare"] .tn-main-nav a {
+            text-transform: none;
+            font-weight: 700;
+          }
+          [data-tn-theme-root="true"][data-tn-industry="saas"] .tn-main-nav a {
+            text-transform: uppercase;
+            letter-spacing: .05em;
+            font-size: 11px !important;
+          }
+          [data-tn-theme-root="true"][data-tn-industry="ecommerce"] .tn-main-nav a {
+            letter-spacing: .02em;
+            font-weight: 700;
+          }
+          [data-tn-theme-root="true"][data-tn-industry="saas"] article,
+          [data-tn-theme-root="true"][data-tn-industry="saas"] form {
+            border-width: 1px;
+            border-style: solid;
+            border-color: color-mix(in srgb, var(--tn-accent) 28%, var(--tn-border) 72%);
+          }
+          [data-tn-theme-root="true"][data-tn-industry="ecommerce"] article,
+          [data-tn-theme-root="true"][data-tn-industry="ecommerce"] form {
+            background: linear-gradient(180deg, color-mix(in srgb, var(--tn-surface) 94%, #fff 6%), var(--tn-surface));
+          }
+          @media (max-width: 820px) {
+            [data-tn-theme-root="true"] {
+              border-radius: 12px;
+              padding-left: 10px !important;
+              padding-right: 10px !important;
+            }
+            [data-tn-theme-root="true"] article,
+            [data-tn-theme-root="true"] form,
+            [data-tn-theme-root="true"] details {
+              border-radius: 12px !important;
+            }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            [data-tn-theme-root="true"] [data-tn-reveal] {
+              opacity: 1;
+              transform: none;
+              transition: none;
+            }
+            [data-tn-theme-root="true"] article,
+            [data-tn-theme-root="true"] form,
+            [data-tn-theme-root="true"] details,
+            [data-tn-theme-root="true"] a,
+            [data-tn-theme-root="true"] button {
+              transition: none;
+            }
+          }
+        </style>
         <style data-tn-nav-behavior="true">
           .tn-nav-shell { display: flex; justify-content: center; }
           .tn-nav-toggle-label {
@@ -2476,13 +4107,12 @@ export default function Dashboard() {
           }
           .tn-main-nav {
             display: flex;
-            gap: 18px;
+            gap: 12px;
             justify-content: center;
             align-items: center;
-            flex-wrap: nowrap;
-            white-space: nowrap;
-            overflow-x: auto;
-            scrollbar-width: thin;
+            flex-wrap: wrap;
+            white-space: normal;
+            overflow: visible;
           }
           @media (max-width: 820px) {
             .tn-nav-shell { justify-content: flex-start; }
@@ -2523,11 +4153,11 @@ export default function Dashboard() {
             }
           }
         </style>
-        <section style="background:var(--tn-accent);color:var(--tn-cta-text);padding:10px 20px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:13px">
-          <span>Compassionate Care. Professional Support.</span>
-          <span>Call: (000) 000-0000 | Email: hello@example.com</span>
+        <section data-tn-reveal="true" style="background:linear-gradient(90deg,var(--tn-accent),color-mix(in srgb,var(--tn-accent-strong) 68%, #0f172a 32%));color:var(--tn-cta-text);padding:10px 20px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:13px;border-top-left-radius:14px;border-top-right-radius:14px">
+          <span>${escapeHtml(industryVisualProfile.strapline)}</span>
+          <span>${escapeHtml(industryVisualProfile.supportLine)}</span>
         </section>
-        <section style="background:var(--tn-surface);padding:14px 20px 8px;border-bottom:1px solid var(--tn-border)">
+        <section data-tn-reveal="true" style="background:color-mix(in srgb,var(--tn-surface) 94%, #ffffff 6%);padding:14px 20px 8px;border-bottom:1px solid var(--tn-border)">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
             <div style="display:flex;align-items:center;gap:12px">
               <img
@@ -2537,11 +4167,11 @@ export default function Dashboard() {
                 style="width:58px;height:58px;border-radius:14px;object-fit:cover;border:1px solid var(--tn-border);background:#fff"
               />
               <div>
-              <p style="margin:0;color:var(--tn-accent);font-weight:700;font-size:12px;letter-spacing:.08em">SKILLED NURSING & REHAB</p>
+              <p style="margin:0;color:var(--tn-accent);font-weight:700;font-size:12px;letter-spacing:.08em">${escapeHtml(industryVisualProfile.logoPill)}</p>
               <h1 style="margin:3px 0 0;font-family:var(--tn-font-heading);font-size:27px;line-height:1.1;color:var(--tn-text-primary)"> ${escapeHtml(projectName || "Care Center")} </h1>
               </div>
             </div>
-            <a href="contact.html" style="display:inline-block;padding:9px 14px;background:var(--tn-accent-strong);color:var(--tn-cta-text);text-decoration:none;border-radius:6px;font-weight:700;font-size:13px">Request Info</a>
+            <a href="contact.html" style="display:inline-block;padding:9px 14px;background:var(--tn-accent-strong);color:var(--tn-cta-text);text-decoration:none;border-radius:6px;font-weight:700;font-size:13px">${escapeHtml(industryVisualProfile.primaryHeaderCta)}</a>
           </div>
           <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--tn-border)">
             <div class="tn-nav-shell">
@@ -2568,7 +4198,7 @@ export default function Dashboard() {
             : ""
         }
 
-        <section style="background:var(--tn-cta-panel-bg);border-top:1px solid var(--tn-cta-panel-border);border-bottom:1px solid var(--tn-cta-panel-border);padding:24px 20px;text-align:center;margin-top:18px">
+        <section data-tn-reveal="true" style="background:linear-gradient(150deg,var(--tn-cta-panel-bg),color-mix(in srgb,var(--tn-cta-panel-bg) 82%, #ffffff 18%));border-top:1px solid var(--tn-cta-panel-border);border-bottom:1px solid var(--tn-cta-panel-border);padding:24px 20px;text-align:center;margin-top:18px;border-radius:16px">
           <h2 style="margin:0 0 8px;color:#134e4a;font-family:var(--tn-font-heading);font-weight:var(--tn-heading-weight);letter-spacing:var(--tn-heading-spacing)">Ready to take the next step?</h2>
           <a href="contact.html" style="display:inline-block;padding:12px 22px;background:var(--tn-accent-strong);color:var(--tn-cta-text);text-decoration:none;border:none;border-radius:10px;font-size:18px;font-weight:600;cursor:pointer">
             ${escapeHtml(cta.text || "Contact Us")}
@@ -2604,7 +4234,7 @@ export default function Dashboard() {
           </section>
         </div>
 
-        <footer style="padding:16px 20px;text-align:center;color:var(--tn-text-secondary);font-size:12px;background:#fff;border-top:1px solid var(--tn-border)">
+        <footer data-tn-reveal="true" style="padding:16px 20px;text-align:center;color:var(--tn-text-secondary);font-size:12px;background:color-mix(in srgb,#ffffff 88%, var(--tn-surface) 12%);border-top:1px solid var(--tn-border);border-bottom-left-radius:14px;border-bottom-right-radius:14px">
           <a href="#tn-top" style="display:inline-block;margin-bottom:8px;color:var(--tn-link);text-decoration:none;font-weight:600">Back to Top</a>
           <br />
           <a href="index.html" style="color:var(--tn-link);text-decoration:none;font-weight:600">
@@ -2629,6 +4259,29 @@ export default function Dashboard() {
             apply();
             window.addEventListener("scroll", apply, { passive: true });
             window.addEventListener("resize", apply);
+          })();
+        </script>
+        <script>
+          (function () {
+            if (!window.IntersectionObserver) return;
+            var root = document.querySelector('[data-tn-theme-root="true"]');
+            if (!root) return;
+            var nodes = root.querySelectorAll("section, article, form, details");
+            for (var i = 0; i < nodes.length; i += 1) {
+              nodes[i].setAttribute("data-tn-reveal", "true");
+            }
+            var observer = new IntersectionObserver(function (entries) {
+              for (var j = 0; j < entries.length; j += 1) {
+                if (entries[j].isIntersecting) {
+                  entries[j].target.classList.add("is-visible");
+                  observer.unobserve(entries[j].target);
+                }
+              }
+            }, { rootMargin: "0px 0px -8% 0px", threshold: 0.08 });
+            for (var k = 0; k < nodes.length; k += 1) {
+              nodes[k].style.transitionDelay = (Math.min(k, 8) * 35) + "ms";
+              observer.observe(nodes[k]);
+            }
           })();
         </script>
         <script>
@@ -3806,7 +5459,7 @@ ${content || ""}
     try {
       let intel = null;
       try {
-        const response = await fetch("/api/generate", {
+        const response = await fetchWithTimeout("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -3869,7 +5522,10 @@ Each suggestion must be directly actionable for this builder.`,
   };
 
   const handleAiUiDesign = async (promptOverride = "") => {
-    const prompt = String(promptOverride || uiDesignPrompt || businessOsPrompt || projectName || "").trim();
+    const prompt = getEffectiveBusinessPrompt(
+      String(promptOverride || uiDesignPrompt || businessOsPrompt || projectName || "").trim(),
+      { solutionMode, projectName }
+    );
     if (!prompt) {
       setPublishStatus("error");
       setPublishMessage("Describe the website or business you want to create first.");
@@ -4000,7 +5656,7 @@ Return strict JSON only:
                       ? "SEO Generator"
                       : key === "marketing"
                         ? "Marketing Generator"
-                      : "Renderer",
+                        : "Renderer",
           status,
           message,
         };
@@ -4010,112 +5666,9 @@ Return strict JSON only:
       });
     };
 
-    const titleCase = (value) =>
-      String(value || "")
-        .split(/[-_\s]+/g)
-        .filter(Boolean)
-        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-        .join(" ");
-
-    const jsonCall = async (prompt) => {
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload?.error || "TitoNova Cloud Engine generation call failed.");
-      return parseModelJson(payload?.result);
-    };
-    const promptTemplates = {
-      planner: ({ userPrompt }) => `You are an expert startup business planner.
-
-Analyze the user's request and generate a structured business profile.
-
-Return JSON with:
-- business_name
-- industry
-- target_audience
-- services
-- pricing_packages
-- website_pages
-- tone_of_voice
-- call_to_action
-
-User request:
-${userPrompt}
-
-Return JSON only.`,
-      brand: ({ businessName, industry, tone }) => `You are a brand designer.
-
-Generate a modern brand identity for this business.
-
-Business name: ${businessName}
-Industry: ${industry}
-Tone: ${tone}
-
-Return JSON with:
-- color_palette
-- typography
-- tagline
-- brand_voice
-- icon_style`,
-      layout: ({ pages }) => `You are a professional web designer.
-
-Generate a website layout structure.
-
-Pages:
-${pages.join(", ")}
-
-Available sections:
-hero
-features
-services
-pricing
-testimonials
-faq
-cta
-contact_form
-booking_widget
-
-Return JSON mapping each page to sections.`,
-      content: ({ businessName, industry, tone, pageName, sections }) => `Generate website content.
-
-Business: ${businessName}
-Industry: ${industry}
-Tone: ${tone}
-
-Page: ${pageName}
-Sections: ${sections.join(", ")}
-
-Return JSON for each section including headlines, descriptions, and CTA text.`,
-      seo: ({ businessName, service, location }) => `Generate SEO landing pages.
-
-Business: ${businessName}
-Service: ${service}
-City: ${location}
-
-Return:
-- seo_title
-- meta_description
-- h1
-- content_sections`,
-      marketing: ({ businessName, services }) => `Generate marketing assets.
-
-Business: ${businessName}
-Services: ${services.join(", ")}
-
-Return:
-- email_campaign
-- social_media_posts
-- google_ads_copy
-- landing_page_headlines`,
-    };
-    const promptsUsed = {};
-
     setPipelineRunning(true);
     setPublishStatus("info");
-      setPublishMessage("Running TitoNova Cloud Engine generation pipeline: planner -> brand -> layout -> content -> seo -> marketing -> render.");
+    setPublishMessage("Running unified TitoNova Cloud Engine generation pipeline.");
     setPipelineSteps([
       { key: "planner", label: "Business Planner", status: "running", message: "Analyzing prompt..." },
       { key: "brand", label: "Brand Generator", status: "pending", message: "Waiting..." },
@@ -4127,397 +5680,61 @@ Return:
     ]);
 
     try {
+      const promptData = parseStructuredBusinessPrompt(basePrompt);
       const inferredTemplate = inferIndustryTemplateFromPrompt(basePrompt);
-      const selectedTemplate = INDUSTRY_TEMPLATE_PACKAGES.find((pkg) => pkg.key === inferredTemplate) || selectedIndustryPackage;
+      const industryPackage =
+        INDUSTRY_TEMPLATE_PACKAGES.find((pkg) => pkg.key === inferredTemplate) || selectedIndustryPackage;
+      const pagesFromPrompt = Array.isArray(promptData?.pages) && promptData.pages.length > 0
+        ? promptData.pages
+        : Array.isArray(industryPackage?.blueprint?.pages)
+          ? industryPackage.blueprint.pages
+          : ["Home", "Services", "Pricing", "Contact"];
+      const pipelineBlueprintDraft = {
+        business_name: String(promptData?.businessName || requiredProjectName),
+        industry: String(promptData?.industry || industryPackage?.label || "General"),
+        pages: pagesFromPrompt.map((item) => String(item)),
+        cta: String(promptData?.cta || "Get Started Today"),
+      };
+      setPipelineBlueprint(pipelineBlueprintDraft);
+      setStep("planner", "pass", `${pipelineBlueprintDraft.business_name} • ${pipelineBlueprintDraft.industry}`);
+      setStep("brand", "running", "Applying shared design system...");
+      setStep("layout", "running", "Preparing unified page layout...");
+      setStep("content", "running", "Generating conversion-focused content...");
+      setStep("seo", "running", "Applying SEO and metadata...");
+      setStep("marketing", "running", "Generating marketing-ready blocks...");
+      setStep("renderer", "running", "Rendering website...");
 
-      let planner = null;
-      try {
-        promptsUsed.planner = promptTemplates.planner({ userPrompt: basePrompt });
-        planner = await jsonCall(promptsUsed.planner);
-      } catch {
-        planner = null;
-      }
-      const fallbackServices = Array.isArray(selectedTemplate?.blueprint?.services) ? selectedTemplate.blueprint.services : ["Core Service 1", "Core Service 2"];
-      const fallbackPricing = Array.isArray(selectedTemplate?.blueprint?.pricing)
-        ? selectedTemplate.blueprint.pricing.map((name, index) => ({ name, price: `$${99 + index * 100}` }))
-        : [{ name: "Starter", price: "$99" }, { name: "Premium", price: "$199" }];
-      const fallbackPages = Array.isArray(selectedTemplate?.blueprint?.pages)
-        ? selectedTemplate.blueprint.pages
-        : ["Home", "Services", "Pricing", "About", "Contact", "Booking"];
-      const plannerData = {
-        business_name: String(planner?.business_name || requiredProjectName),
-        industry: String(planner?.industry || selectedTemplate?.label || "Professional Services"),
-        target_audience: String(planner?.target_audience || "Local customers"),
-        services: Array.isArray(planner?.services) && planner.services.length > 0 ? planner.services.map((s) => String(s)) : fallbackServices,
-        pricing_packages:
-          Array.isArray(planner?.pricing_packages) && planner.pricing_packages.length > 0
-            ? planner.pricing_packages.map((item, index) => ({
-                name: String(item?.name || `Package ${index + 1}`),
-                price: String(item?.price || `$${(index + 1) * 99}`),
-              }))
-            : fallbackPricing,
-        website_pages:
-          Array.isArray(planner?.website_pages) && planner.website_pages.length > 0
-            ? planner.website_pages.map((p) => String(p))
-            : Array.isArray(planner?.pages) && planner.pages.length > 0
-              ? planner.pages.map((p) => String(p))
-              : fallbackPages,
-        tone_of_voice: String(planner?.tone_of_voice || planner?.tone || "premium and trustworthy"),
-        call_to_action: String(planner?.call_to_action || planner?.cta || "Get Started Today"),
-      };
-      plannerData.pricing = plannerData.pricing_packages;
-      plannerData.pages = plannerData.website_pages;
-      plannerData.tone = plannerData.tone_of_voice;
-      plannerData.cta = plannerData.call_to_action;
-      setPipelineBlueprint(plannerData);
-      setStep("planner", "pass", `${plannerData.business_name} • ${plannerData.industry}`);
+      const generation = await runUnifiedWebsiteGeneration({
+        intent: "pipeline",
+        promptOverride: basePrompt,
+        projectNameOverride: requiredProjectName,
+        industryTemplateOverride: inferredTemplate,
+        skipStatusMessage: true,
+      });
+      if (!generation) throw new Error("Unified pipeline did not return a generated site.");
 
-      setStep("brand", "running", "Generating brand identity...");
-      let brand = null;
-      try {
-        promptsUsed.brand = promptTemplates.brand({
-          businessName: plannerData.business_name,
-          industry: plannerData.industry,
-          tone: plannerData.tone_of_voice,
-        });
-        brand = await jsonCall(promptsUsed.brand);
-      } catch {
-        brand = null;
-      }
-      const brandKitFallback = generateBrandKitFromPrompt(`${plannerData.business_name} ${basePrompt}`);
-      const palette = {
-        heroStart: String(brand?.color_palette?.primary || brand?.colors?.primary || brandKitFallback.palette.heroStart || DEFAULT_THEME_COLORS.heroStart),
-        heroEnd: String(brand?.color_palette?.secondary || brand?.colors?.secondary || brandKitFallback.palette.heroEnd || DEFAULT_THEME_COLORS.heroEnd),
-        accent: String(brand?.color_palette?.secondary || brand?.colors?.secondary || brandKitFallback.palette.accent || DEFAULT_THEME_COLORS.accent),
-        accentStrong: String(brand?.color_palette?.accent || brand?.colors?.accent || brandKitFallback.palette.accentStrong || DEFAULT_THEME_COLORS.accentStrong),
-        pageBg: brandKitFallback.palette.pageBg,
-        cardBg: brandKitFallback.palette.cardBg,
-        borderColor: brandKitFallback.palette.borderColor,
-        textPrimary: brandKitFallback.palette.textPrimary,
-        textSecondary: brandKitFallback.palette.textSecondary,
-        linkColor: brandKitFallback.palette.linkColor,
-        ctaPanelBg: brandKitFallback.palette.ctaPanelBg,
-        ctaPanelBorder: brandKitFallback.palette.ctaPanelBorder,
-        ctaText: brandKitFallback.palette.ctaText,
-      };
-      const typographyPreset = TEXT_STYLE_PRESETS.find((item) =>
-        String(brand?.typography || brand?.font || "").toLowerCase().includes(item.label.toLowerCase().split(" ")[0].toLowerCase())
-      ) || TEXT_STYLE_PRESETS[0];
-      const typography = {
-        ...DEFAULT_TEXT_STYLE,
-        preset: typographyPreset.key,
-        headingFamily: typographyPreset.headingFamily,
-        bodyFamily: typographyPreset.bodyFamily,
-        fontImport: typographyPreset.fontImport,
-      };
-      setThemeColors({ ...palette });
-      setTextStyle((previous) => ({ ...previous, ...typography }));
-      setStep("brand", "pass", String(brand?.tagline || "Brand identity generated."));
-
-      setStep("layout", "running", "Generating page layouts and variants...");
-      let layoutData = null;
-      try {
-        promptsUsed.layout = promptTemplates.layout({ pages: plannerData.pages });
-        layoutData = await jsonCall(promptsUsed.layout);
-      } catch {
-        layoutData = null;
-      }
-      const pagesNormalized = plannerData.pages.map((page) => String(page || "").trim().toLowerCase()).filter(Boolean);
-      const fallbackLayoutForPage = (page) => {
-        if (page === "home") return ["hero", "services", "testimonials", "cta"];
-        if (page === "services") return ["hero", "services", "faq", "cta"];
-        if (page === "pricing") return ["hero", "pricing", "cta"];
-        if (page === "contact") return ["hero", "contact_form", "cta"];
-        if (page === "booking") return ["hero", "booking_widget", "cta"];
-        return ["hero", "services", "cta"];
-      };
-      const fallbackVariants = AI_LAYOUT_VARIANT_OPTIONS.reduce((acc, variant) => {
-        acc[variant.key] = pagesNormalized.reduce((pageAcc, pageName) => {
-          pageAcc[pageName] = fallbackLayoutForPage(pageName);
+      const pageKeys = orderPageKeys(Object.keys(generation.pages || {}));
+      const pageNames = pageKeys.map((key) => pageLabelFromKey(key).toLowerCase());
+      const inferredSections = extractStructuredSectionsFromPrompt(basePrompt);
+      const sectionTemplate =
+        inferredSections.length > 0 ? inferredSections : ["hero", "features", "services", "cta"];
+      const nextVariants = AI_LAYOUT_VARIANT_OPTIONS.reduce((acc, variant) => {
+        acc[variant.key] = pageNames.reduce((pageAcc, pageName) => {
+          pageAcc[pageName] = [...sectionTemplate];
           return pageAcc;
         }, {});
         return acc;
       }, {});
-      const parsedVariants = layoutData?.variants && typeof layoutData.variants === "object" ? layoutData.variants : {};
-      const nextVariants = AI_LAYOUT_VARIANT_OPTIONS.reduce((acc, variant) => {
-        const entry = parsedVariants[variant.key];
-        if (entry && typeof entry === "object") {
-          acc[variant.key] = Object.entries(entry).reduce((pageAcc, [name, sections]) => {
-            pageAcc[String(name || "").toLowerCase()] = Array.isArray(sections) ? sections.map((item) => String(item || "")) : fallbackLayoutForPage(String(name || "").toLowerCase());
-            return pageAcc;
-          }, {});
-        } else {
-          acc[variant.key] = fallbackVariants[variant.key];
-        }
-        return acc;
-      }, {});
       setPipelineVariants(nextVariants);
-      setStep("layout", "pass", `Generated ${Object.keys(nextVariants).length} variants.`);
 
-      setStep("content", "running", "Generating page copy...");
-      const contentPages = {};
-      promptsUsed.content = {};
-      for (const pageName of pagesNormalized) {
-        const pageSections = Array.isArray(nextVariants[pipelineVariant]?.[pageName])
-          ? nextVariants[pipelineVariant][pageName]
-          : ["hero", "services", "cta"];
-        try {
-          const pagePrompt = promptTemplates.content({
-            businessName: plannerData.business_name,
-            industry: plannerData.industry,
-            tone: plannerData.tone_of_voice,
-            pageName,
-            sections: pageSections,
-          });
-          promptsUsed.content[pageName] = pagePrompt;
-          const pageJson = await jsonCall(pagePrompt);
-          contentPages[pageName] =
-            pageJson?.[pageName] && typeof pageJson[pageName] === "object"
-              ? pageJson[pageName]
-              : pageJson && typeof pageJson === "object"
-                ? pageJson
-                : {};
-        } catch {
-          contentPages[pageName] = {};
-        }
-      }
-      setStep("content", "pass", `Generated copy for ${Object.keys(contentPages).length || pagesNormalized.length} page(s).`);
-
-      setStep("seo", "running", "Generating metadata, keywords, and slugs...");
-      const seoPages = {};
-      const seoLandingPages = [];
-      promptsUsed.seo = {};
-      const locationHint =
-        String(plannerData.target_audience || "")
-          .split(/\s+/)
-          .slice(-2)
-          .join(" ") || "your city";
-      const seoServices = Array.isArray(plannerData.services) ? plannerData.services.slice(0, 3) : [];
-      for (const service of seoServices) {
-        try {
-          const seoPrompt = promptTemplates.seo({
-            businessName: plannerData.business_name,
-            service,
-            location: locationHint,
-          });
-          promptsUsed.seo[service] = seoPrompt;
-          const seoJson = await jsonCall(seoPrompt);
-          seoLandingPages.push({
-            service,
-            location: locationHint,
-            seo_title: String(seoJson?.seo_title || `${service} ${locationHint}`),
-            meta_description: String(
-              seoJson?.meta_description || `Professional ${service.toLowerCase()} services in ${locationHint}.`
-            ),
-            h1: String(seoJson?.h1 || `${service} ${locationHint}`),
-            content_sections: Array.isArray(seoJson?.content_sections) ? seoJson.content_sections : [],
-          });
-        } catch {
-          seoLandingPages.push({
-            service,
-            location: locationHint,
-            seo_title: `${service} ${locationHint}`,
-            meta_description: `Professional ${service.toLowerCase()} services in ${locationHint}.`,
-            h1: `${service} ${locationHint}`,
-            content_sections: [],
-          });
-        }
-      }
-      pagesNormalized.forEach((pageName) => {
-        seoPages[pageName] = {
-          title: `${titleCase(pageName)} | ${plannerData.business_name}`,
-          description: `${plannerData.industry} for ${plannerData.target_audience}.`,
-          keywords: [plannerData.industry, ...plannerData.services].slice(0, 5),
-          slug: pageName,
-        };
-      });
-      setStep("seo", "pass", `Generated SEO data for ${Object.keys(seoPages).length || pagesNormalized.length} page(s).`);
-
-      setStep("marketing", "running", "Generating marketing assets...");
-      let marketingData = null;
-      try {
-        promptsUsed.marketing = promptTemplates.marketing({
-          businessName: plannerData.business_name,
-          services: plannerData.services,
-        });
-        marketingData = await jsonCall(promptsUsed.marketing);
-      } catch {
-        marketingData = null;
-      }
-      if (marketingData && typeof marketingData === "object") {
-        setMarketingEngineOutput({
-          business: plannerData.business_name,
-          offer: plannerData.services[0] || plannerData.industry,
-          seoPages: seoLandingPages.map((item) => ({
-            title: item.seo_title,
-            slug: String(item.seo_title || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""),
-            summary: item.meta_description,
-          })),
-          emailCampaign:
-            marketingData.email_campaign && typeof marketingData.email_campaign === "object"
-              ? marketingData.email_campaign
-              : {
-                  subject: `Get started with ${plannerData.business_name}`,
-                  body: `Book ${plannerData.services[0] || "our service"} today.`,
-                },
-          socialPosts: Array.isArray(marketingData.social_media_posts) ? marketingData.social_media_posts : [],
-          ads: Array.isArray(marketingData.google_ads_copy) ? marketingData.google_ads_copy : [],
-          landingPages: Array.isArray(marketingData.landing_page_headlines)
-            ? marketingData.landing_page_headlines.map((headline, idx) => ({
-                title: String(headline || `Landing Headline ${idx + 1}`),
-                slug: `landing-${idx + 1}`,
-              }))
-            : [],
-        });
-      }
+      setStep("brand", "pass", "Design system applied.");
+      setStep("layout", "pass", `Layout mapped for ${pageKeys.length || 1} page(s).`);
+      setStep("content", "pass", "Content generated.");
+      setStep("seo", "pass", "SEO signals generated.");
       setStep("marketing", "pass", "Marketing assets generated.");
-
-      setStep("renderer", "running", "Rendering schema-driven website...");
-      const chosenVariant = nextVariants[pipelineVariant] || nextVariants.corporate || {};
-      const toSectionObjects = (pageName, sectionTokens) => {
-        const key = String(pageName || "").toLowerCase();
-        const pageCopy = contentPages[key] || {};
-        const heroData = pageCopy?.hero || {};
-        const seoPage = seoPages[key] || {};
-        const seoKeywordHint = Array.isArray(seoPage?.keywords) ? seoPage.keywords.slice(0, 2).join(", ") : "";
-        return (Array.isArray(sectionTokens) ? sectionTokens : [])
-          .map((token) => String(token || "").trim().toLowerCase())
-          .map((token) => {
-            if (token === "hero") {
-              return {
-                type: "hero",
-                title: String(heroData.headline || `${plannerData.business_name} ${titleCase(key)}`),
-                subtitle: String(
-                  heroData.subtext ||
-                    `${seoKeywordHint ? `${seoKeywordHint}. ` : ""}Professional ${plannerData.industry} services for ${plannerData.target_audience}.`
-                ),
-              };
-            }
-            if (token === "services") {
-              const serviceItems = Array.isArray(pageCopy?.services)
-                ? pageCopy.services
-                    .map((item) => (typeof item === "string" ? item : String(item?.title || item?.name || "")))
-                    .filter(Boolean)
-                : plannerData.services;
-              return { type: "features", items: serviceItems.slice(0, 6) };
-            }
-            if (token === "pricing") {
-              return { type: "features", items: plannerData.pricing.map((item) => `${item.name} ${item.price}`) };
-            }
-            if (token === "faq") {
-              return { type: "features", items: ["Frequently asked questions", "Service coverage", "Satisfaction guarantee"] };
-            }
-            if (token === "testimonials") {
-              return { type: "features", items: ["Trusted by local customers", "5-star reviewed service", "Fast response team"] };
-            }
-            return null;
-          })
-          .filter(Boolean)
-          .concat([
-            {
-              type: "cta",
-              text: String(pageCopy?.cta || heroData?.cta || plannerData.cta || "Get Started Today"),
-            },
-          ]);
-      };
-
-      const pageModels = pagesNormalized.map((name, index) => {
-        const sectionTokens = chosenVariant[name] || ["hero", "services", "cta"];
-        return {
-          name: titleCase(name),
-          sections: toSectionObjects(name, sectionTokens),
-          _pageIndex: index,
-        };
-      });
-      const parsedPayload = { pages: pageModels };
-      const pageJsonMap = pageModels.reduce((acc, page) => {
-        const key = pageKeyFromName(page?.name || "Page", page._pageIndex || 0);
-        const sectionTokens = Array.isArray(chosenVariant[String(page?.name || "").toLowerCase()])
-          ? chosenVariant[String(page?.name || "").toLowerCase()]
-          : [];
-        acc[key] = {
-          name: page.name,
-          sections: sectionTokens,
-          content: page.sections,
-          seo: seoPages[String(page?.name || "").toLowerCase()] || {},
-        };
-        return acc;
-      }, {});
-
-      const effectiveUiDesign = normalizeUiDesignSpec(
-        uiDesignSpec || buildAutoUiDesignSpec(`${plannerData.business_name}|${selectedTemplate?.key || industryTemplate}|${pipelineVariant}`)
-      );
-      setUiDesignSpec(effectiveUiDesign);
-      const pages = buildGeneratedPages(parsedPayload, palette, typography, {
-        mode: "website-app",
-        automationDefs: selectedAutomationDefs,
-        autoRevenueFeatures,
-        uiDesign: effectiveUiDesign,
-      });
-      const firstPageKey = pages["index.html"] ? "index.html" : orderPageKeys(Object.keys(pages))[0] || "index.html";
-      const firstHtml = pages[firstPageKey] || "";
-      setGeneratedPages(pages);
-      setFunnelBuilderData(buildFunnelBuilderData(pages));
-      setActivePage(firstPageKey);
-      setGeneratedSite(firstHtml);
-      setDraftHtml(firstHtml);
-      setEditHistory(firstHtml ? [firstHtml] : []);
-      setLiveUrl("");
-      setPublishedSiteId("");
-      setDnsGuideDomain("");
-      setDnsVerifyStatus("idle");
-      setDnsVerifyMessage("");
-
-      setAiProjectSchema({
-        project: {
-          name: plannerData.business_name,
-          prompt: basePrompt,
-          generatedAt: new Date().toISOString(),
-          pipeline: "planner-brand-layout-content-seo-marketing-renderer",
-        },
-        business: {
-          "blueprint.json": plannerData,
-        },
-        brand: {
-          "palette.json": palette,
-          "typography.json": typography,
-          "identity.json": {
-            tagline: String(brand?.tagline || ""),
-            voice: String(brand?.brand_voice || plannerData.tone_of_voice),
-            iconStyle: String(brand?.icon_style || "modern-flat"),
-          },
-        },
-        layout: {
-          "layout.json": {
-            selectedVariant: pipelineVariant,
-            variants: nextVariants,
-          },
-          "sections.json": chosenVariant,
-          "components.json": {
-            registry: ["hero", "features", "cta"],
-          },
-        },
-        seo: {
-          "seo.json": {
-            pages: seoPages,
-            landing_pages: seoLandingPages,
-          },
-        },
-        marketing: {
-          "marketing.json": marketingData && typeof marketingData === "object" ? marketingData : {},
-        },
-        prompts: {
-          "prompts.json": promptsUsed,
-        },
-        pages: Object.entries(pageJsonMap).reduce((acc, [key, value]) => {
-          const fileName = `${String(key || "").replace(/\.html$/i, "")}.json`;
-          acc[fileName] = value;
-          return acc;
-        }, {}),
-      });
-      setStep("renderer", "pass", `Rendered ${Object.keys(pages).length} page(s).`);
+      setStep("renderer", "pass", `Rendered ${pageKeys.length || 1} page(s).`);
       setPublishStatus("success");
-      setPublishMessage("TitoNova Cloud Engine generation pipeline complete. Schema-driven website ready.");
+      setPublishMessage("Unified generation pipeline complete. Website is ready.");
     } catch (error) {
       const message = String(error?.message || "TitoNova Cloud Engine generation pipeline failed.");
       setStep("renderer", "fail", message);
@@ -5397,6 +6614,7 @@ Return strict JSON:
     setGeneratedSite(nextHtml);
     setDraftHtml(nextHtml);
     setEditHistory(nextHtml ? [nextHtml] : []);
+    setInlineDraftDirty(false);
   };
 
   const handlePreviewLinkNavigation = (event) => {
@@ -6309,7 +7527,7 @@ Keep each item unique, SEO-friendly, and conversion-oriented.`,
       const sourceTexts = [...textEntries.map((item) => item.text), ...placeholderEntries.map((item) => item.text)];
       if (sourceTexts.length === 0) return html || "";
 
-      const response = await fetch("/api/generate", {
+      const response = await fetchWithTimeout("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -6564,6 +7782,154 @@ ${JSON.stringify(sourceTexts)}`,
     URL.revokeObjectURL(url);
   };
 
+  const buildExportBundleFiles = (framework) => {
+    const workingPages = getWorkingPages();
+    const keys = orderPageKeys(Object.keys(workingPages));
+    const slug = makeProjectSlug(projectName);
+    const siteTitle = projectName || "Generated Site";
+    const htmlPages = keys.reduce((acc, key) => {
+      const body = workingPages[key] || "";
+      const title = `${siteTitle} | ${pageLabelFromKey(key)}`;
+      acc[key] = buildDocumentHtml(body, title);
+      return acc;
+    }, {});
+    const pageJson = JSON.stringify(htmlPages, null, 2);
+    const navKeysJson = JSON.stringify(keys, null, 2);
+
+    if (framework === "html" || framework === "webflow" || framework === "tailwind") {
+      const baseFiles = {
+        "README.md":
+          `# ${siteTitle}\n\nExport target: ${framework.toUpperCase()}\n\nProject structure:\n- /pages\n- /components\n- /styles\n- /assets\n`,
+        "project.manifest.json": JSON.stringify(
+          {
+            name: siteTitle,
+            framework,
+            pages: keys,
+            exportedAt: new Date().toISOString(),
+          },
+          null,
+          2
+        ),
+        "components/.gitkeep": "",
+        "styles/.gitkeep": "",
+        "assets/.gitkeep": "",
+      };
+      Object.entries(htmlPages).forEach(([key, content]) => {
+        const pathKey = framework === "webflow" ? `webflow/pages/${key}` : `pages/${key}`;
+        baseFiles[pathKey] = content;
+      });
+      if (framework === "tailwind") {
+        baseFiles["tailwind.config.js"] = `export default { content: ["./pages/**/*.{html,js}"], theme: { extend: {} }, plugins: [] };`;
+        baseFiles["styles/tailwind.css"] = "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n";
+        baseFiles["postcss.config.js"] = "export default { plugins: { tailwindcss: {}, autoprefixer: {} } };";
+      }
+      return baseFiles;
+    }
+
+    if (framework === "react") {
+      return {
+        "package.json": JSON.stringify(
+          {
+            name: `${slug}-react-export`,
+            private: true,
+            version: "1.0.0",
+            type: "module",
+            scripts: { dev: "vite", build: "vite build", preview: "vite preview" },
+            dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+            devDependencies: { vite: "^7.0.0", "@vitejs/plugin-react": "^5.0.0" },
+          },
+          null,
+          2
+        ),
+        "index.html": `<!doctype html><html><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>`,
+        "src/main.jsx": `import React from "react";\nimport { createRoot } from "react-dom/client";\nimport App from "./App.jsx";\nimport "./styles.css";\ncreateRoot(document.getElementById("root")).render(<App />);\n`,
+        "src/App.jsx": `import React, { useState } from "react";\nconst pages = ${pageJson};\nconst nav = ${navKeysJson};\nexport default function App(){const [active,setActive]=useState(nav[0]||"index.html");return(<div><nav style={{display:"flex",gap:8,flexWrap:"wrap",padding:12}}>{nav.map((k)=><button key={k} onClick={()=>setActive(k)}>{k}</button>)}</nav><main dangerouslySetInnerHTML={{__html: pages[active]||""}} /></div>);}\n`,
+        "src/styles.css": "body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#f8fafc;color:#0f172a}",
+        "components/.gitkeep": "",
+        "pages/.gitkeep": "",
+        "styles/.gitkeep": "",
+        "assets/.gitkeep": "",
+      };
+    }
+
+    if (framework === "nextjs") {
+      return {
+        "package.json": JSON.stringify(
+          {
+            name: `${slug}-next-export`,
+            private: true,
+            version: "1.0.0",
+            scripts: { dev: "next dev", build: "next build", start: "next start" },
+            dependencies: { next: "^15.0.0", react: "^19.0.0", "react-dom": "^19.0.0" },
+          },
+          null,
+          2
+        ),
+        "app/layout.jsx": `export const metadata = { title: ${JSON.stringify(siteTitle)} }; export default function RootLayout({ children }) { return <html><body>{children}</body></html>; }`,
+        "app/page.jsx": `import pages from "../pages/pages.json"; export default function Page(){return <main dangerouslySetInnerHTML={{__html: pages["index.html"]||""}} />;}`,
+        "pages/pages.json": pageJson,
+        "components/.gitkeep": "",
+        "styles/.gitkeep": "",
+        "assets/.gitkeep": "",
+      };
+    }
+
+    if (framework === "vue") {
+      return {
+        "package.json": JSON.stringify(
+          {
+            name: `${slug}-vue-export`,
+            private: true,
+            version: "1.0.0",
+            type: "module",
+            scripts: { dev: "vite", build: "vite build", preview: "vite preview" },
+            dependencies: { vue: "^3.5.0" },
+            devDependencies: { vite: "^7.0.0", "@vitejs/plugin-vue": "^5.0.0" },
+          },
+          null,
+          2
+        ),
+        "index.html": `<!doctype html><html><body><div id="app"></div><script type="module" src="/src/main.js"></script></body></html>`,
+        "src/main.js": `import { createApp } from "vue"; import App from "./App.vue"; createApp(App).mount("#app");`,
+        "src/App.vue": `<script setup>\nimport { ref } from "vue";\nconst pages = ${pageJson};\nconst nav = ${navKeysJson};\nconst active = ref(nav[0] || "index.html");\n</script>\n<template><div><nav style="display:flex;gap:8px;flex-wrap:wrap;padding:12px"><button v-for="k in nav" :key="k" @click="active=k">{{k}}</button></nav><main v-html="pages[active] || ''" /></div></template>\n`,
+        "components/.gitkeep": "",
+        "pages/.gitkeep": "",
+        "styles/.gitkeep": "",
+        "assets/.gitkeep": "",
+      };
+    }
+
+    return {};
+  };
+
+  const handleExportProjectBundle = async () => {
+    const framework = EXPORT_FRAMEWORK_OPTIONS.includes(exportFramework) ? exportFramework : "html";
+    const files = buildExportBundleFiles(framework);
+    const entries = Object.entries(files || {});
+    if (entries.length === 0) return;
+    setExportBundleLoading(true);
+    try {
+      const zip = new JSZip();
+      entries.forEach(([filePath, content]) => {
+        zip.file(filePath, String(content ?? ""));
+      });
+      const blob = await zip.generateAsync({ type: "blob" });
+      const slug = makeProjectSlug(projectName);
+      const download = document.createElement("a");
+      const objectUrl = URL.createObjectURL(blob);
+      download.href = objectUrl;
+      download.download = `${slug}-${framework}-export.zip`;
+      document.body.appendChild(download);
+      download.click();
+      download.remove();
+      URL.revokeObjectURL(objectUrl);
+      setPublishStatus("success");
+      setPublishMessage(`Exported ${framework.toUpperCase()} project bundle.`);
+    } finally {
+      setExportBundleLoading(false);
+    }
+  };
+
   const handleGoLive = async ({ republish = false, forceDomain = "" } = {}) => {
     const pages = getWorkingPages();
     if (!pages["index.html"]) return "";
@@ -6757,8 +8123,95 @@ ${JSON.stringify(sourceTexts)}`,
     return ["Core Service 1", "Core Service 2", "Core Service 3"];
   };
 
+  const runUnifiedWebsiteGeneration = async (options = {}) => {
+    const intent = String(options.intent || "standard");
+    const basePrompt = String(options.promptOverride || businessOsPrompt || "").trim();
+    const requiredProjectName = String(options.projectNameOverride || projectName || "").trim();
+    if (!requiredProjectName) {
+      setError("Project Name is required.");
+      setPublishStatus("error");
+      setPublishMessage("Enter Project Name * before generating.");
+      return null;
+    }
+    if (!basePrompt) {
+      setError("Business Prompt is required.");
+      setPublishStatus("error");
+      setPublishMessage("Describe what you want to build before generating.");
+      return null;
+    }
+    if (loading || uiDesignLoading || businessOsLaunching || pipelineRunning) return null;
+
+    const inferredTemplate = String(
+      options.industryTemplateOverride || inferIndustryTemplateFromPrompt(basePrompt)
+    );
+    const inferredName = deriveProjectNameFromBusinessPrompt(basePrompt);
+    const nextProjectName = String(options.projectNameOverride || inferredName || requiredProjectName);
+    const effectivePrompt =
+      intent === "funnel"
+        ? getEffectiveBusinessPrompt(
+            `${basePrompt}\nCreate conversion funnel flow: Ad -> Landing Page -> Booking -> Payment.`,
+            { force: true, solutionMode: "website-app", projectName: nextProjectName }
+          )
+        : getEffectiveBusinessPrompt(basePrompt, {
+            force: true,
+            solutionMode: intent === "business-os" ? "website-app" : solutionMode,
+            projectName: nextProjectName,
+          });
+    const enforcedKeys = Array.isArray(options.enforceFeatureKeys) ? options.enforceFeatureKeys : [];
+
+    if (intent === "business-os" || intent === "pipeline") {
+      setSolutionMode("website-app");
+      setAutoRevenueFeatures(true);
+      setMarketingAutopilotEnabled(true);
+      setIndustryTemplate(inferredTemplate);
+      setAutomationFeatures((previous) => {
+        const next = { ...previous };
+        [...BUSINESS_OS_REQUIRED_FEATURE_KEYS, ...enforcedKeys].forEach((key) => {
+          if (Object.prototype.hasOwnProperty.call(next, key)) next[key] = true;
+        });
+        return next;
+      });
+    }
+
+    if (!options.skipStatusMessage) {
+      setPublishStatus("info");
+      if (intent === "business-os") {
+        setPublishMessage(
+          "Launching TitoNova Cloud Engine Business OS: website, booking, pricing, payments, CRM, automation, and SEO pages."
+        );
+      } else if (intent === "funnel") {
+        setPublishMessage("Generating funnel-ready website with conversion flow.");
+      } else if (intent === "pipeline") {
+        setPublishMessage("Running unified TitoNova Cloud Engine generation pipeline.");
+      } else {
+        setPublishMessage("Generating website with the unified TitoNova Cloud Engine flow.");
+      }
+    }
+
+    const generation = await handleGenerate({
+      projectNameOverride: nextProjectName,
+      industryTemplateOverride: inferredTemplate,
+      enforceFeatureKeys: enforcedKeys,
+      businessOsPrompt: effectivePrompt,
+    });
+    if (!generation) return null;
+
+    if (intent !== "business-os") {
+      runDeferred(async () => {
+        try {
+          await handleAiUiDesign(basePrompt);
+        } catch {
+          // Keep generation resilient if design refinement fails.
+        }
+      });
+    }
+
+    return generation;
+  };
+
   const handleLaunchBusinessOs = async () => {
-    const command = String(businessOsPrompt || "").trim();
+    const rawCommand = String(businessOsPrompt || "").trim();
+    const command = getEffectiveBusinessPrompt(rawCommand, { force: true, solutionMode: "website-app" });
     const requiredProjectName = String(projectName || "").trim();
     if (!requiredProjectName) {
       setError("Project Name is required.");
@@ -6766,37 +8219,24 @@ ${JSON.stringify(sourceTexts)}`,
       setPublishMessage("Enter Project Name * before launching business.");
       return null;
     }
-    if (!command) {
+    if (!rawCommand) {
       setPublishStatus("error");
       setPublishMessage("Enter a Business OS command first (example: Start a cleaning company).");
       setError("Business Prompt is required.");
       return null;
     }
-    const inferredTemplate = inferIndustryTemplateFromPrompt(command);
-    const inferredName = deriveProjectNameFromBusinessPrompt(command);
+    const inferredTemplate = inferIndustryTemplateFromPrompt(rawCommand);
+    const inferredName = deriveProjectNameFromBusinessPrompt(rawCommand);
     const nextProjectName = inferredName || projectName || "New Business";
     setBusinessOsLaunching(true);
     try {
-      setSolutionMode("website-app");
-      setAutoRevenueFeatures(true);
-      setMarketingAutopilotEnabled(true);
-      setIndustryTemplate(inferredTemplate);
-      setAutomationFeatures((previous) => {
-        const next = { ...previous };
-        BUSINESS_OS_REQUIRED_FEATURE_KEYS.forEach((key) => {
-          if (Object.prototype.hasOwnProperty.call(next, key)) next[key] = true;
-        });
-        return next;
-      });
-      setPublishStatus("info");
-      setPublishMessage(
-        "Launching TitoNova Cloud Engine Business OS: website, booking, pricing, Stripe payments, CRM, email automation, landing pages, and SEO pages."
-      );
-      const generation = await handleGenerate({
+      const generation = await runUnifiedWebsiteGeneration({
+        intent: "business-os",
         projectNameOverride: nextProjectName,
         industryTemplateOverride: inferredTemplate,
         enforceFeatureKeys: BUSINESS_OS_REQUIRED_FEATURE_KEYS,
-        businessOsPrompt: command,
+        promptOverride: command,
+        skipStatusMessage: true,
       });
       if (!generation) {
         setBusinessOsOutput(null);
@@ -6901,23 +8341,8 @@ ${JSON.stringify(sourceTexts)}`,
   };
 
   const handlePrimaryGenerateWebsite = async () => {
-    if (loading || uiDesignLoading || businessOsLaunching) return;
-
-    const requiredProjectName = String(projectName || "").trim();
-    if (!requiredProjectName) {
-      setError("Project Name is required.");
-      setPublishStatus("error");
-      setPublishMessage("Enter Project Name * before generating.");
-      return;
-    }
-
     const prompt = String(businessOsPrompt || "").trim();
-    if (!prompt) {
-      setError("Business Prompt is required.");
-      setPublishStatus("error");
-      setPublishMessage("Describe what you want to build before generating.");
-      return;
-    }
+    if (!prompt) return runUnifiedWebsiteGeneration({ intent: "standard" });
     const useBusinessOsFlow =
       /(business\s*os|start\s+a\s+.+\s+company|booking|crm|invoic|invoice|portal|dashboard|membership|subscription|payment integration|analytics|client dashboard|login portal)/i.test(
         prompt
@@ -6927,33 +8352,14 @@ ${JSON.stringify(sourceTexts)}`,
       await handleLaunchBusinessOs();
       return;
     }
-
-    if (prompt) {
-      await handleAiUiDesign(prompt);
-    }
-
-    await handleGenerate();
+    await runUnifiedWebsiteGeneration({ intent: "standard" });
   };
 
   const handleGenerateFunnel = async () => {
-    if (loading || uiDesignLoading || businessOsLaunching) return;
-    const requiredProjectName = String(projectName || "").trim();
-    const prompt = String(businessOsPrompt || "").trim();
-    if (!requiredProjectName) {
-      setError("Project Name is required.");
-      setPublishStatus("error");
-      setPublishMessage("Enter Project Name * before generating funnel.");
-      return;
-    }
-    if (!prompt) {
-      setError("Business Prompt is required.");
-      setPublishStatus("error");
-      setPublishMessage("Describe your business to generate funnel pages.");
-      return;
-    }
-    const generation = await handleGenerate({
+    const generation = await runUnifiedWebsiteGeneration({
+      intent: "funnel",
       enforceFeatureKeys: FUNNEL_REQUIRED_KEYS,
-      businessOsPrompt: `${prompt}\nCreate conversion funnel flow: Ad -> Landing Page -> Booking -> Payment.`,
+      skipStatusMessage: false,
     });
     if (generation?.pages) setFunnelBuilderData(buildFunnelBuilderData(generation.pages));
   };
@@ -7138,11 +8544,125 @@ ${JSON.stringify(sourceTexts)}`,
     if (!value) return;
     setBusinessOsPrompt(value);
     setUiDesignPrompt(value);
+    requestAnimationFrame(() => {
+      const node = promptTextareaRef.current;
+      if (!node) return;
+      node.style.height = "auto";
+      node.style.height = `${node.scrollHeight}px`;
+    });
     if (!projectName.trim()) {
       const base = value.replace(/\s+(website|company|agency|site)$/i, "").trim();
       if (base) setProjectName(base.replace(/\b\w/g, (m) => m.toUpperCase()));
     }
   };
+
+  const handleEnhancePrompt = () => {
+    const base = String(businessOsPrompt || "").trim();
+    if (!base) {
+      setPublishStatus("error");
+      setPublishMessage("Add a prompt first, then click Enhance Prompt.");
+      return;
+    }
+    const boosted = buildPowerPromptBrief(base, { force: true, solutionMode, projectName });
+    setBusinessOsPrompt(boosted);
+    setUiDesignPrompt(boosted);
+    setPowerPromptEnabled(true);
+    setPublishStatus("success");
+    setPublishMessage("Prompt enhanced with TitoNova Power Brief directives.");
+  };
+
+  const handleSmartFillPrompt = () => {
+    const current = String(businessOsPrompt || "").trim();
+    if (!current) {
+      setPublishStatus("error");
+      setPublishMessage("Add a prompt first, then use Smart Fill.");
+      return;
+    }
+    const parsed = parseStructuredBusinessPrompt(current);
+    const intel = derivePromptIntelligence({
+      rawPrompt: current,
+      parsedPrompt: parsed,
+      industryHint: selectedIndustryPackage?.label || "",
+      packagePages: selectedIndustryPackage?.blueprint?.pages || [],
+      packageServices: selectedIndustryPackage?.blueprint?.services || [],
+    });
+    const additions = [];
+    if (!parsed.businessName) additions.push(`Business Name: ${projectName || "Your Business"}`);
+    if (!parsed.industry) additions.push(`Industry: ${selectedIndustryPackage?.label || "Professional Services"}`);
+    if (!parsed.pages?.length) {
+      additions.push("Pages:");
+      intel.suggestedPages.slice(0, 7).forEach((page) => additions.push(`- ${page}`));
+    }
+    if (!parsed.services?.length) {
+      additions.push("Services:");
+      intel.suggestedServices.slice(0, 6).forEach((service) => additions.push(`- ${service}`));
+    }
+    if (!parsed.contact?.phone && !parsed.contact?.email && !parsed.contact?.person) {
+      additions.push("Contact:");
+      additions.push("- Contact Person: Team");
+      additions.push("- Phone: (555) 555-5555");
+      additions.push("- Email: hello@example.com");
+    }
+    if (!parsed.style) additions.push("Style: Modern, clean, conversion-focused, professional");
+    if (!parsed.colors?.length) additions.push("Colors: Blue and green");
+    if (additions.length === 0) {
+      setPublishStatus("info");
+      setPublishMessage("Prompt already contains key structured fields.");
+      return;
+    }
+    const next = `${current}\n\n${additions.join("\n")}`.slice(0, 5000);
+    setBusinessOsPrompt(next);
+    setUiDesignPrompt(next);
+    syncPromptDerivedFields(next);
+    setPublishStatus("success");
+    setPublishMessage(`Smart Fill added ${additions.length} structured line${additions.length === 1 ? "" : "s"} to strengthen prompt quality.`);
+  };
+
+  const resizePromptTextarea = (target) => {
+    if (!target) return;
+    target.style.height = "auto";
+    target.style.height = `${Math.min(target.scrollHeight, 560)}px`;
+  };
+
+  const normalizePromptText = (value) =>
+    String(value || "")
+      .replace(/\r\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/[ \t]+\n/g, "\n")
+      .trim();
+
+  const handleBusinessPromptChange = (event) => {
+    const value = event.target.value;
+    setBusinessOsPrompt(value);
+    setUiDesignPrompt(value);
+    syncPromptDerivedFields(value);
+    if (error) setError("");
+  };
+
+  const handleBusinessPromptInput = (event) => {
+    resizePromptTextarea(event.target);
+  };
+
+  const handleBusinessPromptPaste = (event) => {
+    event.preventDefault();
+    const pastedText = event.clipboardData?.getData("text") || "";
+    const cleaned = normalizePromptText(pastedText);
+    const target = event.currentTarget;
+    const current = String(businessOsPrompt || "");
+    const start = Number(target.selectionStart ?? current.length);
+    const end = Number(target.selectionEnd ?? current.length);
+    const next = `${current.slice(0, start)}${cleaned}${current.slice(end)}`.slice(0, 5000);
+    setBusinessOsPrompt(next);
+    setUiDesignPrompt(next);
+    syncPromptDerivedFields(next);
+    requestAnimationFrame(() => resizePromptTextarea(target));
+  };
+
+  useEffect(() => {
+    const node = promptTextareaRef.current;
+    if (!node) return;
+    resizePromptTextarea(node);
+  }, [businessOsPrompt]);
 
   const handleExportAiSchema = () => {
     if (!aiProjectSchema) return;
@@ -7179,6 +8699,7 @@ ${JSON.stringify(sourceTexts)}`,
 
     setLoading(true);
     setError("");
+    let hasInstantDraft = false;
     try {
       setScoredVariants([]);
       setBestVariantId("");
@@ -7216,7 +8737,20 @@ ${JSON.stringify(sourceTexts)}`,
       const industryFocus = effectiveIndustryPackage?.promptFocus?.join("; ") || "";
       const industryBlueprintPrompt = buildIndustryBlueprintPrompt(effectiveIndustryPackage);
 
-      const requestedWebsitePages = "Home, About, Services, Pricing, Contact, Landing Page, Blog";
+      const rawPromptText = String(options.businessOsPrompt || businessOsPrompt || "");
+      const structuredPromptData = parseStructuredBusinessPrompt(rawPromptText);
+      const generationPromptIntel = derivePromptIntelligence({
+        rawPrompt: rawPromptText,
+        parsedPrompt: structuredPromptData,
+        industryHint: effectiveIndustryPackage?.label || "",
+        packagePages: effectiveIndustryPackage?.blueprint?.pages || [],
+        packageServices: effectiveIndustryPackage?.blueprint?.services || [],
+      });
+      const userDefinedPages =
+        Array.isArray(structuredPromptData.pages) && structuredPromptData.pages.length > 0
+          ? structuredPromptData.pages.join(", ")
+          : "";
+      const requestedWebsitePages = userDefinedPages || "Home, About, Services, Pricing, Contact, Landing Page, Blog";
       const requestedAutomationPages = effectiveAutomationDefs.map((page) => page.label).join(", ");
       const requestedPageList =
         solutionMode === "website"
@@ -7224,9 +8758,73 @@ ${JSON.stringify(sourceTexts)}`,
           : solutionMode === "app"
             ? requestedAutomationPages || "Client Dashboard, Login Portal"
             : `${requestedWebsitePages}, ${requestedAutomationPages}`;
-      const businessOsClause = options.businessOsPrompt
+      const effectivePromptText = getEffectiveBusinessPrompt(rawPromptText, {
+        solutionMode,
+        projectName: resolvedProjectName,
+      });
+      const structuredSections = extractStructuredSectionsFromPrompt(rawPromptText || effectivePromptText);
+      const ultraSmartPlan = ultraSmartModeEnabled
+        ? buildUltraSmartGenerationPlan({
+            projectLabel: resolvedProjectName,
+            mode: solutionMode,
+            parsedPrompt: structuredPromptData,
+            promptIntel: generationPromptIntel,
+            industryPackage: effectiveIndustryPackage,
+            structuredSections,
+            automationDefs: effectiveAutomationDefs,
+          })
+        : null;
+      setLastGenerationPlan(ultraSmartPlan);
+      const smartQaAudit = ultraSmartModeEnabled
+        ? buildSmartQaAudit({
+            promptIntel: generationPromptIntel,
+            plan: ultraSmartPlan,
+            mode: solutionMode,
+            automationDefs: effectiveAutomationDefs,
+          })
+        : null;
+      setLastGenerationAudit(smartQaAudit);
+      const requestedPageNames = requestedPageList
+        .split(",")
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+      const instantParsed = {
+        pages: buildInstantPagesFromPrompt({
+          projectName: resolvedProjectName,
+          promptText: effectivePromptText,
+          pageNames: requestedPageNames,
+          structuredSections,
+          parsedPrompt: structuredPromptData,
+        }),
+      };
+      const instantPages = buildGeneratedPages(instantParsed, effectivePalette, effectiveTypography, {
+        mode: solutionMode,
+        automationDefs: effectiveAutomationDefs,
+        autoRevenueFeatures,
+        uiDesign: effectiveUiDesign,
+      });
+      const instantFirstKey = instantPages["index.html"] ? "index.html" : orderPageKeys(Object.keys(instantPages))[0] || "index.html";
+      const instantFirstHtml = instantPages[instantFirstKey] || "";
+      if (instantFirstHtml) {
+        hasInstantDraft = true;
+        setGeneratedPages(instantPages);
+        setFunnelBuilderData(buildFunnelBuilderData(instantPages));
+        setActivePage(instantFirstKey);
+        setGeneratedSite(instantFirstHtml);
+        setDraftHtml(instantFirstHtml);
+        setEditHistory([instantFirstHtml]);
+        setIsInlineEditing(true);
+        setPublishStatus("info");
+        setPublishMessage("Instant draft generated. Refining with AI...");
+      }
+      const structuredSectionClause =
+        structuredSections.length > 0
+          ? `\nMandatory section order for every primary page: ${structuredSections.join(", ")}.
+Use these exact section keys and do not omit or rename them.`
+          : "";
+      const businessOsClause = effectivePromptText
         ? `
-Business OS Command: ${options.businessOsPrompt}
+Business OS Command: ${effectivePromptText}
 Mandatory system modules: website, booking system, CRM, invoicing system, email automation, and marketing pages.
 Ensure each module has an interactive page with practical workflows and CTA copy.`
         : "";
@@ -7255,8 +8853,8 @@ Use this design spec throughout all generated pages.`;
 	Industry-specific requirements: ${industryFocus}.
 	Industry template blueprint:
 ${industryBlueprintPrompt || "Use standard pages, service offers, pricing packages, and operational workflows for this industry."}
-	Make each page conversion-focused with clear calls to action.${businessOsClause}
-${uiDesignClause}`,
+	Make each page conversion-focused with clear calls to action.${businessOsClause}${structuredSectionClause}
+${uiDesignClause}${buildUltraSmartPromptClause(ultraSmartPlan)}${buildSmartQaPromptClause(smartQaAudit)}`,
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -7264,14 +8862,28 @@ ${uiDesignClause}`,
         throw new Error(payload?.error || "Website generation failed.");
       }
 
-      const parsed = parseModelJson(payload?.result);
+      let parsed = parseModelJson(payload?.result);
+      if (structuredSections.length > 0 && parsed && typeof parsed === "object") {
+        if (Array.isArray(parsed.pages)) {
+          parsed.pages = parsed.pages.map((page) => ({
+            ...(page && typeof page === "object" ? page : {}),
+            sections: [...structuredSections],
+          }));
+        }
+        if (parsed.layout && typeof parsed.layout === "object" && Array.isArray(parsed.layout.pages)) {
+          parsed.layout.pages = parsed.layout.pages.map((page) => ({
+            ...(page && typeof page === "object" ? page : {}),
+            sections: [...structuredSections],
+          }));
+        }
+      }
       let pages = buildGeneratedPages(parsed, effectivePalette, effectiveTypography, {
         mode: solutionMode,
         automationDefs: effectiveAutomationDefs,
         autoRevenueFeatures,
         uiDesign: effectiveUiDesign,
       });
-      const autoBrandPrompt = `${resolvedProjectName} ${String(options.businessOsPrompt || businessOsPrompt || "")} ${effectiveIndustryPackage?.label || ""}`.trim();
+      const autoBrandPrompt = `${resolvedProjectName} ${effectivePromptText} ${effectiveIndustryPackage?.label || ""}`.trim();
       const autoBrandKit = generateBrandKitFromPrompt(autoBrandPrompt);
       setBrandKit(autoBrandKit);
       pages = Object.entries(pages).reduce((acc, [key, html]) => {
@@ -7290,7 +8902,7 @@ ${uiDesignClause}`,
       setAiProjectSchema({
         project: {
           name: resolvedProjectName,
-          prompt: String(options.businessOsPrompt || businessOsPrompt || ""),
+          prompt: effectivePromptText,
           generatedAt: new Date().toISOString(),
         },
         brand: {
@@ -7342,7 +8954,7 @@ ${uiDesignClause}`,
               method: "POST",
               body: {
                 project_name: resolvedProjectName,
-                ai_prompt: String(options.businessOsPrompt || businessOsPrompt || ""),
+                ai_prompt: effectivePromptText,
               },
               token: authToken,
             });
@@ -7447,8 +9059,16 @@ ${uiDesignClause}`,
     } catch (err) {
       const message = String(err?.message || "Unknown generation error.");
       setError(message);
-      setGeneratedSite(null);
-      setGeneratedPages({});
+      if (!hasInstantDraft) {
+        setGeneratedSite(null);
+        setGeneratedPages({});
+      }
+      setPublishStatus("error");
+      setPublishMessage(
+        hasInstantDraft
+          ? `Instant draft is ready. AI refinement failed: ${message}`
+          : message
+      );
       return null;
     } finally {
       setLoading(false);
@@ -7484,12 +9104,25 @@ ${uiDesignClause}`,
           : solutionMode === "app"
             ? requestedAutomationPages || "Client Dashboard, Login Portal"
             : `${requestedWebsitePages}, ${requestedAutomationPages}`;
+      const clonePipelinePhases = [
+        "URL input",
+        "Headless browser render",
+        "DOM + CSS extraction",
+        "Layout detection",
+        "Component detection",
+        "Screenshot vision analysis",
+        "AI code generation",
+        "Pixel accuracy validation",
+        "Final website export",
+      ];
       const cloneLayerDirectives = [
-        "Layout scanner: extract page structure, sections, containers, nav, and hero blocks.",
-        "Design AI: replicate colors, typography, spacing, and responsive breakpoints.",
-        "Component extractor: identify buttons, forms, sliders, cards, popups, CTA blocks.",
-        "Behavior AI: replicate animations, hover effects, modals, and interactions.",
-        "Content AI: rewrite content to remain unique and SEO-safe while preserving intent.",
+        "Headless renderer: execute JavaScript and capture the post-hydration DOM state.",
+        "DOM/CSS extractor: capture semantic structure, computed style intent, and media breakpoints.",
+        "Layout engine: infer container, grid, flex, spacing rhythm, and section hierarchy.",
+        "Component detector: identify reusable UI patterns (header, nav, card, pricing, faq, footer).",
+        "Vision pass: use screenshot-level cues to validate spacing, alignment, and visual hierarchy.",
+        "Code generator: output clean multi-page templates with reusable components.",
+        "Pixel validator: compare rendered clone vs source and tighten major diffs.",
       ];
       const cloneModeDirective =
         cloneDepth === "visual"
@@ -7505,6 +9138,10 @@ ${uiDesignClause}`,
           : "Revenue automation OFF.",
       ].join(" ");
       const competitorListForPrompt = parseCompetitorUrls(competitorUrlsInput);
+      const crawlResult = await crawlWebsiteForClone(insights.normalizedUrl, {
+        maxPages: exactRedesignMode ? 20 : 10,
+      });
+      const pipelineSummary = buildClonePipelineSummary(crawlResult, insights);
       const cloneBlueprint = {
         source_url: insights.normalizedUrl,
         source_host: insights.host,
@@ -7516,6 +9153,22 @@ ${uiDesignClause}`,
         suggested_pages: insights.suggestedPages,
         clone_score_target: insights.cloneScore,
         directives: insights.cloneDirectives,
+        pipeline_phases: clonePipelinePhases,
+        crawl_summary: {
+          mode: pipelineSummary.crawl_mode,
+          pages_crawled: pipelineSummary.pages_crawled,
+          pages_failed: pipelineSummary.pages_failed,
+          reusable_components: pipelineSummary.reusable_components,
+          assets: pipelineSummary.assets,
+          computed_style_signals: pipelineSummary.computed_style_signals || {},
+          dom_component_signals: pipelineSummary.dom_component_signals || {},
+          layout_pattern_signals: pipelineSummary.layout_pattern_signals || {},
+          component_detection_signals: pipelineSummary.component_detection_signals || {},
+          vision_signals: pipelineSummary.vision_signals || {},
+          responsive_signals: pipelineSummary.responsive_signals || {},
+        },
+        detected_navigation: pipelineSummary.navigation,
+        detected_page_map: pipelineSummary.page_map,
       };
 
       const response = await fetch("/api/generate", {
@@ -7531,10 +9184,26 @@ Instant SEO findings: ${insights.seoFindings.join(" ")}
 Instant UI findings: ${insights.uiFindings.join(" ")}
 Source clone blueprint:
 ${JSON.stringify(cloneBlueprint, null, 2)}
+Canonical cloning pipeline (must follow in order):
+${clonePipelinePhases.map((phase, index) => `${index + 1}. ${phase}`).join("\n")}
 Cloning engine layers:
 ${cloneLayerDirectives.join("\n")}
 ${cloneModeDirective}
 ${cloneOptionsDirective}
+Website crawl intelligence:
+- Crawl mode: ${pipelineSummary.crawl_mode}
+- Pages crawled: ${pipelineSummary.pages_crawled}
+- Failed pages: ${pipelineSummary.pages_failed}
+- Reusable components: ${JSON.stringify(pipelineSummary.reusable_components)}
+- Asset counts: ${JSON.stringify(pipelineSummary.assets?.counts || {})}
+- Computed style signals: ${JSON.stringify(pipelineSummary.computed_style_signals || {})}
+- DOM component signals: ${JSON.stringify(pipelineSummary.dom_component_signals || {})}
+- Layout pattern signals: ${JSON.stringify(pipelineSummary.layout_pattern_signals || {})}
+- Component detection signals: ${JSON.stringify(pipelineSummary.component_detection_signals || {})}
+- Vision signals: ${JSON.stringify(pipelineSummary.vision_signals || {})}
+- Responsive signals: ${JSON.stringify(pipelineSummary.responsive_signals || {})}
+Detected page map:
+${JSON.stringify(pipelineSummary.page_map, null, 2)}
 Competitor URLs:
 ${competitorListForPrompt.length > 0 ? competitorListForPrompt.join(", ") : "none provided"}
 TitoNova Cloud Engine UI Design Spec:
@@ -7587,7 +9256,11 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       setGeneratedSite(firstHtml);
       setDraftHtml(firstHtml);
       setEditHistory([firstHtml]);
-      setPublishMessage(`${exactRedesignMode ? "Exact" : "Modern"} redesign generated from ${insights.host}`);
+      setPublishMessage(
+        `${exactRedesignMode ? "Exact" : "Modern"} redesign generated from ${insights.host}. ` +
+        `Clone intelligence: ${pipelineSummary.pages_crawled} page${pipelineSummary.pages_crawled === 1 ? "" : "s"} crawled, ` +
+        `${pipelineSummary.reusable_components.length} reusable pattern${pipelineSummary.reusable_components.length === 1 ? "" : "s"} detected.`
+      );
       setPublishStatus("success");
       setLiveUrl("");
       setPublishedSiteId("");
@@ -7634,7 +9307,42 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     setFieldLockMode(true);
     setDraftHtml(currentHtml);
     setEditHistory([currentHtml]);
+    setRedoHistory([]);
+    setInlineDraftDirty(false);
+    setInlineSmartStatus("");
+    setInlineSmartCommand("");
+    setInlineSelectionText("");
+    setInlineSelectionSection("");
+    setInlineSuggestions([]);
+    setInlineAutoApplyHighConfidence(false);
+    setInlineAdvancedOpen(false);
+    setInlineLastPublishSnapshot(null);
+    setInlineCheckpoints([
+      {
+        id: `cp-${Date.now()}`,
+        label: "Start Edit",
+        pageKey: activePage,
+        html: currentHtml,
+        at: new Date().toISOString(),
+      },
+    ]);
     setIsInlineEditing(true);
+    window.requestAnimationFrame(() => {
+      const root = previewEditableRef.current;
+      if (!root) return;
+      const firstEditable =
+        root.querySelector("[data-locked-edit='true']") ||
+        root.querySelector("h1, h2, h3, p, li, a, button, span, small, label");
+      if (!(firstEditable instanceof HTMLElement)) return;
+      firstEditable.focus();
+      const selection = window.getSelection();
+      if (!selection) return;
+      const range = document.createRange();
+      range.selectNodeContents(firstEditable);
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
   };
 
   const handleSaveInlineEdit = () => {
@@ -7642,16 +9350,37 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     setGeneratedSite(nextHtml);
     setDraftHtml(nextHtml);
     setEditHistory([nextHtml]);
-    setIsInlineEditing(false);
+    setRedoHistory([]);
+    setInlineDraftDirty(false);
+    setInlineSelectionText("");
+    setInlineSelectionSection("");
+    setInlineSuggestions([]);
+    setInlineAutoApplyHighConfidence(false);
+    setInlineAdvancedOpen(false);
+    setInlineLastPublishSnapshot(null);
+    setInlineCheckpoints([]);
+    setIsInlineEditing(true);
     setPublishStatus("success");
-    setPublishMessage("Inline edits saved.");
+    setPublishMessage("Inline edits saved. Edit mode remains active.");
   };
 
   const handleCancelInlineEdit = () => {
+    if (inlineDraftDirty && !window.confirm("Discard unsaved inline edits?")) return;
     const currentHtml = generatedPages[activePage] || generatedSite || "";
     setDraftHtml(currentHtml);
     setEditHistory(currentHtml ? [currentHtml] : []);
-    setIsInlineEditing(false);
+    setRedoHistory([]);
+    setInlineDraftDirty(false);
+    setInlineSelectionText("");
+    setInlineSelectionSection("");
+    setInlineSuggestions([]);
+    setInlineAutoApplyHighConfidence(false);
+    setInlineAdvancedOpen(false);
+    setInlineLastPublishSnapshot(null);
+    setInlineCheckpoints([]);
+    setIsInlineEditing(true);
+    setPublishStatus("info");
+    setPublishMessage("Changes discarded. Edit mode remains active.");
   };
 
   const handleUndoInlineEdit = () => {
@@ -7659,21 +9388,823 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       if (previous.length <= 1) return previous;
       const next = previous.slice(0, -1);
       const restored = next[next.length - 1] || "";
+      const removed = previous[previous.length - 1] || "";
+      if (removed) {
+        setRedoHistory((redoPrevious) => [removed, ...redoPrevious].slice(0, 50));
+      }
       setDraftHtml(restored);
+      setInlineDraftDirty(true);
       if (previewEditableRef.current) previewEditableRef.current.innerHTML = restored;
       return next;
     });
+  };
+
+  const handleRedoInlineEdit = () => {
+    setRedoHistory((previousRedo) => {
+      if (previousRedo.length === 0) return previousRedo;
+      const [nextHtml, ...restRedo] = previousRedo;
+      if (!nextHtml) return restRedo;
+      setDraftHtml(nextHtml);
+      setInlineDraftDirty(true);
+      if (previewEditableRef.current) previewEditableRef.current.innerHTML = nextHtml;
+      setEditHistory((previousHistory) => {
+        if (previousHistory[previousHistory.length - 1] === nextHtml) return previousHistory;
+        return [...previousHistory.slice(-49), nextHtml];
+      });
+      return restRedo;
+    });
+  };
+
+  const appendInlineHistory = (nextHtml) => {
+    setEditHistory((previous) => {
+      if (previous[previous.length - 1] === nextHtml) return previous;
+      return [...previous.slice(-49), nextHtml];
+    });
+    setRedoHistory([]);
   };
 
   const snapshotInlineDraft = () => {
     if (!isInlineEditing) return;
     const nextHtml = previewEditableRef.current?.innerHTML || draftHtml || generatedSite || "";
     setDraftHtml(nextHtml);
+    appendInlineHistory(nextHtml);
+  };
+
+  const clearInlineHoverNode = () => {
+    const node = inlineHoverNodeRef.current;
+    if (!(node instanceof HTMLElement)) return;
+    node.style.boxShadow = node.dataset.tnOldBoxShadow || "";
+    node.style.backgroundColor = node.dataset.tnOldBackground || "";
+    node.style.cursor = node.dataset.tnOldCursor || "";
+    node.style.transition = node.dataset.tnOldTransition || "";
+    delete node.dataset.tnOldBoxShadow;
+    delete node.dataset.tnOldBackground;
+    delete node.dataset.tnOldCursor;
+    delete node.dataset.tnOldTransition;
+    inlineHoverNodeRef.current = null;
+  };
+
+  const handleInlineHoverMove = (event) => {
+    if (!isInlineEditing) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+    const node = target.closest("h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label");
+    if (!(node instanceof HTMLElement)) {
+      clearInlineHoverNode();
+      return;
+    }
+    if (inlineHoverNodeRef.current === node) return;
+    clearInlineHoverNode();
+    node.dataset.tnOldBoxShadow = node.style.boxShadow || "";
+    node.dataset.tnOldBackground = node.style.backgroundColor || "";
+    node.dataset.tnOldCursor = node.style.cursor || "";
+    node.dataset.tnOldTransition = node.style.transition || "";
+    node.style.transition = node.style.transition || "box-shadow 120ms ease, background-color 120ms ease";
+    node.style.boxShadow = "inset 0 0 0 1px rgba(34,197,94,0.75)";
+    node.style.backgroundColor = "rgba(34,197,94,0.08)";
+    node.style.cursor = "text";
+    inlineHoverNodeRef.current = node;
+  };
+
+  const handleInlineHoverLeave = () => {
+    clearInlineHoverNode();
+  };
+
+  const parseInlineSmartAction = (rawValue) => {
+    const value = String(rawValue || "")
+      .trim()
+      .toLowerCase()
+      .replace(/^\//, "");
+    if (!value) return "";
+    if (/(smart|improve|best|premium|convert|conversion|optimize)/.test(value)) return "smart";
+    if (value.includes("short")) return "shorten";
+    if (value.includes("expand")) return "expand";
+    if (value.includes("seo")) return "seo";
+    if (value.includes("cta")) return "cta";
+    if (value.includes("professional")) return "professional";
+    if (value.includes("friendly")) return "friendly";
+    if (value.includes("fix") || value.includes("clean")) return "fix";
+    return "";
+  };
+
+  const detectInlineSectionType = (node, root) => {
+    if (!(node instanceof Element) || !(root instanceof Element)) return "general";
+    const tokens = [];
+    let cursor = node;
+    let depth = 0;
+    while (cursor && root.contains(cursor) && depth < 8) {
+      tokens.push(
+        String(cursor.getAttribute("data-tn-section") || ""),
+        String(cursor.getAttribute("data-section") || ""),
+        String(cursor.getAttribute("id") || ""),
+        String(cursor.getAttribute("class") || ""),
+        String(cursor.getAttribute("aria-label") || "")
+      );
+      const heading = cursor.querySelector("h1, h2, h3, h4, summary, strong");
+      if (heading) tokens.push(String(heading.textContent || ""));
+      cursor = cursor.parentElement;
+      depth += 1;
+    }
+    const text = tokens.join(" ").toLowerCase();
+    if (/(faq|question|answer)/.test(text)) return "faq";
+    if (/(pricing|plan|package|tier|quote|billing|payment)/.test(text)) return "pricing";
+    if (/(hero|headline|banner|above-the-fold)/.test(text)) return "hero";
+    if (/(testimonial|review|success story|case study|trusted by)/.test(text)) return "testimonials";
+    if (/(service|offer|solution|what we do)/.test(text)) return "services";
+    if (/(contact|book|appointment|schedule|call us|get in touch)/.test(text)) return "contact";
+    if (/(about|mission|story|team)/.test(text)) return "about";
+    return "general";
+  };
+
+  const runInlineSmartRewrite = (selectedText, actionKey, context = {}) => {
+    const source = String(selectedText || "").trim();
+    if (!source) return "";
+    const cleaned = source.replace(/\s+/g, " ").trim();
+    const sentenceParts = cleaned.split(/(?<=[.!?])\s+/).filter(Boolean);
+    const firstSentence = sentenceParts[0] || cleaned;
+    const projectKeyword = projectName.trim() || "your business";
+    const industryKeyword = selectedIndustryPackage?.label || "your industry";
+    const sectionType = String(context.sectionType || "general").toLowerCase();
+    const industryTone = /(health|care|medical|hcbs|clinic)/i.test(industryKeyword)
+      ? "compassionate and trustworthy"
+      : /(saas|software|tech|platform|cloud)/i.test(industryKeyword)
+        ? "clear, outcome-focused, and modern"
+        : /(retail|e-?commerce|shop|store)/i.test(industryKeyword)
+          ? "benefit-led and conversion-focused"
+          : "professional and conversion-focused";
+
+    if (actionKey === "smart") {
+      if (sectionType === "hero") {
+        return `${cleaned.replace(/[.!?]+$/, "")}. ${projectKeyword} helps clients achieve results with ${industryTone} execution and fast onboarding.`;
+      }
+      if (sectionType === "pricing") {
+        return `${cleaned.replace(/[.!?]+$/, "")}. Clear deliverables, transparent pricing, and support are included so buyers can choose confidently.`;
+      }
+      if (sectionType === "faq") {
+        return `${cleaned.replace(/[.!?]+$/, "")}. We keep answers practical, fast, and easy to follow so visitors can move to the next step.`;
+      }
+      if (sectionType === "contact") {
+        return `${cleaned.replace(/[.!?]+$/, "")}. Reach out now and ${projectKeyword} will respond quickly with clear next steps.`;
+      }
+      if (sectionType === "services") {
+        return `${cleaned.replace(/[.!?]+$/, "")}. Every service is designed for reliable outcomes, clear communication, and measurable value.`;
+      }
+      if (sectionType === "testimonials") {
+        return `${cleaned.replace(/[.!?]+$/, "")}. Clients consistently highlight responsive support, strong outcomes, and dependable delivery.`;
+      }
+      return `${cleaned.replace(/[.!?]+$/, "")}. ${projectKeyword} delivers ${industryKeyword} solutions with ${industryTone} standards and measurable outcomes.`;
+    }
+
+    if (actionKey === "shorten") {
+      const words = cleaned.split(/\s+/);
+      const limited = words.slice(0, Math.max(8, Math.floor(words.length * 0.55))).join(" ");
+      return limited.length < cleaned.length ? `${limited.replace(/[,.!?;:]+$/, "")}.` : firstSentence;
+    }
+    if (actionKey === "expand") {
+      if (sectionType === "faq") return `${cleaned} We guide each step clearly, explain timelines, and follow up quickly so families stay informed.`;
+      if (sectionType === "pricing") return `${cleaned} Every plan includes transparent deliverables, clear timelines, and responsive support with no hidden surprises.`;
+      if (sectionType === "hero") return `${cleaned} Partner with ${projectKeyword} for fast onboarding, trusted execution, and measurable outcomes.`;
+      return `${cleaned} We deliver measurable results with clear timelines, transparent updates, and trusted support.`;
+    }
+    if (actionKey === "seo") {
+      const sectionKeyword =
+        sectionType === "pricing"
+          ? "pricing options"
+          : sectionType === "faq"
+            ? "frequently asked questions"
+            : sectionType === "services"
+              ? "service solutions"
+              : sectionType === "contact"
+                ? "contact support"
+                : "trusted solutions";
+      return `${cleaned} ${projectKeyword} delivers trusted ${industryKeyword} ${sectionKeyword} with responsive support and proven outcomes.`;
+    }
+    if (actionKey === "cta") {
+      const stripped = cleaned.replace(/[.!?]+$/, "");
+      if (sectionType === "pricing") {
+        return `Choose the best-fit plan and start with ${projectKeyword} today. ${stripped}.`;
+      }
+      if (sectionType === "faq") {
+        return `Still have questions? Contact ${projectKeyword} today for clear answers and next steps. ${stripped}.`;
+      }
+      if (sectionType === "hero") {
+        return `Get started with ${projectKeyword} today and see results faster. ${stripped}.`;
+      }
+      return `Book your consultation with ${projectKeyword} today to get started quickly and confidently. ${stripped}.`;
+    }
+    if (actionKey === "professional") {
+      return cleaned
+        .replace(/\b(can't|cannot)\b/gi, "can not")
+        .replace(/\b(don't)\b/gi, "do not")
+        .replace(/\b(we're)\b/gi, "we are")
+        .replace(/\b(you'll)\b/gi, "you will");
+    }
+    if (actionKey === "friendly") {
+      return cleaned
+        .replace(/\b(do not)\b/gi, "don't")
+        .replace(/\b(we are)\b/gi, "we're")
+        .replace(/\b(you will)\b/gi, "you'll")
+        .replace(/\.$/, "!") || `${cleaned}!`;
+    }
+    if (actionKey === "fix") {
+      const normalized = cleaned.replace(/\s+/g, " ").replace(/\s([,.!?;:])/g, "$1");
+      return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+    }
+    return "";
+  };
+
+  const buildInlineSuggestions = (text, sectionType = "general") => {
+    const source = String(text || "").trim();
+    if (!source) return [];
+    const section = String(sectionType || "general").toLowerCase();
+    const preferredBySection = {
+      hero: ["smart", "cta", "shorten", "seo"],
+      pricing: ["smart", "cta", "professional", "shorten"],
+      faq: ["smart", "fix", "shorten", "professional"],
+      testimonials: ["smart", "professional", "shorten", "cta"],
+      services: ["smart", "shorten", "seo", "cta"],
+      contact: ["smart", "cta", "professional", "shorten"],
+      about: ["smart", "professional", "shorten", "seo"],
+      general: ["smart", "shorten", "professional", "seo", "cta"],
+    };
+    const confidenceForSuggestion = (actionKey, rewrittenText) => {
+      const preferred = preferredBySection[section] || preferredBySection.general;
+      const preferenceIndex = Math.max(0, preferred.indexOf(actionKey));
+      const sourceLen = Math.max(1, source.length);
+      const rewrittenLen = Math.max(1, String(rewrittenText || "").length);
+      const deltaRatio = Math.min(1, Math.abs(rewrittenLen - sourceLen) / sourceLen);
+      let score = 74;
+      score += Math.max(0, 12 - preferenceIndex * 4);
+      if (actionKey === "shorten" && rewrittenLen < sourceLen) score += 5;
+      if (actionKey === "cta" && /(book|start|get started|contact|choose)/i.test(String(rewrittenText || ""))) score += 4;
+      if (actionKey === "seo" && /(trusted|solutions|support|outcomes|pricing|questions)/i.test(String(rewrittenText || ""))) score += 4;
+      if (deltaRatio <= 0.42) score += 3;
+      if (deltaRatio > 0.75) score -= 5;
+      return Math.max(55, Math.min(97, Math.round(score)));
+    };
+    const templatesBySection = {
+      hero: [
+        { key: "smart", label: "Hero smart upgrade" },
+        { key: "shorten", label: "Hero punchline" },
+        { key: "cta", label: "Hero CTA" },
+        { key: "seo", label: "Hero SEO line" },
+      ],
+      pricing: [
+        { key: "smart", label: "Pricing smart upgrade" },
+        { key: "cta", label: "Pricing CTA" },
+        { key: "professional", label: "Trust-focused pricing" },
+        { key: "shorten", label: "Clearer pricing copy" },
+      ],
+      faq: [
+        { key: "smart", label: "FAQ smart answer" },
+        { key: "fix", label: "Clear answer" },
+        { key: "shorten", label: "Concise FAQ" },
+        { key: "professional", label: "Reassuring tone" },
+      ],
+      testimonials: [
+        { key: "smart", label: "Proof smart polish" },
+        { key: "professional", label: "Proof-focused tone" },
+        { key: "shorten", label: "Stronger quote" },
+        { key: "cta", label: "Trust CTA" },
+      ],
+      services: [
+        { key: "smart", label: "Service smart upgrade" },
+        { key: "shorten", label: "Service clarity" },
+        { key: "seo", label: "Service SEO" },
+        { key: "cta", label: "Book this service" },
+      ],
+      contact: [
+        { key: "smart", label: "Contact smart CTA" },
+        { key: "cta", label: "Contact CTA" },
+        { key: "professional", label: "Professional contact tone" },
+        { key: "shorten", label: "Simpler contact copy" },
+      ],
+      about: [
+        { key: "smart", label: "About smart polish" },
+        { key: "professional", label: "Mission tone" },
+        { key: "shorten", label: "Tighter story" },
+        { key: "seo", label: "About SEO line" },
+      ],
+      general: [
+        { key: "smart", label: "Smart rewrite" },
+        { key: "shorten", label: "Make shorter" },
+        { key: "professional", label: "Professional tone" },
+        { key: "seo", label: "SEO boost" },
+        { key: "cta", label: "Add CTA" },
+      ],
+    };
+    const candidates = (templatesBySection[section] || templatesBySection.general)
+      .map((item) => {
+        const rewritten = runInlineSmartRewrite(source, item.key, { sectionType: section });
+        return {
+          ...item,
+          text: rewritten,
+          confidence: confidenceForSuggestion(item.key, rewritten),
+        };
+      })
+      .filter((item) => item.text && item.text !== source);
+    const unique = [];
+    const seen = new Set();
+    candidates.forEach((item) => {
+      if (seen.has(item.text)) return;
+      seen.add(item.text);
+      unique.push(item);
+    });
+    return unique.sort((a, b) => Number(b.confidence || 0) - Number(a.confidence || 0)).slice(0, 3);
+  };
+
+  const getInlineCommandOptions = (sectionType = "general") => {
+    const section = String(sectionType || "general").toLowerCase();
+    const optionsBySection = {
+      hero: ["/smart", "/shorten", "/cta", "/seo", "/expand", "/professional", "/fix"],
+      pricing: ["/smart", "/cta", "/professional", "/shorten", "/seo", "/expand", "/fix"],
+      faq: ["/smart", "/fix", "/shorten", "/professional", "/expand", "/seo", "/friendly"],
+      testimonials: ["/smart", "/professional", "/shorten", "/cta", "/seo", "/friendly", "/fix"],
+      services: ["/smart", "/shorten", "/seo", "/cta", "/expand", "/professional", "/fix"],
+      contact: ["/smart", "/cta", "/professional", "/shorten", "/friendly", "/seo", "/fix"],
+      about: ["/smart", "/professional", "/shorten", "/seo", "/expand", "/friendly", "/fix"],
+      general: ["/smart", "/shorten", "/expand", "/seo", "/cta", "/professional", "/friendly", "/fix"],
+    };
+    return optionsBySection[section] || optionsBySection.general;
+  };
+
+  const inlineBestSuggestion = useMemo(
+    () => (Array.isArray(inlineSuggestions) && inlineSuggestions.length > 0 ? inlineSuggestions[0] : null),
+    [inlineSuggestions]
+  );
+
+  const captureInlineSelection = () => {
+    if (!isInlineEditing) return;
+    const root = previewEditableRef.current;
+    const selection = window.getSelection();
+    if (!root || !selection || selection.rangeCount < 1) {
+      setInlineSelectionText("");
+      setInlineSelectionSection("");
+      setInlineSuggestions([]);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const selectedText = String(selection.toString() || "").trim();
+    const ancestorNode =
+      range.commonAncestorContainer instanceof Element
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer?.parentElement;
+    if (!ancestorNode || !root.contains(ancestorNode)) {
+      setInlineSelectionText("");
+      setInlineSelectionSection("");
+      setInlineSuggestions([]);
+      return;
+    }
+    const fallbackNode = ancestorNode.closest("h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label");
+    const fallbackText = String(fallbackNode?.textContent || "").replace(/\s+/g, " ").trim();
+    const effectiveText = selectedText || fallbackText;
+    if (!effectiveText) {
+      setInlineSelectionText("");
+      setInlineSelectionSection("");
+      setInlineSuggestions([]);
+      return;
+    }
+    const sectionType = detectInlineSectionType(ancestorNode, root);
+    setInlineSelectionText(effectiveText);
+    setInlineSelectionSection(sectionType);
+    const nextSuggestions = buildInlineSuggestions(effectiveText, sectionType);
+    setInlineSuggestions(nextSuggestions);
+    const best = Array.isArray(nextSuggestions) && nextSuggestions.length > 0 ? nextSuggestions[0] : null;
+    const bestConfidence = Number(best?.confidence || 0);
+    if (inlineAutoApplyHighConfidence && best && bestConfidence >= 90) {
+      handleApplyInlineSuggestion(best.text, `best suggestion (${best.label})`, bestConfidence);
+    }
+  };
+
+  const handleRunInlineSmartCommand = (rawCommand) => {
+    if (!isInlineEditing) return;
+    const actionKey = parseInlineSmartAction(rawCommand || inlineSmartCommand);
+    if (!actionKey) {
+      setInlineSmartStatus("Use /smart, /shorten, /expand, /seo, /cta, /professional, /friendly, or /fix.");
+      return;
+    }
+    const root = previewEditableRef.current;
+    const selection = window.getSelection();
+    if (!root || !selection || selection.rangeCount < 1) {
+      setInlineSmartStatus("Select text in the preview first.");
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const selectedText = selection.toString().trim();
+    const ancestorNode =
+      range.commonAncestorContainer instanceof Element
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer?.parentElement;
+    if (!ancestorNode || !root.contains(ancestorNode)) {
+      setInlineSmartStatus("Click inside text in the preview first.");
+      return;
+    }
+    const fallbackNode = ancestorNode.closest("h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label");
+    const fallbackText = String(fallbackNode?.textContent || "").replace(/\s+/g, " ").trim();
+    const effectiveText = selectedText || fallbackText;
+    if (!effectiveText) {
+      setInlineSmartStatus("Click or select text in the preview first.");
+      return;
+    }
+    const sectionType = detectInlineSectionType(ancestorNode, root);
+    const rewritten = runInlineSmartRewrite(effectiveText, actionKey, { sectionType });
+    if (!rewritten || rewritten === effectiveText) {
+      setInlineSmartStatus("No rewrite needed for this selection.");
+      return;
+    }
+    if (selectedText) {
+      range.deleteContents();
+      const nextNode = document.createTextNode(rewritten);
+      range.insertNode(nextNode);
+      const nextRange = document.createRange();
+      nextRange.setStartAfter(nextNode);
+      nextRange.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(nextRange);
+    } else if (fallbackNode instanceof HTMLElement) {
+      fallbackNode.textContent = rewritten;
+      const nextRange = document.createRange();
+      nextRange.selectNodeContents(fallbackNode);
+      nextRange.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(nextRange);
+    }
+    const nextHtml = root.innerHTML;
+    setDraftHtml(nextHtml);
+    setInlineDraftDirty(true);
+    appendInlineHistory(nextHtml);
+    setInlineSmartStatus(`Applied ${actionKey} rewrite (${sectionType}).`);
+    setInlineSelectionText("");
+    setInlineSelectionSection("");
+    setInlineSuggestions([]);
+  };
+
+  const handleApplyInlineSuggestion = (suggestionText, sourceLabel = "smart suggestion", confidence = null) => {
+    const root = previewEditableRef.current;
+    const selection = window.getSelection();
+    if (!root || !selection || selection.rangeCount < 1) {
+      setInlineSmartStatus("Select text in the preview first.");
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const selectedText = selection.toString().trim();
+    const ancestorNode =
+      range.commonAncestorContainer instanceof Element
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer?.parentElement;
+    if (!ancestorNode || !root.contains(ancestorNode)) {
+      setInlineSmartStatus("Click inside text in the preview first.");
+      return;
+    }
+    const fallbackNode = ancestorNode.closest("h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label");
+    const fallbackText = String(fallbackNode?.textContent || "").replace(/\s+/g, " ").trim();
+    if (!selectedText && !fallbackText) {
+      setInlineSmartStatus("Click or select text in the preview first.");
+      return;
+    }
+    const rewritten = String(suggestionText || "").trim();
+    if (!rewritten) return;
+    if (selectedText) {
+      range.deleteContents();
+      const nextNode = document.createTextNode(rewritten);
+      range.insertNode(nextNode);
+      const nextRange = document.createRange();
+      nextRange.setStartAfter(nextNode);
+      nextRange.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(nextRange);
+    } else if (fallbackNode instanceof HTMLElement) {
+      fallbackNode.textContent = rewritten;
+      const nextRange = document.createRange();
+      nextRange.selectNodeContents(fallbackNode);
+      nextRange.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(nextRange);
+    }
+    const nextHtml = root.innerHTML;
+    setDraftHtml(nextHtml);
+    setInlineDraftDirty(true);
     setEditHistory((previous) => {
       if (previous[previous.length - 1] === nextHtml) return previous;
       return [...previous.slice(-49), nextHtml];
     });
+    setInlineSmartStatus(
+      confidence
+        ? `Applied ${sourceLabel} (${Math.round(Number(confidence) || 0)}% confidence).`
+        : `Applied ${sourceLabel}.`
+    );
+    setInlineCheckpoints((previous) => [
+      ...previous.slice(-5),
+      {
+        id: `cp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        label: String(sourceLabel || "Smart Apply").slice(0, 28),
+        pageKey: activePage,
+        html: nextHtml,
+        at: new Date().toISOString(),
+      },
+    ]);
+    setInlineSelectionText("");
+    setInlineSelectionSection("");
+    setInlineSuggestions([]);
   };
+
+  const handleImproveInlinePageCopy = () => {
+    if (!isInlineEditing || inlineBulkImproving) return 0;
+    const root = previewEditableRef.current;
+    if (!root) return 0;
+    setInlineBulkImproving(true);
+    let changedCount = 0;
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(`<body>${root.innerHTML || ""}</body>`, "text/html");
+      const textNodes = Array.from(
+        doc.body.querySelectorAll("h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label")
+      );
+      textNodes.slice(0, 120).forEach((node) => {
+        if (!(node instanceof HTMLElement)) return;
+        if (node.children.length > 0) return;
+        const source = String(node.textContent || "").replace(/\s+/g, " ").trim();
+        if (!source || source.length < 5) return;
+        const sectionType = detectInlineSectionType(node, doc.body);
+        const actionKey = source.length > 130 ? "shorten" : "fix";
+        const rewritten = runInlineSmartRewrite(source, actionKey, { sectionType });
+        if (!rewritten || rewritten === source) return;
+        node.textContent = rewritten;
+        changedCount += 1;
+      });
+      const nextHtml = doc.body.innerHTML;
+      if (nextHtml && nextHtml !== root.innerHTML) {
+        root.innerHTML = nextHtml;
+        setDraftHtml(nextHtml);
+        setInlineDraftDirty(true);
+        appendInlineHistory(nextHtml);
+        setInlineCheckpoints((previous) => [
+          ...previous.slice(-5),
+          {
+            id: `cp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            label: "Improve Page",
+            pageKey: activePage,
+            html: nextHtml,
+            at: new Date().toISOString(),
+          },
+        ]);
+      }
+      setInlineSmartStatus(
+        changedCount > 0
+          ? `Improved copy across ${changedCount} text block${changedCount === 1 ? "" : "s"}.`
+          : "No page-wide copy fixes were needed."
+      );
+    } finally {
+      setInlineBulkImproving(false);
+    }
+    return changedCount;
+  };
+
+  const handleImproveInlineSectionCopy = () => {
+    if (!isInlineEditing || inlineBulkImproving) return;
+    const root = previewEditableRef.current;
+    const selection = window.getSelection();
+    if (!root || !selection || selection.rangeCount < 1) {
+      setInlineSmartStatus("Select text inside a section first.");
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const anchorNode =
+      range.commonAncestorContainer instanceof Element
+        ? range.commonAncestorContainer
+        : range.commonAncestorContainer?.parentElement;
+    if (!anchorNode || !root.contains(anchorNode)) {
+      setInlineSmartStatus("Select text inside a section first.");
+      return;
+    }
+    const sectionRoot =
+      anchorNode.closest("[data-tn-section], section, article, main, [id*='section'], [class*='section']") || anchorNode;
+    if (!(sectionRoot instanceof Element)) {
+      setInlineSmartStatus("Could not detect section root.");
+      return;
+    }
+    setInlineBulkImproving(true);
+    let changedCount = 0;
+    try {
+      const textNodes = Array.from(
+        sectionRoot.querySelectorAll("h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label")
+      );
+      textNodes.slice(0, 80).forEach((node) => {
+        if (!(node instanceof HTMLElement)) return;
+        if (node.children.length > 0) return;
+        const source = String(node.textContent || "").replace(/\s+/g, " ").trim();
+        if (!source || source.length < 5) return;
+        const sectionType = detectInlineSectionType(node, root);
+        const actionKey = source.length > 130 ? "shorten" : "fix";
+        const rewritten = runInlineSmartRewrite(source, actionKey, { sectionType });
+        if (!rewritten || rewritten === source) return;
+        node.textContent = rewritten;
+        changedCount += 1;
+      });
+      const nextHtml = root.innerHTML;
+      setDraftHtml(nextHtml);
+      setInlineDraftDirty(true);
+      appendInlineHistory(nextHtml);
+      setInlineCheckpoints((previous) => [
+        ...previous.slice(-5),
+        {
+          id: `cp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          label: "Improve Section",
+          pageKey: activePage,
+          html: nextHtml,
+          at: new Date().toISOString(),
+        },
+      ]);
+      setInlineSmartStatus(
+        changedCount > 0
+          ? `Improved ${changedCount} text block${changedCount === 1 ? "" : "s"} in this section.`
+          : "No section-level improvements were needed."
+      );
+    } finally {
+      setInlineBulkImproving(false);
+    }
+  };
+
+  const handleImproveAndSaveInlinePageCopy = () => {
+    if (!isInlineEditing || inlineBulkImproving) return;
+    handleImproveInlinePageCopy();
+    handleSaveInlineEdit();
+  };
+
+  const handleImproveSavePublishInline = async () => {
+    if (!isInlineEditing || inlineBulkImproving || publishing) return;
+    const snapshotHtml = generatedPages[activePage] || generatedSite || "";
+    if (snapshotHtml) {
+      setInlineLastPublishSnapshot({
+        pageKey: activePage,
+        html: snapshotHtml,
+        savedAt: new Date().toISOString(),
+      });
+      setInlineCheckpoints((previous) => [
+        ...previous.slice(-5),
+        {
+          id: `cp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          label: "Pre Publish",
+          pageKey: activePage,
+          html: snapshotHtml,
+          at: new Date().toISOString(),
+        },
+      ]);
+    }
+    handleImproveAndSaveInlinePageCopy();
+    await handleGoLive();
+  };
+
+  const handleRollbackInlinePublishSnapshot = () => {
+    const snapshot = inlineLastPublishSnapshot;
+    if (!snapshot?.pageKey || !snapshot?.html) return;
+    const nextPages = { ...(generatedPages || {}), [snapshot.pageKey]: snapshot.html };
+    setGeneratedPages(nextPages);
+    setActivePage(snapshot.pageKey);
+    setGeneratedSite(snapshot.html);
+    setDraftHtml(snapshot.html);
+    setEditHistory([snapshot.html]);
+    setRedoHistory([]);
+    setInlineDraftDirty(false);
+    setIsInlineEditing(true);
+    setInlineCheckpoints((previous) => [
+      ...previous.slice(-5),
+      {
+        id: `cp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        label: "Rollback",
+        pageKey: snapshot.pageKey,
+        html: snapshot.html,
+        at: new Date().toISOString(),
+      },
+    ]);
+    setPublishStatus("info");
+    setPublishMessage("Rolled back to pre-publish content for this page. Re-publish when ready.");
+  };
+
+  const handleRestoreInlineCheckpoint = (checkpointId) => {
+    const target = (inlineCheckpoints || []).find((item) => item.id === checkpointId);
+    if (!target?.html) return;
+    const nextPages = { ...(generatedPages || {}), [target.pageKey || activePage]: target.html };
+    setGeneratedPages(nextPages);
+    setActivePage(target.pageKey || activePage);
+    setGeneratedSite(target.html);
+    setDraftHtml(target.html);
+    if (previewEditableRef.current) previewEditableRef.current.innerHTML = target.html;
+    setEditHistory((previous) => {
+      if (previous[previous.length - 1] === target.html) return previous;
+      return [...previous.slice(-49), target.html];
+    });
+    setRedoHistory([]);
+    setInlineDraftDirty(true);
+    setInlineSmartStatus(`Restored checkpoint: ${target.label}.`);
+  };
+
+  useEffect(() => {
+    if (!isInlineEditing) return undefined;
+    const onKeyDown = (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        handleSaveInlineEdit();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z" && !event.shiftKey) {
+        event.preventDefault();
+        handleUndoInlineEdit();
+        return;
+      }
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        (event.key.toLowerCase() === "y" || (event.shiftKey && event.key.toLowerCase() === "z"))
+      ) {
+        event.preventDefault();
+        handleRedoInlineEdit();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        if (event.shiftKey) {
+          if (inlineBestSuggestion) {
+            handleApplyInlineSuggestion(
+              inlineBestSuggestion.text,
+              `best suggestion (${inlineBestSuggestion.label})`,
+              inlineBestSuggestion.confidence
+            );
+          } else {
+            handleRunInlineSmartCommand("/smart");
+          }
+        } else {
+          handleRunInlineSmartCommand("/smart");
+        }
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") {
+        event.preventDefault();
+        handleImproveInlinePageCopy();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "l") {
+        event.preventDefault();
+        handleImproveInlineSectionCopy();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        handleImproveAndSaveInlinePageCopy();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        handleImproveSavePublishInline();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "u") {
+        event.preventDefault();
+        handleRollbackInlinePublishSnapshot();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        handleSaveInlineEdit();
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        handleCancelInlineEdit();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [
+    isInlineEditing,
+    handleApplyInlineSuggestion,
+    handleSaveInlineEdit,
+    handleCancelInlineEdit,
+    handleUndoInlineEdit,
+    handleRedoInlineEdit,
+    handleRunInlineSmartCommand,
+    handleImproveInlinePageCopy,
+    handleImproveInlineSectionCopy,
+    handleImproveAndSaveInlinePageCopy,
+    handleImproveSavePublishInline,
+    handleRollbackInlinePublishSnapshot,
+    inlineBestSuggestion,
+    inlineBulkImproving,
+  ]);
+
+  useEffect(() => {
+    if (isInlineEditing) return undefined;
+    clearInlineHoverNode();
+    setInlineSmartStatus("");
+    setInlineSmartCommand("");
+    setInlineSelectionText("");
+    setInlineSelectionSection("");
+    setInlineSuggestions([]);
+    setInlineAutoApplyHighConfidence(false);
+    setInlineAdvancedOpen(false);
+    return undefined;
+  }, [isInlineEditing]);
 
   useEffect(() => {
     const root = previewEditableRef.current;
@@ -8096,11 +10627,37 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       <div style={styles.hero}>
         <span style={styles.eyebrow}>TITONOVA CLOUD  BUSINESS ENGINE</span>
         <h1 style={styles.title}>TitoNova Cloud Business &amp; Website Engine</h1>
-        <p style={styles.subtitle}>
-          <strong>TitoNova Website &amp; Business Platform</strong>
-          <br />
-          TitoNova automatically builds your complete website, marketing infrastructure, and revenue systems—creating intelligent websites that continuously evolve with your business.
-        </p>
+        <div style={styles.subtitleBlock}>
+          <p style={styles.subtitleLead}>
+            TitoNova Website &amp; Business Platform
+          </p>
+          <p style={styles.subtitle}>
+            TitoNova automatically builds your complete website, marketing infrastructure, and revenue systems.
+          </p>
+          <p style={styles.subtitle}>
+            Launch faster, keep brand consistency, and manage growth operations from one dashboard without losing any key messaging.
+          </p>
+        </div>
+        <div style={styles.landingHighlights}>
+          <article style={styles.landingHighlightCard}>
+            <h2 style={styles.landingHighlightTitle}>Everything Visible</h2>
+            <p style={styles.landingHighlightText}>
+              Long prompts, strategy notes, generated sections, and project metadata are shown with readable wrapping so your full text is always visible.
+            </p>
+          </article>
+          <article style={styles.landingHighlightCard}>
+            <h2 style={styles.landingHighlightTitle}>From Prompt To Live Site</h2>
+            <p style={styles.landingHighlightText}>
+              Build pages, refine copy, apply branding, run quality checks, and publish in one flow with side-by-side control and preview.
+            </p>
+          </article>
+          <article style={styles.landingHighlightCard}>
+            <h2 style={styles.landingHighlightTitle}>Business Engine Included</h2>
+            <p style={styles.landingHighlightText}>
+              Enable bookings, CRM, payments, automation, and growth modules while keeping the generated website aligned to your conversion goals.
+            </p>
+          </article>
+        </div>
       </div>
 
       <div style={styles.appShell} ref={appShellRef}>
@@ -8391,19 +10948,112 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
         </div>
         <div style={styles.solutionRow}>
           <label style={styles.solutionLabel}>🧠 TitoNova Cloud Engine Prompt</label>
-          <input
+          <textarea
+            ref={promptTextareaRef}
+            className="prompt-box"
             style={styles.solutionInput}
-            placeholder='Example: "Premium home care brand with online booking"'
+            placeholder="Describe the website or business you want to create..."
             value={businessOsPrompt}
+            rows={4}
+            maxLength={5000}
             required
-            onChange={(event) => {
-              const value = event.target.value;
-              setBusinessOsPrompt(value);
-              setUiDesignPrompt(value);
-              if (error) setError("");
-            }}
+            onChange={handleBusinessPromptChange}
+            onInput={handleBusinessPromptInput}
+            onPaste={handleBusinessPromptPaste}
           />
-          <small style={styles.businessOsHint}>Describe the website or business you want to create.</small>
+          <small style={styles.businessOsHint}>
+            Paste your full website idea here. Sections, style, colors, and features are all supported.
+          </small>
+          <div style={styles.promptAssistRow}>
+            <div style={styles.promptAssistActions}>
+              <button type="button" style={styles.authGhostButton} onClick={handleEnhancePrompt}>
+                Enhance Prompt
+              </button>
+              <button type="button" style={styles.authGhostButton} onClick={handleSmartFillPrompt}>
+                Smart Fill Missing
+              </button>
+            </div>
+            <label style={styles.promptToggleLabel}>
+              <input
+                type="checkbox"
+                checked={powerPromptEnabled}
+                onChange={(event) => setPowerPromptEnabled(Boolean(event.target.checked))}
+              />
+              Auto Power Prompt
+            </label>
+            <label style={styles.promptToggleLabel}>
+              <input
+                type="checkbox"
+                checked={ultraSmartModeEnabled}
+                onChange={(event) => setUltraSmartModeEnabled(Boolean(event.target.checked))}
+              />
+              Ultra Smart Mode
+            </label>
+          </div>
+          <small style={styles.promptAssistHint}>
+            Power mode expands your brief into conversion, SEO, UX, trust, and section directives for stronger outputs.
+          </small>
+          {String(businessOsPrompt || "").trim() && (
+            <section style={styles.promptIntelPanel}>
+              <div style={styles.promptIntelHeader}>
+                <strong style={styles.promptIntelTitle}>Prompt Intelligence</strong>
+                <span style={styles.promptIntelScore}>{promptIntelligence.score}/100</span>
+              </div>
+              <small style={styles.promptIntelMeta}>
+                Missing: {promptIntelligence.missing.length > 0 ? promptIntelligence.missing.map((item) => item.label).join(", ") : "None"}
+              </small>
+              <small style={styles.promptIntelMeta}>
+                Inferred features: {promptIntelligence.inferredFeatures.length > 0 ? promptIntelligence.inferredFeatures.join(", ") : "booking, crm, payments, seo"}
+              </small>
+              <small style={styles.promptIntelMeta}>
+                Suggested sections: {promptIntelligence.suggestedSections.join(", ")}
+              </small>
+            </section>
+          )}
+          {String(businessOsPrompt || "").trim() && (
+            <section style={styles.parsedPromptPanel}>
+              <div style={styles.parsedPromptHeader}>
+                <strong style={styles.parsedPromptTitle}>Parsed Prompt JSON</strong>
+                <small style={styles.parsedPromptMeta}>Live extraction preview before generation</small>
+              </div>
+              <pre style={styles.parsedPromptPre}>{parsedPromptPreviewText}</pre>
+            </section>
+          )}
+          {ultraSmartModeEnabled && (ultraSmartPlanPreview || lastGenerationPlan) && (
+            <section style={styles.ultraSmartPanel}>
+              <div style={styles.parsedPromptHeader}>
+                <strong style={styles.parsedPromptTitle}>Ultra Smart Generation Plan</strong>
+                <small style={styles.parsedPromptMeta}>
+                  Confidence {(lastGenerationPlan || ultraSmartPlanPreview)?.confidence || 0}/100
+                </small>
+              </div>
+              <pre style={styles.parsedPromptPre}>{ultraSmartPlanPreviewText}</pre>
+            </section>
+          )}
+          {ultraSmartModeEnabled && (smartQaAuditPreview || lastGenerationAudit) && (
+            <section style={styles.smartQaPanel}>
+              <div style={styles.parsedPromptHeader}>
+                <strong style={styles.parsedPromptTitle}>Smart QA Guardrails</strong>
+                <small style={styles.parsedPromptMeta}>
+                  Score {(smartQaAuditPreview || lastGenerationAudit)?.score || 0}/100
+                </small>
+              </div>
+              {(smartQaAuditPreview || lastGenerationAudit)?.issues?.length > 0 ? (
+                <div style={styles.smartQaIssues}>
+                  {(smartQaAuditPreview || lastGenerationAudit).issues.slice(0, 6).map((issue) => (
+                    <small key={issue} style={styles.smartQaIssueItem}>
+                      - {issue}
+                    </small>
+                  ))}
+                </div>
+              ) : (
+                <small style={styles.smartQaIssueItem}>No critical gaps detected.</small>
+              )}
+              <button type="button" style={styles.smartQaFixButton} onClick={handleAutoFixSmartGaps}>
+                Auto Fix Smart Gaps
+              </button>
+            </section>
+          )}
           <div style={styles.primaryCtaWrap}>
             <button
               style={styles.primaryCtaButton}
@@ -9405,6 +12055,22 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               <button style={styles.exportButton} onClick={handleExportHtml}>
                 Export HTML
               </button>
+              <div style={styles.exportBundleControls}>
+                <select
+                  style={styles.exportFrameworkSelect}
+                  value={exportFramework}
+                  onChange={(event) => setExportFramework(event.target.value)}
+                >
+                  {EXPORT_FRAMEWORK_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
+                <button style={styles.exportButton} onClick={handleExportProjectBundle} disabled={exportBundleLoading}>
+                  {exportBundleLoading ? "Exporting..." : "Export Project"}
+                </button>
+              </div>
               {!isInlineEditing ? (
                 <button style={styles.editButton} onClick={handleStartInlineEdit}>
                   Start Editing
@@ -9415,7 +12081,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
                     Undo
                   </button>
                   <button style={styles.saveButton} onClick={handleSaveInlineEdit}>
-                    Done (Save)
+                    Save
                   </button>
                   <button style={styles.cancelButton} onClick={handleCancelInlineEdit}>
                     Discard
@@ -10429,9 +13095,157 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
           <div style={styles.previewCanvasWrap}>
             <div style={shouldShowGuestPreviewPrompt ? styles.previewCanvasFaint : undefined}>
               {isInlineEditing && (
-                <p style={styles.lockHint}>
-                  Inline text edit is active. Click headings, paragraphs, links, buttons, and list text to edit.
-                </p>
+                <div style={styles.inlineEditToolbar}>
+                  <div style={styles.inlineEditMeta}>
+                    <strong style={styles.inlineEditTitle}>Inline edit mode</strong>
+                    <small style={styles.inlineEditHint}>
+                      Click text, edit, then Save. Shortcuts: Cmd/Ctrl+S save, Cmd/Ctrl+Z undo, Cmd/Ctrl+Y redo.
+                    </small>
+                    {inlineSmartStatus ? <small style={styles.inlineSmartStatus}>{inlineSmartStatus}</small> : null}
+                    {inlineSelectionText ? (
+                      <small style={styles.inlineSelectionMeta}>
+                        Section: {inlineSelectionSection || "general"} | Selected:{" "}
+                        {inlineSelectionText.length > 90 ? `${inlineSelectionText.slice(0, 90)}...` : inlineSelectionText}
+                      </small>
+                    ) : null}
+                    {inlineCheckpoints.length > 0 ? (
+                      <div style={styles.inlineCheckpointRow}>
+                        {inlineCheckpoints
+                          .slice(-3)
+                          .reverse()
+                          .map((checkpoint) => (
+                            <button
+                              key={checkpoint.id}
+                              style={styles.inlineCheckpointChip}
+                              onClick={() => handleRestoreInlineCheckpoint(checkpoint.id)}
+                              title={`Restore ${checkpoint.label}`}
+                            >
+                              {checkpoint.label} • {new Date(checkpoint.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            </button>
+                          ))}
+                      </div>
+                    ) : null}
+                    {inlineAdvancedOpen && (
+                      <>
+                        <div style={styles.inlineSmartRow}>
+                          <input
+                            style={styles.inlineSmartInput}
+                            value={inlineSmartCommand}
+                            onChange={(event) => setInlineSmartCommand(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                handleRunInlineSmartCommand();
+                              }
+                            }}
+                            placeholder="Smart command: /smart /shorten /expand /seo /cta /professional /friendly /fix"
+                          />
+                          <button style={styles.inlineSmartRunButton} onClick={() => handleRunInlineSmartCommand()}>
+                            Smart Rewrite
+                          </button>
+                        </div>
+                        <small style={styles.inlineAdaptiveMeta}>
+                          Adaptive commands: {inlineSelectionSection || "general"}
+                        </small>
+                        <div style={styles.inlineSmartChips}>
+                          {getInlineCommandOptions(inlineSelectionSection).map((command) => (
+                            <button
+                              key={command}
+                              style={styles.inlineSmartChip}
+                              onClick={() => handleRunInlineSmartCommand(command)}
+                            >
+                              {command}
+                            </button>
+                          ))}
+                        </div>
+                        <label style={styles.inlineAutoModeToggle}>
+                          <input
+                            type="checkbox"
+                            checked={inlineAutoApplyHighConfidence}
+                            onChange={(event) => setInlineAutoApplyHighConfidence(event.target.checked)}
+                          />
+                          Auto-apply when confidence is 90%+
+                        </label>
+                        {inlineSuggestions.length > 0 ? (
+                          <div style={styles.inlineSuggestionWrap}>
+                            {inlineSuggestions.map((item) => (
+                              <article key={`${item.key}-${item.text}`} style={styles.inlineSuggestionItem}>
+                                <small style={styles.inlineSuggestionLabel}>
+                                  {item.label} ({Math.round(Number(item.confidence) || 0)}%)
+                                </small>
+                                <small style={styles.inlineSuggestionText}>{item.text}</small>
+                                <button
+                                  style={styles.inlineSuggestionApply}
+                                  onClick={() => handleApplyInlineSuggestion(item.text, item.label, item.confidence)}
+                                >
+                                  Apply
+                                </button>
+                              </article>
+                            ))}
+                          </div>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+                  <div style={styles.inlineEditActions}>
+                    <span style={inlineDraftDirty ? styles.inlineDirtyBadge : styles.inlineCleanBadge}>
+                      {inlineDraftDirty ? "Unsaved changes" : "Saved"}
+                    </span>
+                    <button
+                      style={styles.inlineAutoApplyButton}
+                      onClick={() => {
+                        if (inlineBestSuggestion) {
+                          handleApplyInlineSuggestion(
+                            inlineBestSuggestion.text,
+                            `best suggestion (${inlineBestSuggestion.label})`,
+                            inlineBestSuggestion.confidence
+                          );
+                        } else {
+                          handleRunInlineSmartCommand("/fix");
+                        }
+                      }}
+                    >
+                      Improve Selected Text
+                    </button>
+                    <button style={styles.inlineAutoApplyButton} onClick={handleImproveInlinePageCopy} disabled={inlineBulkImproving}>
+                      {inlineBulkImproving ? "Improving..." : "Improve Page Copy"}
+                    </button>
+                    <button style={styles.inlineAutoApplyButton} onClick={handleImproveInlineSectionCopy} disabled={inlineBulkImproving}>
+                      Improve Section
+                    </button>
+                    <button style={styles.saveButton} onClick={handleImproveAndSaveInlinePageCopy} disabled={inlineBulkImproving}>
+                      Improve + Save
+                    </button>
+                    <button style={styles.goLiveButton} onClick={handleImproveSavePublishInline} disabled={inlineBulkImproving || publishing}>
+                      {publishing ? "Publishing..." : "Improve + Save + Publish"}
+                    </button>
+                    {inlineLastPublishSnapshot?.html ? (
+                      <button style={styles.undoButton} onClick={handleRollbackInlinePublishSnapshot}>
+                        Quick Rollback
+                      </button>
+                    ) : null}
+                    <button style={styles.undoButton} onClick={handleUndoInlineEdit} disabled={editHistory.length <= 1}>
+                      Undo
+                    </button>
+                    <button style={styles.undoButton} onClick={handleRedoInlineEdit} disabled={redoHistory.length <= 0}>
+                      Redo
+                    </button>
+                    <button style={styles.saveButton} onClick={handleSaveInlineEdit}>
+                      Save
+                    </button>
+                    <button style={styles.cancelButton} onClick={handleCancelInlineEdit}>
+                      Discard
+                    </button>
+                    <button style={styles.inlineModeButton} onClick={() => setInlineAdvancedOpen((previous) => !previous)}>
+                      {inlineAdvancedOpen ? "Hide Advanced" : "Advanced"}
+                    </button>
+                    {inlineAdvancedOpen && (
+                      <button style={styles.inlineModeButton} onClick={() => setFieldLockMode((previous) => !previous)}>
+                        {fieldLockMode ? "Text-only mode" : "Free layout mode"}
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
               <div
                 ref={previewEditableRef}
@@ -10441,10 +13255,6 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
                 onClick={handlePreviewLinkNavigation}
                 onKeyDown={(event) => {
                   if (!isInlineEditing) return;
-                  if (fieldLockMode && event.key === "Enter") {
-                    event.preventDefault();
-                    return;
-                  }
                   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
                     event.preventDefault();
                     handleSaveInlineEdit();
@@ -10454,14 +13264,16 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
                   if (!isInlineEditing) return;
                   const nextHtml = event.currentTarget.innerHTML;
                   setDraftHtml(nextHtml);
-                  setEditHistory((previous) => {
-                    if (previous[previous.length - 1] === nextHtml) return previous;
-                    return [...previous.slice(-49), nextHtml];
-                  });
+                  setInlineDraftDirty(true);
+                  appendInlineHistory(nextHtml);
                 }}
                 onBlurCapture={() => {
                   if (isInlineEditing) snapshotInlineDraft();
                 }}
+                onMouseUpCapture={captureInlineSelection}
+                onKeyUpCapture={captureInlineSelection}
+                onMouseMoveCapture={handleInlineHoverMove}
+                onMouseLeave={handleInlineHoverLeave}
                 dangerouslySetInnerHTML={{ __html: isInlineEditing ? draftHtml : generatedSite }}
               />
             </div>
@@ -10511,16 +13323,26 @@ const styles = {
   wrapper: {
     minHeight: "100vh",
     background:
-      "radial-gradient(circle at 50% 8%, rgba(24,119,255,0.2), transparent 36%), radial-gradient(circle at 10% 20%, rgba(0,20,80,0.45), transparent 46%), linear-gradient(145deg, #03091d 0%, #081938 45%, #0a274d 100%)",
-    padding: "34px 24px 56px",
+      "radial-gradient(circle at 18% 12%, rgba(45,212,191,0.22), transparent 34%), radial-gradient(circle at 78% 16%, rgba(59,130,246,0.24), transparent 38%), radial-gradient(circle at 52% 88%, rgba(16,185,129,0.16), transparent 40%), linear-gradient(148deg, #020817 0%, #081734 42%, #0b2344 100%)",
+    padding: "24px 18px 40px",
     color: "#e6edf7",
     fontFamily: "'Inter', 'SF Pro Display', 'Segoe UI', sans-serif",
-    position: "relative"
+    position: "relative",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center"
   },
   hero: {
-    maxWidth: "1240px",
-    margin: "0 auto 18px",
-    padding: "4px 2px"
+    maxWidth: "1280px",
+    width: "100%",
+    margin: "0 auto 14px",
+    padding: "10px 10px 4px",
+    textAlign: "center",
+    boxSizing: "border-box",
+    border: "1px solid rgba(148,163,184,0.22)",
+    borderRadius: "16px",
+    background: "linear-gradient(180deg, rgba(9,18,42,0.78), rgba(9,20,46,0.58))",
+    backdropFilter: "blur(8px)"
   },
   eyebrow: {
     display: "inline-flex",
@@ -10528,44 +13350,98 @@ const styles = {
     gap: "6px",
     border: "1px solid rgba(45,212,191,0.45)",
     color: "#63f5b4",
-    fontSize: "11px",
+    fontSize: "10px",
     fontWeight: 700,
     letterSpacing: "0.12em",
     textTransform: "uppercase",
     borderRadius: "999px",
-    padding: "6px 10px",
-    marginBottom: "12px",
+    padding: "5px 9px",
+    marginBottom: "10px",
     background: "rgba(7,16,38,0.75)"
   },
   title: {
     margin: 0,
     color: "#39df82",
-    fontSize: "clamp(30px, 4.5vw, 52px)",
+    fontSize: "clamp(24px, 3.5vw, 40px)",
     lineHeight: 1.04,
     letterSpacing: "-0.03em",
     fontWeight: 800
   },
   subtitle: {
-    margin: "10px 0 0",
+    margin: "0",
     color: "#c8d8ef",
+    fontSize: "14px",
+    maxWidth: "700px",
+    lineHeight: 1.4,
+    marginLeft: "auto",
+    marginRight: "auto",
+    overflowWrap: "anywhere"
+  },
+  subtitleBlock: {
+    display: "grid",
+    gap: "6px",
+    marginTop: "8px",
+    justifyItems: "center"
+  },
+  subtitleLead: {
+    margin: 0,
+    color: "#f8fafc",
     fontSize: "15px",
-    maxWidth: "760px",
-    lineHeight: 1.45
+    fontWeight: 700,
+    maxWidth: "700px",
+    lineHeight: 1.35
+  },
+  landingHighlights: {
+    marginTop: "14px",
+    width: "100%",
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gap: "10px",
+    textAlign: "left",
+    boxSizing: "border-box"
+  },
+  landingHighlightCard: {
+    borderRadius: "12px",
+    border: "1px solid rgba(99,245,180,0.28)",
+    background: "linear-gradient(160deg, rgba(11,28,56,0.88), rgba(10,20,44,0.92))",
+    padding: "10px 11px",
+    boxShadow: "0 10px 20px rgba(2,6,23,0.22)",
+    overflow: "visible",
+    boxSizing: "border-box"
+  },
+  landingHighlightTitle: {
+    margin: "0 0 6px",
+    color: "#9cfed0",
+    fontSize: "14px",
+    lineHeight: 1.25,
+    letterSpacing: "0.01em"
+  },
+  landingHighlightText: {
+    margin: 0,
+    color: "#d5e3f8",
+    fontSize: "12px",
+    lineHeight: 1.4,
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+    whiteSpace: "normal"
   },
   appShell: {
-    maxWidth: "1240px",
+    maxWidth: "1280px",
+    width: "100%",
     margin: "0 auto",
     display: "flex",
+    justifyContent: "space-between",
     alignItems: "stretch",
-    gap: "22px",
-    flexWrap: "wrap"
+    gap: "12px",
+    flexWrap: "wrap",
+    boxSizing: "border-box"
   },
   commandPane: {
-    flex: "1 1 460px",
-    minWidth: "320px",
-    maxWidth: "760px",
+    flex: "1 1 500px",
+    minWidth: "300px",
+    maxWidth: "560px",
     display: "grid",
-    gap: "14px"
+    gap: "8px"
   },
   resizeHandle: {
     width: "12px",
@@ -10590,46 +13466,46 @@ const styles = {
     background: "linear-gradient(180deg, #6ee7b7, #22c55e)"
   },
   previewPane: {
-    flex: "2 1 700px",
-    minWidth: "320px",
+    flex: "1 1 560px",
+    minWidth: "360px",
     position: "sticky",
     top: "16px",
     alignSelf: "flex-start",
     display: "grid",
-    gap: "12px"
+    gap: "10px"
   },
   card: {
     background:
       "radial-gradient(820px 280px at 50% 0%, rgba(45,212,191,0.1), rgba(45,212,191,0) 62%), linear-gradient(160deg, rgba(15,26,52,0.95), rgba(20,33,61,0.93))",
-    padding: "26px",
-    borderRadius: "24px",
+    padding: "14px",
+    borderRadius: "18px",
     maxWidth: "100%",
     margin: 0,
     backdropFilter: "blur(16px)",
     border: "1px solid rgba(76,117,168,0.45)",
-    boxShadow: "0 28px 70px rgba(2,6,23,0.45)",
+    boxShadow: "0 18px 44px rgba(2,6,23,0.38)",
     display: "grid",
-    gap: "14px"
+    gap: "8px"
   },
   sectionTitle: {
-    margin: "0 0 14px",
+    margin: "0 0 10px",
     color: "#f8fafc",
-    fontSize: "23px",
+    fontSize: "19px",
     letterSpacing: "-0.02em"
   },
   sectionIntro: {
-    margin: "0 0 14px",
+    margin: "0 0 10px",
     color: "#b9cbe6",
-    fontSize: "13px",
-    lineHeight: 1.5
+    fontSize: "12px",
+    lineHeight: 1.45
   },
   input: {
     width: "100%",
-    padding: "12px 13px",
-    borderRadius: "12px",
+    padding: "9px 11px",
+    borderRadius: "10px",
     border: "1px solid rgba(72,102,148,0.65)",
     marginBottom: "0",
-    fontSize: "15px",
+    fontSize: "13px",
     background: "rgba(7,16,38,0.9)",
     color: "#f8fafc",
     outline: "none"
@@ -10740,6 +13616,137 @@ const styles = {
     fontSize: "12px",
     lineHeight: 1.45
   },
+  promptAssistRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+    flexWrap: "wrap"
+  },
+  promptAssistActions: {
+    display: "flex",
+    gap: "6px",
+    flexWrap: "wrap"
+  },
+  promptToggleLabel: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    color: "#bbf7d0",
+    fontSize: "11px",
+    fontWeight: 700
+  },
+  promptAssistHint: {
+    color: "#86efac",
+    fontSize: "11px",
+    lineHeight: 1.4
+  },
+  promptIntelPanel: {
+    border: "1px solid rgba(34,197,94,0.35)",
+    background: "linear-gradient(180deg, rgba(6,78,59,0.32), rgba(2,24,44,0.3))",
+    borderRadius: "10px",
+    padding: "8px",
+    display: "grid",
+    gap: "4px"
+  },
+  promptIntelHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px"
+  },
+  promptIntelTitle: {
+    color: "#dcfce7",
+    fontSize: "12px"
+  },
+  promptIntelScore: {
+    color: "#bbf7d0",
+    border: "1px solid rgba(134,239,172,0.4)",
+    background: "rgba(2,6,23,0.4)",
+    borderRadius: "999px",
+    padding: "2px 8px",
+    fontSize: "11px",
+    fontWeight: 700
+  },
+  promptIntelMeta: {
+    color: "#bbf7d0",
+    fontSize: "11px",
+    lineHeight: 1.35
+  },
+  parsedPromptPanel: {
+    border: "1px solid rgba(56,189,248,0.35)",
+    background: "linear-gradient(180deg, rgba(8,47,73,0.38), rgba(2,24,44,0.42))",
+    borderRadius: "10px",
+    padding: "9px",
+    display: "grid",
+    gap: "6px"
+  },
+  ultraSmartPanel: {
+    border: "1px solid rgba(45,212,191,0.4)",
+    background: "linear-gradient(180deg, rgba(6,78,59,0.35), rgba(8,47,73,0.35))",
+    borderRadius: "10px",
+    padding: "9px",
+    display: "grid",
+    gap: "6px"
+  },
+  smartQaPanel: {
+    border: "1px solid rgba(251,191,36,0.45)",
+    background: "linear-gradient(180deg, rgba(120,53,15,0.24), rgba(8,47,73,0.3))",
+    borderRadius: "10px",
+    padding: "9px",
+    display: "grid",
+    gap: "6px"
+  },
+  smartQaIssues: {
+    display: "grid",
+    gap: "3px"
+  },
+  smartQaIssueItem: {
+    color: "#fde68a",
+    fontSize: "11px",
+    lineHeight: 1.35
+  },
+  smartQaFixButton: {
+    justifySelf: "start",
+    background: "#f59e0b",
+    color: "#111827",
+    border: "none",
+    borderRadius: "8px",
+    padding: "6px 10px",
+    fontSize: "11px",
+    fontWeight: 700,
+    cursor: "pointer"
+  },
+  parsedPromptHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "8px",
+    flexWrap: "wrap"
+  },
+  parsedPromptTitle: {
+    color: "#dbeafe",
+    fontSize: "12px"
+  },
+  parsedPromptMeta: {
+    color: "#93c5fd",
+    fontSize: "10px",
+    fontWeight: 600
+  },
+  parsedPromptPre: {
+    margin: 0,
+    borderRadius: "8px",
+    border: "1px solid rgba(148,163,184,0.35)",
+    background: "rgba(2,6,23,0.55)",
+    color: "#d1fae5",
+    padding: "8px",
+    fontSize: "11px",
+    lineHeight: 1.45,
+    maxHeight: "220px",
+    overflow: "auto",
+    whiteSpace: "pre-wrap",
+    overflowWrap: "anywhere"
+  },
   advancedToggleButton: {
     background: "rgba(6,95,70,0.9)",
     color: "white",
@@ -10760,9 +13767,9 @@ const styles = {
   authCard: {
     border: "2px solid rgba(76,117,168,0.58)",
     background: "linear-gradient(180deg, rgba(8,24,58,0.74), rgba(11,34,74,0.58))",
-    borderRadius: "14px",
-    padding: "12px",
-    marginBottom: "12px",
+    borderRadius: "12px",
+    padding: "10px",
+    marginBottom: "10px",
     display: "grid",
     gap: "9px"
   },
@@ -10775,7 +13782,7 @@ const styles = {
   },
   authTitle: {
     color: "#dbeafe",
-    fontSize: "13px"
+    fontSize: "12px"
   },
   authModeRow: {
     display: "flex",
@@ -10786,8 +13793,8 @@ const styles = {
     color: "#cbd5e1",
     border: "1px solid rgba(148,163,184,0.4)",
     borderRadius: "999px",
-    padding: "5px 10px",
-    fontSize: "12px",
+    padding: "4px 9px",
+    fontSize: "11px",
     fontWeight: 700,
     cursor: "pointer"
   },
@@ -10796,8 +13803,8 @@ const styles = {
     color: "#ffffff",
     border: "1px solid #3b82f6",
     borderRadius: "999px",
-    padding: "5px 10px",
-    fontSize: "12px",
+    padding: "4px 9px",
+    fontSize: "11px",
     fontWeight: 700,
     cursor: "pointer"
   },
@@ -10809,9 +13816,9 @@ const styles = {
     background: "linear-gradient(180deg,#2f66ff 0%, #2855d8 100%)",
     color: "white",
     border: "1px solid rgba(129,161,255,0.65)",
-    borderRadius: "10px",
-    padding: "9px 12px",
-    fontSize: "13px",
+    borderRadius: "9px",
+    padding: "8px 11px",
+    fontSize: "12px",
     fontWeight: 700,
     cursor: "pointer"
   },
@@ -10819,9 +13826,9 @@ const styles = {
     background: "rgba(15,23,42,0.7)",
     color: "#dbeafe",
     border: "1px solid rgba(148,163,184,0.45)",
-    borderRadius: "10px",
-    padding: "6px 9px",
-    fontSize: "12px",
+    borderRadius: "9px",
+    padding: "5px 8px",
+    fontSize: "11px",
     fontWeight: 700,
     cursor: "pointer"
   },
@@ -10834,7 +13841,7 @@ const styles = {
   },
   authMeta: {
     color: "#bfdbfe",
-    fontSize: "12px",
+    fontSize: "11px",
     fontWeight: 600
   },
   authProjectList: {
@@ -11574,32 +14581,35 @@ const styles = {
   },
   solutionSelect: {
     width: "100%",
-    padding: "10px 12px",
-    borderRadius: "12px",
+    padding: "8px 10px",
+    borderRadius: "10px",
     border: "1px solid rgba(148,163,184,0.36)",
     background: "rgba(15,23,42,0.74)",
     color: "#f8fafc",
-    fontSize: "14px"
+    fontSize: "13px"
   },
   solutionInput: {
     width: "100%",
-    padding: "11px 12px",
-    borderRadius: "12px",
-    border: "1px solid rgba(148,163,184,0.36)",
-    background: "rgba(15,23,42,0.74)",
-    color: "#f8fafc",
-    fontSize: "14px",
-    outline: "none"
-  },
-  solutionTextarea: {
-    width: "100%",
-    minHeight: "68px",
-    padding: "10px 12px",
-    borderRadius: "12px",
+    padding: "8px 10px",
+    borderRadius: "10px",
     border: "1px solid rgba(148,163,184,0.36)",
     background: "rgba(15,23,42,0.74)",
     color: "#f8fafc",
     fontSize: "13px",
+    lineHeight: 1.45,
+    resize: "none",
+    overflow: "hidden",
+    outline: "none"
+  },
+  solutionTextarea: {
+    width: "100%",
+    minHeight: "58px",
+    padding: "8px 10px",
+    borderRadius: "10px",
+    border: "1px solid rgba(148,163,184,0.36)",
+    background: "rgba(15,23,42,0.74)",
+    color: "#f8fafc",
+    fontSize: "12px",
     resize: "vertical"
   },
   cloneGeneratorCard: {
@@ -13170,6 +16180,19 @@ const styles = {
     padding: "8px 12px",
     cursor: "pointer"
   },
+  exportBundleControls: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "8px",
+  },
+  exportFrameworkSelect: {
+    padding: "8px 10px",
+    borderRadius: "8px",
+    border: "1px solid #cbd5e1",
+    fontSize: "12px",
+    background: "white",
+    minWidth: "112px",
+  },
   goLiveButton: {
     background: "#f97316",
     color: "white",
@@ -13248,6 +16271,214 @@ const styles = {
     marginBottom: "12px",
     color: "#475569",
     fontSize: "13px"
+  },
+  inlineEditToolbar: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "8px",
+    flexWrap: "wrap",
+    background: "linear-gradient(135deg,#ecfeff,#dbeafe)",
+    border: "1px solid #7dd3fc",
+    borderRadius: "10px",
+    padding: "8px 10px",
+    marginBottom: "10px"
+  },
+  inlineEditMeta: {
+    display: "grid",
+    gap: "2px",
+    minWidth: "220px"
+  },
+  inlineEditTitle: {
+    color: "#0f172a",
+    fontSize: "12px"
+  },
+  inlineEditHint: {
+    color: "#334155",
+    fontSize: "11px"
+  },
+  inlineSmartRow: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "6px",
+    marginTop: "6px"
+  },
+  inlineSmartInput: {
+    minWidth: "260px",
+    flex: 1,
+    padding: "6px 9px",
+    borderRadius: "8px",
+    border: "1px solid #93c5fd",
+    background: "rgba(255,255,255,0.85)",
+    color: "#0f172a",
+    fontSize: "12px"
+  },
+  inlineSmartRunButton: {
+    background: "#1d4ed8",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "8px",
+    padding: "6px 10px",
+    fontSize: "12px",
+    fontWeight: 700,
+    cursor: "pointer"
+  },
+  inlineSmartChips: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "5px",
+    marginTop: "5px"
+  },
+  inlineSmartChip: {
+    border: "1px solid #93c5fd",
+    borderRadius: "999px",
+    background: "#eff6ff",
+    color: "#1e3a8a",
+    padding: "3px 8px",
+    fontSize: "11px",
+    fontWeight: 700,
+    cursor: "pointer"
+  },
+  inlineSmartStatus: {
+    color: "#0f172a",
+    fontSize: "11px",
+    marginTop: "4px"
+  },
+  inlineAdaptiveMeta: {
+    color: "#1e3a8a",
+    fontSize: "11px",
+    marginTop: "5px",
+    fontWeight: 700,
+    display: "block"
+  },
+  inlineAutoApplyRow: {
+    marginTop: "6px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+    flexWrap: "wrap",
+    background: "rgba(219,234,254,0.65)",
+    border: "1px solid #93c5fd",
+    borderRadius: "8px",
+    padding: "6px 8px"
+  },
+  inlineAutoApplyMeta: {
+    color: "#1e3a8a",
+    fontSize: "11px",
+    fontWeight: 700
+  },
+  inlineAutoApplyButton: {
+    background: "#1d4ed8",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "7px",
+    padding: "5px 9px",
+    fontSize: "11px",
+    fontWeight: 700,
+    cursor: "pointer"
+  },
+  inlineAutoModeToggle: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    marginTop: "6px",
+    color: "#0f172a",
+    fontSize: "11px",
+    fontWeight: 700
+  },
+  inlineSelectionMeta: {
+    color: "#334155",
+    fontSize: "11px",
+    marginTop: "3px",
+    display: "block"
+  },
+  inlineCheckpointRow: {
+    display: "flex",
+    gap: "5px",
+    flexWrap: "wrap",
+    marginTop: "5px"
+  },
+  inlineCheckpointChip: {
+    border: "1px solid #86efac",
+    borderRadius: "999px",
+    background: "#f0fdf4",
+    color: "#166534",
+    padding: "3px 8px",
+    fontSize: "10px",
+    fontWeight: 700,
+    cursor: "pointer"
+  },
+  inlineSuggestionWrap: {
+    marginTop: "6px",
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))",
+    gap: "6px"
+  },
+  inlineSuggestionItem: {
+    background: "rgba(255,255,255,0.9)",
+    border: "1px solid #bfdbfe",
+    borderRadius: "8px",
+    padding: "7px",
+    display: "grid",
+    gap: "4px"
+  },
+  inlineSuggestionLabel: {
+    color: "#1e3a8a",
+    fontSize: "10px",
+    fontWeight: 700
+  },
+  inlineSuggestionText: {
+    color: "#0f172a",
+    fontSize: "11px",
+    lineHeight: 1.35
+  },
+  inlineSuggestionApply: {
+    background: "#0f766e",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "7px",
+    padding: "5px 8px",
+    fontSize: "11px",
+    fontWeight: 700,
+    cursor: "pointer",
+    justifySelf: "start"
+  },
+  inlineEditActions: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "6px"
+  },
+  inlineDirtyBadge: {
+    background: "#fef3c7",
+    color: "#92400e",
+    border: "1px solid #f59e0b",
+    borderRadius: "999px",
+    padding: "4px 9px",
+    fontSize: "11px",
+    fontWeight: 700
+  },
+  inlineCleanBadge: {
+    background: "#dcfce7",
+    color: "#166534",
+    border: "1px solid #22c55e",
+    borderRadius: "999px",
+    padding: "4px 9px",
+    fontSize: "11px",
+    fontWeight: 700
+  },
+  inlineModeButton: {
+    background: "#0f766e",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "8px",
+    padding: "7px 10px",
+    fontSize: "12px",
+    fontWeight: 700,
+    cursor: "pointer"
   },
   publishSuccess: {
     marginTop: 0,
@@ -13651,7 +16882,10 @@ const styles = {
   previewEditable: {
     outline: "2px dashed #22c55e",
     outlineOffset: "6px",
-    borderRadius: "12px"
+    borderRadius: "12px",
+    minHeight: "420px",
+    cursor: "text",
+    padding: "4px"
   },
   error: {
     color: "#fecaca",
@@ -13660,18 +16894,21 @@ const styles = {
   }
 };
 
-// Normalize card surfaces across the dashboard for stronger hierarchy and cleaner organization.
-const CARD_KEY_PATTERN = /Card$/;
+// Normalize card surfaces across the dashboard with an intentionally bold treatment.
+const CARD_KEY_PATTERN = /(^card$|Card$)/;
+const BOLD_CARD_BORDER = "2px";
+const BOLD_CARD_SHADOW = "0 12px 28px rgba(2, 6, 23, 0.34), 0 0 0 1px rgba(148, 163, 184, 0.18)";
 Object.keys(styles).forEach((key) => {
   if (!CARD_KEY_PATTERN.test(key)) return;
   const current = styles[key] || {};
   styles[key] = {
     ...current,
-    borderRadius: current.borderRadius || "14px",
-    border: String(current.border || "1px solid rgba(255,255,255,0.18)").replace(/^1px/, "2px"),
-    boxShadow: current.boxShadow || "0 10px 28px rgba(2, 6, 23, 0.32)",
-    padding: current.padding || "12px",
-    marginBottom: current.marginBottom || "10px",
+    borderRadius: current.borderRadius || "12px",
+    border: String(current.border || "1px solid rgba(255,255,255,0.2)").replace(/^(\d+)px/, BOLD_CARD_BORDER),
+    boxShadow: BOLD_CARD_SHADOW,
+    padding: current.padding || "9px",
+    marginBottom: current.marginBottom || "8px",
+    overflow: "visible",
   };
 });
 
@@ -13680,8 +16917,49 @@ Object.keys(styles).forEach((key) => {
     if (!styles[key]) return;
     styles[key] = {
       ...styles[key],
-      border: String(styles[key].border || "1px solid rgba(255,255,255,0.2)").replace(/^1px/, "2px"),
-      borderRadius: styles[key].borderRadius || "14px",
-      boxShadow: styles[key].boxShadow || "0 12px 30px rgba(2, 6, 23, 0.34)",
+      border: String(styles[key].border || "1px solid rgba(255,255,255,0.2)").replace(/^(\d+)px/, BOLD_CARD_BORDER),
+      borderRadius: styles[key].borderRadius || "12px",
+      boxShadow: BOLD_CARD_SHADOW,
+      overflow: "visible",
     };
   });
+
+// Apply global visual polish so the full display looks cohesive and premium.
+const BUTTON_KEY_PATTERN = /(Button|button|Tab|tab|Chip|chip|Action|action)$/;
+const INPUT_KEY_PATTERN = /(Input|input|Select|select|Textarea|textarea|Field|field)$/;
+const TITLE_KEY_PATTERN = /(Title|title|Heading|heading|Hero|hero|subtitle|Intro|Meta|Text|Label|Copy|Hint|Description|desc|Summary)$/;
+
+Object.keys(styles).forEach((key) => {
+  const current = styles[key];
+  if (!current || typeof current !== "object" || Array.isArray(current)) return;
+
+  const next = {
+    ...current,
+    transition: current.transition || "all 180ms ease",
+  };
+
+  if (TITLE_KEY_PATTERN.test(key)) {
+    next.letterSpacing = current.letterSpacing || "-0.01em";
+    next.textWrap = current.textWrap || "pretty";
+    next.whiteSpace = current.whiteSpace || "normal";
+    next.overflowWrap = current.overflowWrap || "anywhere";
+    next.wordBreak = current.wordBreak || "break-word";
+    next.lineHeight = current.lineHeight || 1.45;
+  }
+
+  if (BUTTON_KEY_PATTERN.test(key)) {
+    next.fontWeight = current.fontWeight || 700;
+    next.borderRadius = current.borderRadius || "10px";
+    next.boxShadow = current.boxShadow || "0 8px 22px rgba(15, 23, 42, 0.26)";
+    next.transform = current.transform || "translateZ(0)";
+  }
+
+  if (INPUT_KEY_PATTERN.test(key)) {
+    next.border = String(current.border || "1px solid rgba(148,163,184,0.45)").replace(/^1px/, "2px");
+    next.background = current.background || "linear-gradient(180deg, rgba(15,23,42,0.9), rgba(15,23,42,0.82))";
+    next.borderRadius = current.borderRadius || "10px";
+    next.boxShadow = current.boxShadow || "inset 0 1px 0 rgba(255,255,255,0.08)";
+  }
+
+  styles[key] = next;
+});
