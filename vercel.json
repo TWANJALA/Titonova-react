@@ -1,0 +1,21 @@
+{
+  "framework": "vite",
+  "rewrites": [
+    {
+      "source": "/dashboard",
+      "destination": "/"
+    },
+    {
+      "source": "/dashboard/:path*",
+      "destination": "/"
+    },
+    {
+      "source": "/login",
+      "destination": "/"
+    },
+    {
+      "source": "/signup",
+      "destination": "/"
+    }
+  ]
+}
