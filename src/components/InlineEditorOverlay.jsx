@@ -46,9 +46,9 @@ export default function InlineEditorOverlay({
   viewportWidth,
   focusInlineEditableNode,
   selectedEditableNodeRef,
-  setPublishMessage,
   syncInlineSiteModelFromDom,
   setSelectedEditableMeta,
+  handleInlineImageReplace,
 }) {
   if (!isInlineEditing) return null;
 
@@ -240,7 +240,8 @@ export default function InlineEditorOverlay({
             {selectedEditableMeta.type === "image" ? (
               <button
                 style={styles.inlineSuggestionApply}
-                onClick={() => setPublishMessage(`Selected ${selectedEditableMeta.id}. Use Image Customization to replace this asset.`)}
+                onMouseDown={preserveInlineSelection}
+                onClick={() => handleInlineImageReplace(selectedEditableNodeRef.current)}
               >
                 Edit Image
               </button>

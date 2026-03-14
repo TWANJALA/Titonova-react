@@ -6112,6 +6112,46 @@ Return strict JSON:
     setEditHistory([nextHtml]);
   };
 
+  const readImageFileAsDataUrl = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Image upload failed."));
+      reader.readAsDataURL(file);
+    });
+
+  const replaceInlineImage = async (imageId, file, scope = imageApplyScope) => {
+    if (!imageId || !file) return "";
+    const dataUrl = await readImageFileAsDataUrl(file).catch(() => "");
+    if (!dataUrl) return "";
+    applyImageUpdate(imageId, dataUrl, scope);
+    setPublishStatus("success");
+    setPublishMessage(
+      scope === "all"
+        ? `Uploaded image across all pages: ${imageId}`
+        : `Uploaded image: ${imageId}`
+    );
+    return dataUrl;
+  };
+
+  const handleInlineImageReplace = (targetNode) => {
+    const imageTarget =
+      targetNode instanceof Element ? targetNode.closest("[data-editable='image'][data-id], img[data-image-id]") : null;
+    if (!(imageTarget instanceof HTMLElement)) return;
+    const imageId = String(imageTarget.getAttribute("data-image-id") || imageTarget.dataset.id || "").trim();
+    if (!imageId) return;
+    setSelectedImageId(imageId);
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = async (event) => {
+      const file = event.target?.files?.[0];
+      if (!file) return;
+      await replaceInlineImage(imageId, file, imageApplyScope);
+    };
+    input.click();
+  };
+
   const handleApplyImageUrl = () => {
     if (!selectedImage || !imageUrlInput.trim()) return;
     applyImageUpdate(selectedImage.id, imageUrlInput.trim(), imageApplyScope);
@@ -6145,20 +6185,7 @@ Return strict JSON:
   const handleImageUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file || !selectedImage) return;
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = () => reject(new Error("Image upload failed."));
-      reader.readAsDataURL(file);
-    }).catch(() => "");
-    if (!dataUrl) return;
-    applyImageUpdate(selectedImage.id, dataUrl, imageApplyScope);
-    setPublishStatus("success");
-    setPublishMessage(
-      imageApplyScope === "all"
-        ? `Uploaded image across all pages: ${selectedImage.id}`
-        : `Uploaded image: ${selectedImage.id}`
-    );
+    await replaceInlineImage(selectedImage.id, file, imageApplyScope);
     event.target.value = "";
   };
 
@@ -8021,6 +8048,9 @@ ${JSON.stringify(sourceTexts)}`,
 
   const readInlineEditableValue = (node) => {
     if (!(node instanceof HTMLElement)) return "";
+    if (String(node.tagName || "").toLowerCase() === "img") {
+      return String(node.getAttribute("alt") || node.getAttribute("src") || "").trim();
+    }
     return String(node.textContent || "").replace(/\s+/g, " ").trim();
   };
 
@@ -8860,7 +8890,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     if (!isInlineEditing) return;
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
-    const node = target.closest("[data-editable='text'][data-id]");
+    const node = target.closest("[data-editable='text'][data-id], [data-editable='image'][data-id]");
     if (!(node instanceof HTMLElement)) {
       clearInlineHoverNode();
       return;
@@ -8874,7 +8904,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     node.style.transition = node.style.transition || "box-shadow 120ms ease, background-color 120ms ease";
     node.style.boxShadow = "inset 0 0 0 2px rgba(59,130,246,0.78)";
     node.style.backgroundColor = "rgba(59,130,246,0.09)";
-    node.style.cursor = "text";
+    node.style.cursor = String(node.dataset.editable || "") === "image" ? "pointer" : "text";
     inlineHoverNodeRef.current = node;
   };
 
@@ -8886,6 +8916,13 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     if (!isInlineEditing) return;
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
+    const imageTarget = target.closest("[data-editable='image'][data-id], img[data-image-id]");
+    if (imageTarget instanceof HTMLElement) {
+      event.preventDefault();
+      selectInlineEditableNode(imageTarget);
+      handleInlineImageReplace(imageTarget);
+      return;
+    }
     const editableTarget = target.closest("[data-editable='text'][data-id]");
     if (!(editableTarget instanceof HTMLElement)) return;
     selectInlineEditableNode(editableTarget);
@@ -10553,9 +10590,9 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
           viewportWidth={viewportWidth}
           focusInlineEditableNode={focusInlineEditableNode}
           selectedEditableNodeRef={selectedEditableNodeRef}
-          setPublishMessage={setPublishMessage}
           syncInlineSiteModelFromDom={syncInlineSiteModelFromDom}
           setSelectedEditableMeta={setSelectedEditableMeta}
+          handleInlineImageReplace={handleInlineImageReplace}
           previewEditableStyle={previewEditableStyle}
           handlePreviewLinkNavigation={handlePreviewLinkNavigation}
           handleInlinePointerActivate={handleInlinePointerActivate}

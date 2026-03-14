@@ -98,9 +98,9 @@ export default function PreviewPane(props) {
     viewportWidth,
     focusInlineEditableNode,
     selectedEditableNodeRef,
-    setPublishMessage,
     syncInlineSiteModelFromDom,
     setSelectedEditableMeta,
+    handleInlineImageReplace,
     previewEditableStyle,
     handlePreviewLinkNavigation,
     handleInlinePointerActivate,
@@ -281,9 +281,9 @@ export default function PreviewPane(props) {
                   viewportWidth={viewportWidth}
                   focusInlineEditableNode={focusInlineEditableNode}
                   selectedEditableNodeRef={selectedEditableNodeRef}
-                  setPublishMessage={setPublishMessage}
                   syncInlineSiteModelFromDom={syncInlineSiteModelFromDom}
                   setSelectedEditableMeta={setSelectedEditableMeta}
+                  handleInlineImageReplace={handleInlineImageReplace}
                 />
               </Suspense>
               <div
