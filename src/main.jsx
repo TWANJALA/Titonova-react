@@ -1,9 +1,10 @@
 /* eslint-disable react-refresh/only-export-components */
-import React, { StrictMode } from 'react'
+import React, { StrictMode, Suspense } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
-import Dashboard from './Dashboard.jsx'
-import LoginPage from './LoginPage.jsx'
+
+const Dashboard = React.lazy(() => import('./Dashboard.jsx'))
+const LoginPage = React.lazy(() => import('./LoginPage.jsx'))
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
@@ -52,7 +53,15 @@ window.addEventListener('unhandledrejection', (event) => {
 createRoot(rootEl).render(
   <StrictMode>
     <AppErrorBoundary>
-      <AppRouter />
+      <Suspense
+        fallback={
+          <div style={{ padding: 24, fontFamily: 'Inter, sans-serif', background: '#0f172a', color: '#f8fafc', minHeight: '100vh' }}>
+            Loading TitoNova...
+          </div>
+        }
+      >
+        <AppRouter />
+      </Suspense>
     </AppErrorBoundary>
   </StrictMode>,
 )
