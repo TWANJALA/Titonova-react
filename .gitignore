@@ -22,6 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+__pycache__/
+*.pyc
+.venv/
+infra/.env.prod
 
 # Runtime-generated local artifacts
 hosted-sites/

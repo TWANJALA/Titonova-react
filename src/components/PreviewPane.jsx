@@ -1,9 +1,10 @@
-import React from "react";
-import InlineEditorOverlay from "./InlineEditorOverlay";
-import PreviewInsightsSections from "./PreviewInsightsSections";
+import React, { Suspense } from "react";
 import PreviewActionCenter from "./PreviewActionCenter";
 import PreviewHeaderControls from "./PreviewHeaderControls";
 import PublishFlow from "./PublishFlow";
+
+const InlineEditorOverlay = React.lazy(() => import("./InlineEditorOverlay"));
+const PreviewInsightsSections = React.lazy(() => import("./PreviewInsightsSections"));
 
 export default function PreviewPane(props) {
   const {
@@ -104,9 +105,7 @@ export default function PreviewPane(props) {
     previewEditableStyle,
     handlePreviewLinkNavigation,
     handleInlinePointerActivate,
-    setDraftHtml,
     setInlineDraftDirty,
-    appendInlineHistory,
     selectInlineEditableNode,
     snapshotInlineDraft,
     captureInlineSelection,
@@ -231,68 +230,71 @@ export default function PreviewPane(props) {
               ))}
             </div>
           </section>
-          <PreviewInsightsSections {...insightsProps} />
+          <Suspense fallback={<section style={styles.analyticsDashboardCard}><small style={styles.analyticsDashboardMeta}>Loading insights...</small></section>}>
+            <PreviewInsightsSections {...insightsProps} />
+          </Suspense>
           <div style={styles.previewCanvasWrap}>
             <div style={shouldShowGuestPreviewPrompt ? styles.previewCanvasFaint : undefined}>
-              <InlineEditorOverlay
-                styles={styles}
-                isInlineEditing={isInlineEditing}
-                inlineEditToolbarStyle={inlineEditToolbarStyle}
-                inlineEditMetaStyle={inlineEditMetaStyle}
-                inlineSmartStatus={inlineSmartStatus}
-                inlineSiteModel={inlineSiteModel}
-                inlineSelectionText={inlineSelectionText}
-                inlineSelectionSection={inlineSelectionSection}
-                inlineCheckpoints={inlineCheckpoints}
-                handleRestoreInlineCheckpoint={handleRestoreInlineCheckpoint}
-                inlineAdvancedOpen={inlineAdvancedOpen}
-                stylesInput={inlineSmartInputStyle}
-                inlineSmartCommand={inlineSmartCommand}
-                setInlineSmartCommand={setInlineSmartCommand}
-                handleRunInlineSmartCommand={handleRunInlineSmartCommand}
-                getInlineCommandOptions={getInlineCommandOptions}
-                inlineAutoApplyHighConfidence={inlineAutoApplyHighConfidence}
-                setInlineAutoApplyHighConfidence={setInlineAutoApplyHighConfidence}
-                inlineSuggestions={inlineSuggestions}
-                handleApplyInlineSuggestion={handleApplyInlineSuggestion}
-                inlineEditActionsStyle={inlineEditActionsStyle}
-                inlineDraftDirty={inlineDraftDirty}
-                inlineBestSuggestion={inlineBestSuggestion}
-                handleImproveInlinePageCopy={handleImproveInlinePageCopy}
-                inlineBulkImproving={inlineBulkImproving}
-                handleImproveInlineSectionCopy={handleImproveInlineSectionCopy}
-                handleImproveAndSaveInlinePageCopy={handleImproveAndSaveInlinePageCopy}
-                handleImproveSavePublishInline={handleImproveSavePublishInline}
-                publishing={publishing}
-                inlineLastPublishSnapshot={inlineLastPublishSnapshot}
-                handleRollbackInlinePublishSnapshot={handleRollbackInlinePublishSnapshot}
-                handleUndoInlineEdit={handleUndoInlineEdit}
-                editHistory={editHistory}
-                handleRedoInlineEdit={handleRedoInlineEdit}
-                redoHistory={redoHistory}
-                handleSaveInlineEdit={handleSaveInlineEdit}
-                handleCancelInlineEdit={handleCancelInlineEdit}
-                setInlineAdvancedOpen={setInlineAdvancedOpen}
-                fieldLockMode={fieldLockMode}
-                setFieldLockMode={setFieldLockMode}
-                selectedEditableMeta={selectedEditableMeta}
-                floatingToolbarPos={floatingToolbarPos}
-                isCompactInlineEditor={isCompactInlineEditor}
-                viewportWidth={viewportWidth}
-                focusInlineEditableNode={focusInlineEditableNode}
-                selectedEditableNodeRef={selectedEditableNodeRef}
-                setPublishMessage={setPublishMessage}
-                syncInlineSiteModelFromDom={syncInlineSiteModelFromDom}
-                setSelectedEditableMeta={setSelectedEditableMeta}
-              />
+              <Suspense fallback={null}>
+                <InlineEditorOverlay
+                  styles={styles}
+                  isInlineEditing={isInlineEditing}
+                  inlineEditToolbarStyle={inlineEditToolbarStyle}
+                  inlineEditMetaStyle={inlineEditMetaStyle}
+                  inlineSmartStatus={inlineSmartStatus}
+                  inlineSiteModel={inlineSiteModel}
+                  inlineSelectionText={inlineSelectionText}
+                  inlineSelectionSection={inlineSelectionSection}
+                  inlineCheckpoints={inlineCheckpoints}
+                  handleRestoreInlineCheckpoint={handleRestoreInlineCheckpoint}
+                  inlineAdvancedOpen={inlineAdvancedOpen}
+                  stylesInput={inlineSmartInputStyle}
+                  inlineSmartCommand={inlineSmartCommand}
+                  setInlineSmartCommand={setInlineSmartCommand}
+                  handleRunInlineSmartCommand={handleRunInlineSmartCommand}
+                  getInlineCommandOptions={getInlineCommandOptions}
+                  inlineAutoApplyHighConfidence={inlineAutoApplyHighConfidence}
+                  setInlineAutoApplyHighConfidence={setInlineAutoApplyHighConfidence}
+                  inlineSuggestions={inlineSuggestions}
+                  handleApplyInlineSuggestion={handleApplyInlineSuggestion}
+                  inlineEditActionsStyle={inlineEditActionsStyle}
+                  inlineDraftDirty={inlineDraftDirty}
+                  inlineBestSuggestion={inlineBestSuggestion}
+                  handleImproveInlinePageCopy={handleImproveInlinePageCopy}
+                  inlineBulkImproving={inlineBulkImproving}
+                  handleImproveInlineSectionCopy={handleImproveInlineSectionCopy}
+                  handleImproveAndSaveInlinePageCopy={handleImproveAndSaveInlinePageCopy}
+                  handleImproveSavePublishInline={handleImproveSavePublishInline}
+                  publishing={publishing}
+                  inlineLastPublishSnapshot={inlineLastPublishSnapshot}
+                  handleRollbackInlinePublishSnapshot={handleRollbackInlinePublishSnapshot}
+                  handleUndoInlineEdit={handleUndoInlineEdit}
+                  editHistory={editHistory}
+                  handleRedoInlineEdit={handleRedoInlineEdit}
+                  redoHistory={redoHistory}
+                  handleSaveInlineEdit={handleSaveInlineEdit}
+                  handleCancelInlineEdit={handleCancelInlineEdit}
+                  setInlineAdvancedOpen={setInlineAdvancedOpen}
+                  fieldLockMode={fieldLockMode}
+                  setFieldLockMode={setFieldLockMode}
+                  selectedEditableMeta={selectedEditableMeta}
+                  floatingToolbarPos={floatingToolbarPos}
+                  isCompactInlineEditor={isCompactInlineEditor}
+                  viewportWidth={viewportWidth}
+                  focusInlineEditableNode={focusInlineEditableNode}
+                  selectedEditableNodeRef={selectedEditableNodeRef}
+                  setPublishMessage={setPublishMessage}
+                  syncInlineSiteModelFromDom={syncInlineSiteModelFromDom}
+                  setSelectedEditableMeta={setSelectedEditableMeta}
+                />
+              </Suspense>
               <div
                 ref={previewEditableRef}
-                contentEditable={isInlineEditing && !fieldLockMode}
-                suppressContentEditableWarning
+                contentEditable={false}
                 style={isInlineEditing ? previewEditableStyle : undefined}
                 onClick={handlePreviewLinkNavigation}
-                onMouseDownCapture={handleInlinePointerActivate}
-                onTouchStartCapture={handleInlinePointerActivate}
+                onClickCapture={handleInlinePointerActivate}
+                onFocusCapture={handleInlinePointerActivate}
                 onKeyDown={(event) => {
                   if (!isInlineEditing) return;
                   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
@@ -302,18 +304,16 @@ export default function PreviewPane(props) {
                 }}
                 onInput={(event) => {
                   if (!isInlineEditing) return;
-                  const nextHtml = event.currentTarget.innerHTML;
-                  setDraftHtml(nextHtml);
                   setInlineDraftDirty(true);
-                  appendInlineHistory(nextHtml);
                   syncInlineSiteModelFromDom();
                   if (event.target instanceof Element) selectInlineEditableNode(event.target);
                 }}
-                onBlurCapture={() => {
-                  if (isInlineEditing) {
-                    snapshotInlineDraft();
-                    syncInlineSiteModelFromDom();
-                  }
+                onBlurCapture={(event) => {
+                  if (!isInlineEditing) return;
+                  const nextFocus = event.relatedTarget;
+                  if (nextFocus instanceof Node && event.currentTarget.contains(nextFocus)) return;
+                  snapshotInlineDraft();
+                  syncInlineSiteModelFromDom();
                 }}
                 onMouseUpCapture={captureInlineSelection}
                 onKeyUpCapture={captureInlineSelection}

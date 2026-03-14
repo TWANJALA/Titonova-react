@@ -59,7 +59,7 @@ export default function InlineEditorOverlay({
         <div style={inlineEditMetaStyle}>
           <strong style={styles.inlineEditTitle}>Inline edit mode</strong>
           <small style={styles.inlineEditHint}>
-            Click text, edit, then Save. Shortcuts: Cmd/Ctrl+S save, Cmd/Ctrl+Z undo, Cmd/Ctrl+Y redo.
+            Click any text and type. Save when you're done. Shortcuts: Cmd/Ctrl+S save, Cmd/Ctrl+Z undo, Cmd/Ctrl+Y redo.
           </small>
           {inlineSmartStatus ? <small style={styles.inlineSmartStatus}>{inlineSmartStatus}</small> : null}
           <small style={styles.inlineSelectionMeta}>

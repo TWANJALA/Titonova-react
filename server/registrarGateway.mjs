@@ -4,8 +4,12 @@ import { promises as fs } from "node:fs";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
 import dns from "node:dns/promises";
+import * as parse5 from "parse5";
+import pixelmatch from "pixelmatch";
+import { PNG } from "pngjs";
 
 const PORT = Number(process.env.REGISTRAR_GATEWAY_PORT || 8787);
+const HOST = String(process.env.REGISTRAR_GATEWAY_HOST || "127.0.0.1").trim() || "127.0.0.1";
 const GATEWAY_TOKEN = process.env.REGISTRAR_GATEWAY_TOKEN || "";
 const HOST_BASE_URL = process.env.HOST_BASE_URL || `http://localhost:${PORT}`;
 const APP_BASE_URL = process.env.APP_BASE_URL || "http://localhost:5173/";
@@ -19,6 +23,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "dev-jwt-secret-change-me";
 const JWT_EXPIRES_SECONDS = Number(process.env.JWT_EXPIRES_SECONDS || 60 * 60 * 24 * 7);
 const OPENAI_API_KEY = String(process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_KEY || "").trim();
 const OPENAI_MODEL = String(process.env.OPENAI_MODEL || "gpt-5-mini").trim();
+const OPENAI_VISION_MODEL = String(process.env.OPENAI_VISION_MODEL || OPENAI_MODEL || "gpt-5-mini").trim();
 const STRIPE_SECRET_KEY = String(process.env.STRIPE_SECRET_KEY || "").trim();
 const STRIPE_WEBHOOK_SECRET = String(process.env.STRIPE_WEBHOOK_SECRET || "").trim();
 
@@ -82,6 +87,7 @@ const PLAN_DEFS = {
 const WORKSPACE_ROLES = ["owner", "admin", "editor", "viewer"];
 const ADMIN_APPROVAL_PENDING = "pending-admin-approval";
 const ADMIN_APPROVAL_APPROVED = "admin-approved";
+let playwrightModulePromise = null;
 
 const nowIso = () => new Date().toISOString();
 
@@ -103,6 +109,565 @@ const safeJsonParse = (value, fallback = {}) => {
     return JSON.parse(String(value || ""));
   } catch {
     return fallback;
+  }
+};
+
+const getPlaywrightModule = async () => {
+  if (playwrightModulePromise) return playwrightModulePromise;
+  playwrightModulePromise = import("playwright").catch(() => null);
+  return playwrightModulePromise;
+};
+
+const isHttpUrl = (value) => {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    return /^https?:$/i.test(parsed.protocol);
+  } catch {
+    return false;
+  }
+};
+
+const absolutizeUrl = (value, baseUrl = "") => {
+  try {
+    if (!value) return "";
+    const parsed = baseUrl ? new URL(value, baseUrl) : new URL(value);
+    if (!/^https?:$/i.test(parsed.protocol)) return "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+};
+
+const extractInternalLinksFromHtmlRaw = (html, baseUrl, maxLinks = 80) => {
+  if (!html || !baseUrl) return [];
+  let origin = "";
+  try {
+    origin = new URL(baseUrl).origin;
+  } catch {
+    return [];
+  }
+  const links = [];
+  const regex = /<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>/gi;
+  let match;
+  while ((match = regex.exec(String(html))) !== null) {
+    const absolute = absolutizeUrl(match[1], baseUrl);
+    if (!absolute) continue;
+    try {
+      const parsed = new URL(absolute);
+      if (parsed.origin !== origin) continue;
+      if (/\.(pdf|zip|rar|7z|mp4|mp3|avi|mov)$/i.test(parsed.pathname)) continue;
+      parsed.search = "";
+      parsed.hash = "";
+      const normalized = parsed.toString();
+      if (!links.includes(normalized)) links.push(normalized);
+      if (links.length >= maxLinks) break;
+    } catch {
+      // ignore malformed links
+    }
+  }
+  return links;
+};
+
+const extractAssetsFromHtmlRaw = (html, baseUrl) => {
+  const bucket = { images: [], css: [], js: [], fonts: [], videos: [], icons: [] };
+  const pushUnique = (key, raw) => {
+    const value = absolutizeUrl(raw, baseUrl);
+    if (!value) return;
+    if (!bucket[key].includes(value)) bucket[key].push(value);
+  };
+  const text = String(html || "");
+  const collectByRegex = (regex, key, index = 1) => {
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      pushUnique(key, match[index] || "");
+    }
+  };
+  collectByRegex(/<img\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi, "images");
+  collectByRegex(/<source\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi, "images");
+  collectByRegex(/<link\b[^>]*rel=["'][^"']*stylesheet[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>/gi, "css");
+  collectByRegex(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi, "js");
+  collectByRegex(/<link\b[^>]*rel=["'][^"']*icon[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>/gi, "icons");
+  collectByRegex(/<video\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi, "videos");
+  collectByRegex(/<source\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/gi, "videos");
+  collectByRegex(/url\((['"]?)([^'")]+)\1\)/gi, "fonts", 2);
+  bucket.images = bucket.images.slice(0, 120);
+  bucket.css = bucket.css.slice(0, 80);
+  bucket.js = bucket.js.slice(0, 80);
+  bucket.fonts = bucket.fonts.slice(0, 60);
+  bucket.videos = bucket.videos.slice(0, 40);
+  bucket.icons = bucket.icons.slice(0, 40);
+  return bucket;
+};
+
+const getNodeAttr = (node, name) => {
+  const attrs = Array.isArray(node?.attrs) ? node.attrs : [];
+  const hit = attrs.find((item) => String(item?.name || "").toLowerCase() === String(name || "").toLowerCase());
+  return String(hit?.value || "");
+};
+
+const inferDomComponentLabel = (node, parentTag = "") => {
+  const tag = String(node?.tagName || node?.nodeName || "").toLowerCase();
+  const id = getNodeAttr(node, "id").toLowerCase();
+  const className = getNodeAttr(node, "class").toLowerCase();
+  const hint = `${tag} ${id} ${className}`;
+  if (!tag || tag === "#text" || tag === "#comment") return "";
+  if (tag === "header") return "Header";
+  if (tag === "nav") return "Navbar";
+  if (tag === "footer") return "Footer";
+  if (tag === "main") return "Main";
+  if (tag === "img" && /(logo|brand)/.test(hint)) return "Logo";
+  if (tag === "img" && parentTag === "header") return "Logo";
+  if (/(hero|banner|above-the-fold)/.test(hint)) return "Hero Section";
+  if (/(feature|benefit|capability)/.test(hint)) return "Features Section";
+  if (/(pricing|plan|tier|quote)/.test(hint)) return "Pricing Section";
+  if (/(testimonial|review|social-proof)/.test(hint)) return "Testimonials Section";
+  if (/(faq|question|answer)/.test(hint)) return "FAQ Section";
+  if (/(contact|book|appointment|lead)/.test(hint)) return "Contact Section";
+  if (tag === "section") return "Section";
+  if (tag === "article") return "Article";
+  if (tag === "aside") return "Sidebar";
+  if (tag === "form") return "Form";
+  if (tag === "ul" || tag === "ol") return "List";
+  if (tag === "li") return "List Item";
+  if (tag === "button" || (tag === "a" && /(btn|button|cta)/.test(hint))) return "CTA";
+  if (tag === "a" && parentTag === "nav") return "Nav Link";
+  if (tag === "a") return "Link";
+  return `${tag.charAt(0).toUpperCase()}${tag.slice(1)}`;
+};
+
+const buildDomComponentTreeFromHtml = (html, options = {}) => {
+  const maxDepth = Math.min(8, Math.max(2, Number(options.maxDepth || 6)));
+  const maxChildrenPerNode = Math.min(24, Math.max(4, Number(options.maxChildrenPerNode || 14)));
+  const maxTotalNodes = Math.min(1200, Math.max(80, Number(options.maxTotalNodes || 420)));
+  const document = parse5.parse(String(html || ""));
+  let totalVisited = 0;
+  const flatSections = [];
+
+  const structuralTags = new Set([
+    "html", "body", "header", "nav", "main", "section", "article", "aside", "footer", "form",
+    "ul", "ol", "li", "a", "button", "img", "h1", "h2", "h3", "h4", "p", "div",
+  ]);
+
+  const walk = (node, depth, parentTag = "") => {
+    if (!node || depth > maxDepth || totalVisited >= maxTotalNodes) return null;
+    const tag = String(node?.tagName || node?.nodeName || "").toLowerCase();
+    const includeNode = structuralTags.has(tag) || /hero|feature|pricing|faq|testimonial|footer|header|nav|contact|logo/.test(`${tag} ${getNodeAttr(node, "id")} ${getNodeAttr(node, "class")}`.toLowerCase());
+    let children = [];
+    const rawChildren = Array.isArray(node?.childNodes) ? node.childNodes : [];
+    for (let i = 0; i < rawChildren.length; i += 1) {
+      if (children.length >= maxChildrenPerNode || totalVisited >= maxTotalNodes) break;
+      const childTree = walk(rawChildren[i], depth + 1, tag || parentTag);
+      if (childTree) children.push(childTree);
+    }
+    if (!includeNode && children.length === 0) return null;
+    totalVisited += 1;
+    const label = inferDomComponentLabel(node, parentTag);
+    const summary = {
+      label,
+      tag: tag || "unknown",
+      id: getNodeAttr(node, "id") || "",
+      class: getNodeAttr(node, "class") || "",
+      children,
+    };
+    if (/(Hero Section|Features Section|Pricing Section|Testimonials Section|FAQ Section|Contact Section|Header|Navbar|Footer)/.test(label)) {
+      flatSections.push(label);
+    }
+    return summary;
+  };
+
+  const rootHtml = Array.isArray(document?.childNodes)
+    ? document.childNodes.find((item) => String(item?.nodeName || "").toLowerCase() === "html")
+    : null;
+  const rootBody = rootHtml && Array.isArray(rootHtml.childNodes)
+    ? rootHtml.childNodes.find((item) => String(item?.tagName || item?.nodeName || "").toLowerCase() === "body")
+    : null;
+  const bodyTree = walk(rootBody || rootHtml || document, 0, "");
+  const tree = {
+    label: "Page",
+    tag: "page",
+    children: bodyTree?.children || (bodyTree ? [bodyTree] : []),
+  };
+  return {
+    tree,
+    flat_sections: Array.from(new Set(flatSections)).slice(0, 24),
+    total_visited_nodes: totalVisited,
+    truncated: totalVisited >= maxTotalNodes,
+  };
+};
+
+const detectLayoutPatterns = ({ computedStyles, domComponentTree, html }) => {
+  const rows = Array.isArray(computedStyles?.rows) ? computedStyles.rows : [];
+  const displayHistogram = computedStyles?.display_histogram || {};
+  const sections = Array.isArray(domComponentTree?.flat_sections) ? domComponentTree.flat_sections : [];
+  const lowerHtml = String(html || "").toLowerCase();
+
+  const flexCount = Number(displayHistogram.flex || 0) + Number(displayHistogram["inline-flex"] || 0);
+  const gridCount = Number(displayHistogram.grid || 0) + Number(displayHistogram["inline-grid"] || 0);
+  const overlayCount = rows.filter((row) => /(absolute|fixed|sticky)/i.test(String(row?.position || ""))).length;
+
+  const cardsByClass = rows.filter((row) => /(card|tile|panel)/i.test(`${row?.class || ""} ${row?.id || ""}`)).length;
+  const cardsByStyle = rows.filter((row) => {
+    const radius = String(row?.border_radius || "");
+    const shadow = String(row?.box_shadow || "");
+    const border = String(row?.border || "");
+    return radius !== "0px" && shadow !== "none" && !/none/i.test(border);
+  }).length;
+  const cardCount = Math.max(cardsByClass, Math.min(300, cardsByClass + cardsByStyle));
+
+  const columnsByGrid = rows.filter((row) => {
+    const template = String(row?.grid_template_columns || "");
+    return template && template !== "none" && template.trim().split(/\s+/).length >= 2;
+  }).length;
+  const columnsByClass = rows.filter((row) => /(col-|column|columns|two-col|three-col)/i.test(`${row?.class || ""} ${row?.id || ""}`)).length;
+  const columnLayoutCount = Math.max(columnsByGrid, columnsByClass);
+
+  const navbarDetected =
+    sections.includes("Navbar") ||
+    rows.some((row) => String(row?.tag || "").toLowerCase() === "nav") ||
+    /(class=["'][^"']*(navbar|main-nav|site-nav)[^"']*["'])/.test(lowerHtml);
+  const heroDetected =
+    sections.includes("Hero Section") ||
+    /(class=["'][^"']*(hero|banner|masthead|above-the-fold)[^"']*["'])/.test(lowerHtml);
+  const sidebarDetected =
+    rows.some((row) => String(row?.tag || "").toLowerCase() === "aside") ||
+    /(class=["'][^"']*(sidebar|side-nav|sidepanel)[^"']*["'])/.test(lowerHtml);
+  const ctaButtons = rows.filter((row) => {
+    const tag = String(row?.tag || "").toLowerCase();
+    const hint = `${row?.class || ""} ${row?.id || ""} ${row?.text_sample || ""}`.toLowerCase();
+    return tag === "button" || (tag === "a" && /(cta|start|get started|book|buy|shop|trial|quote|contact)/.test(hint));
+  }).length;
+
+  const layoutType =
+    gridCount >= Math.max(2, flexCount + 1)
+      ? "grid"
+      : flexCount >= 2
+        ? "flexbox"
+        : overlayCount >= 2
+          ? "overlay"
+          : "flow";
+
+  return {
+    primary_layout: layoutType,
+    patterns: {
+      flexbox: flexCount,
+      grid: gridCount,
+      overlay: overlayCount,
+    },
+    components: {
+      cards: cardCount,
+      columns: columnLayoutCount,
+      hero_sections: heroDetected ? 1 : 0,
+      sidebars: sidebarDetected ? 1 : 0,
+      navbars: navbarDetected ? 1 : 0,
+      cta_buttons: ctaButtons,
+    },
+    heuristics: {
+      dom_sections_detected: sections.slice(0, 24),
+      sampled_elements: Number(computedStyles?.sampled_elements || 0),
+      total_elements: Number(computedStyles?.total_elements || 0),
+    },
+  };
+};
+
+const detectReusableComponentsFromTree = (domComponentTree, options = {}) => {
+  const minRepeats = Math.max(2, Number(options.minRepeats || 4)); // "repeats > 3" => at least 4
+  const root = domComponentTree?.tree;
+  if (!root || !Array.isArray(root.children)) {
+    return {
+      min_repeats: minRepeats,
+      signatures_scanned: 0,
+      components: [],
+    };
+  }
+
+  const signatureCounts = new Map();
+  const signatureMeta = new Map();
+  const skipTags = new Set(["page", "html", "body", "main", "p", "span", "small", "strong", "em", "label", "h1", "h2", "h3", "h4"]);
+
+  const normalizeClassTokens = (value) =>
+    String(value || "")
+      .split(/\s+/)
+      .map((token) => token.trim().toLowerCase())
+      .filter(Boolean)
+      .filter((token) => /(card|feature|testimonial|nav|footer|hero|pricing|faq|item|tile|block)/.test(token))
+      .slice(0, 3);
+
+  const getNodeSignature = (node) => {
+    const tag = String(node?.tag || "").toLowerCase();
+    if (!tag || skipTags.has(tag)) return "";
+    const childTags = Array.isArray(node?.children)
+      ? node.children.map((child) => String(child?.tag || "").toLowerCase()).filter(Boolean).slice(0, 8)
+      : [];
+    const classTokens = normalizeClassTokens(node?.class);
+    if ((tag === "div" || tag === "section" || tag === "article") && classTokens.length === 0 && childTags.length < 2) {
+      return "";
+    }
+    const key = `${tag}|c:${childTags.join(",")}|k:${classTokens.join(",")}`;
+    return key;
+  };
+
+  const classifyComponentName = (signature, sample = {}) => {
+    const hint = `${signature} ${sample?.label || ""} ${sample?.class || ""} ${sample?.id || ""}`.toLowerCase();
+    if (/(testimonial|review|quote)/.test(hint)) return "Testimonial";
+    if (/(feature|benefit|capability)/.test(hint)) return "FeatureBlock";
+    if (/(div\|c:img,h3,p|article\|c:img,h3,p|article\|c:img,h2,p|div\|c:h3,p,a|section\|c:h3,p,a)/.test(hint)) return "Card";
+    if (/(card|tile|panel|item)/.test(hint)) return "Card";
+    if (/(nav|menu)/.test(hint)) return "Navbar";
+    if (/(footer)/.test(hint)) return "Footer";
+    if (/(hero|banner)/.test(hint)) return "HeroSection";
+    if (/(pricing|plan|tier)/.test(hint)) return "PricingBlock";
+    if (/(faq|question|answer)/.test(hint)) return "FAQItem";
+    return `${String(sample?.tag || "Component").charAt(0).toUpperCase()}${String(sample?.tag || "Component").slice(1)}Component`;
+  };
+
+  const walk = (node) => {
+    if (!node || typeof node !== "object") return;
+    const signature = getNodeSignature(node);
+    if (signature) {
+      signatureCounts.set(signature, (signatureCounts.get(signature) || 0) + 1);
+      if (!signatureMeta.has(signature)) {
+        signatureMeta.set(signature, {
+          tag: String(node.tag || ""),
+          label: String(node.label || ""),
+          id: String(node.id || ""),
+          class: String(node.class || ""),
+          child_tags: Array.isArray(node.children)
+            ? node.children.map((child) => String(child?.tag || "").toLowerCase()).filter(Boolean).slice(0, 8)
+            : [],
+        });
+      }
+    }
+    if (Array.isArray(node.children)) {
+      node.children.forEach((child) => walk(child));
+    }
+  };
+
+  root.children.forEach((child) => walk(child));
+
+  const components = Array.from(signatureCounts.entries())
+    .filter(([, count]) => Number(count || 0) >= minRepeats)
+    .map(([signature, count]) => {
+      const sample = signatureMeta.get(signature) || {};
+      return {
+        name: classifyComponentName(signature, sample),
+        signature,
+        repeat_count: Number(count || 0),
+        tag: sample.tag || "",
+        sample_label: sample.label || "",
+        child_tags: Array.isArray(sample.child_tags) ? sample.child_tags : [],
+      };
+    })
+    .sort((a, b) => Number(b.repeat_count || 0) - Number(a.repeat_count || 0))
+    .slice(0, 20);
+
+  return {
+    min_repeats: minRepeats,
+    signatures_scanned: signatureCounts.size,
+    components,
+  };
+};
+
+const screenshotPagePngBuffer = async (url, options = {}) => {
+  const waitUntilRaw = String(options?.waitUntil || "networkidle").trim();
+  const waitUntil = ["load", "domcontentloaded", "networkidle", "commit"].includes(waitUntilRaw)
+    ? waitUntilRaw
+    : "networkidle";
+  const timeoutMs = Math.min(120000, Math.max(8000, Number(options?.timeoutMs || 45000)));
+  const viewportWidth = Math.min(1920, Math.max(360, Number(options?.viewportWidth || 1440)));
+  const viewportHeight = Math.min(2400, Math.max(480, Number(options?.viewportHeight || 900)));
+  const playwright = await getPlaywrightModule();
+  if (!playwright?.chromium) {
+    const error = new Error("Playwright is not installed on the gateway. Install it with: npm i playwright");
+    error.statusCode = 503;
+    throw error;
+  }
+  let browser = null;
+  let context = null;
+  let page = null;
+  try {
+    browser = await playwright.chromium.launch({ headless: true });
+    context = await browser.newContext({
+      viewport: { width: viewportWidth, height: viewportHeight },
+    });
+    page = await context.newPage();
+    await page.goto(url, { waitUntil, timeout: timeoutMs });
+    await page.waitForTimeout(250);
+    const finalUrl = page.url();
+    const title = await page.title();
+    const pngBuffer = await page.screenshot({
+      type: "png",
+      fullPage: true,
+    });
+    return { buffer: pngBuffer, finalUrl, title };
+  } finally {
+    try {
+      if (page) await page.close();
+    } catch {
+      // noop
+    }
+    try {
+      if (context) await context.close();
+    } catch {
+      // noop
+    }
+    try {
+      if (browser) await browser.close();
+    } catch {
+      // noop
+    }
+  }
+};
+
+const parsePngBuffer = (buffer) =>
+  new Promise((resolve, reject) => {
+    const png = new PNG();
+    png.parse(Buffer.from(buffer), (error, data) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve(data);
+      }
+    });
+  });
+
+const normalizePngDimensions = (png, width, height) => {
+  if (!png || !Number.isFinite(width) || !Number.isFinite(height)) return png;
+  if (png.width === width && png.height === height) return png;
+  const normalized = new PNG({ width, height });
+  normalized.data.fill(255);
+  const copyWidth = Math.min(width, png.width);
+  const copyHeight = Math.min(height, png.height);
+  PNG.bitblt(png, normalized, 0, 0, copyWidth, copyHeight, 0, 0);
+  return normalized;
+};
+
+const buildPixelAdjustmentHints = (differencePercent, thresholdPercent) => {
+  const hints = [];
+  if (differencePercent > thresholdPercent) {
+    hints.push("Adjust spacing scale (margin/padding) to match section rhythm.");
+    hints.push("Tune typography (font-size/line-height/weights) to align hierarchy.");
+    hints.push("Refine layout containers (grid/flex columns, max-width, alignment).");
+    hints.push("Align CTA/button sizing, corner radius, and visual emphasis.");
+  }
+  if (differencePercent > Math.max(8, thresholdPercent * 2)) {
+    hints.push("Run visual hierarchy pass for hero, cards, and navigation proportions.");
+    hints.push("Re-check responsive breakpoints and overlay positioning.");
+  }
+  return hints;
+};
+
+const detectLayoutSnapshotFromPage = async (page) =>
+  page.evaluate(() => {
+    const all = Array.from(document.querySelectorAll("*"));
+    const displayHistogram = {};
+    let overlayCount = 0;
+    all.slice(0, 2500).forEach((el) => {
+      const style = window.getComputedStyle(el);
+      const display = String(style.display || "").trim();
+      displayHistogram[display] = (displayHistogram[display] || 0) + 1;
+      if (/(absolute|fixed|sticky)/i.test(String(style.position || ""))) {
+        overlayCount += 1;
+      }
+    });
+    const gridCount = Number(displayHistogram.grid || 0) + Number(displayHistogram["inline-grid"] || 0);
+    const flexCount = Number(displayHistogram.flex || 0) + Number(displayHistogram["inline-flex"] || 0);
+    const navbarDetected = Boolean(document.querySelector("nav, [class*='nav'], [id*='nav']"));
+    const heroDetected = Boolean(document.querySelector("[class*='hero'], [id*='hero'], header h1, main h1"));
+    const sidebarDetected = Boolean(document.querySelector("aside, [class*='sidebar'], [id*='sidebar']"));
+    const cardsDetected = document.querySelectorAll("[class*='card'], [data-card], article").length;
+    const columnSignals = document.querySelectorAll("[class*='col'], [class*='column'], [style*='grid-template-columns']").length;
+    const ctaButtons = document.querySelectorAll("button, a[class*='btn'], a[class*='cta']").length;
+    const root = document.documentElement;
+    const body = document.body;
+    const horizontalOverflow = Math.max(root.scrollWidth, body ? body.scrollWidth : 0) > root.clientWidth + 1;
+    return {
+      display_histogram: displayHistogram,
+      primary_layout: gridCount > flexCount ? "grid" : flexCount > 0 ? "flexbox" : overlayCount > 0 ? "overlay" : "flow",
+      components: {
+        navbars: navbarDetected ? 1 : 0,
+        hero_sections: heroDetected ? 1 : 0,
+        sidebars: sidebarDetected ? 1 : 0,
+        cards: Number(cardsDetected || 0),
+        columns: Number(columnSignals || 0),
+        cta_buttons: Number(ctaButtons || 0),
+      },
+      overlay_count: overlayCount,
+      horizontal_overflow: horizontalOverflow,
+    };
+  });
+
+const runResponsiveViewportTesting = async (url, options = {}) => {
+  const waitUntilRaw = String(options?.waitUntil || "networkidle").trim();
+  const waitUntil = ["load", "domcontentloaded", "networkidle", "commit"].includes(waitUntilRaw)
+    ? waitUntilRaw
+    : "networkidle";
+  const timeoutMs = Math.min(120000, Math.max(8000, Number(options?.timeoutMs || 45000)));
+  const viewportPresets = [
+    { key: "desktop", width: 1440, height: 900 },
+    { key: "tablet", width: 1024, height: 1366 },
+    { key: "mobile", width: 390, height: 844 },
+  ];
+  const playwright = await getPlaywrightModule();
+  if (!playwright?.chromium) return null;
+  let browser = null;
+  try {
+    browser = await playwright.chromium.launch({ headless: true });
+    const results = [];
+    for (const preset of viewportPresets) {
+      let context = null;
+      let page = null;
+      try {
+        context = await browser.newContext({
+          viewport: { width: preset.width, height: preset.height },
+        });
+        page = await context.newPage();
+        await page.goto(url, { waitUntil, timeout: timeoutMs });
+        await page.waitForTimeout(220);
+        const snapshot = await detectLayoutSnapshotFromPage(page);
+        results.push({
+          viewport: preset,
+          ...snapshot,
+        });
+      } finally {
+        try {
+          if (page) await page.close();
+        } catch {
+          // noop
+        }
+        try {
+          if (context) await context.close();
+        } catch {
+          // noop
+        }
+      }
+    }
+
+    const desktop = results.find((item) => item.viewport.key === "desktop");
+    const tablet = results.find((item) => item.viewport.key === "tablet");
+    const mobile = results.find((item) => item.viewport.key === "mobile");
+    const inferredBreakpoints = [];
+    if (desktop && tablet && desktop.primary_layout !== tablet.primary_layout) inferredBreakpoints.push("@media (max-width: 1024px)");
+    if (tablet && mobile && tablet.primary_layout !== mobile.primary_layout) inferredBreakpoints.push("@media (max-width: 768px)");
+    if (mobile && mobile.components && Number(mobile.components.columns || 0) < Number((desktop?.components?.columns || 0))) {
+      inferredBreakpoints.push("@media (max-width: 480px)");
+    }
+    if (inferredBreakpoints.length === 0) {
+      inferredBreakpoints.push("@media (max-width: 1024px)", "@media (max-width: 768px)");
+    }
+
+    return {
+      mode: "playwright-viewport-testing",
+      viewports: results,
+      inferred_breakpoints: Array.from(new Set(inferredBreakpoints)),
+      tested: ["desktop", "tablet", "mobile"],
+    };
+  } finally {
+    try {
+      if (browser) await browser.close();
+    } catch {
+      // noop
+    }
   }
 };
 
@@ -450,6 +1015,110 @@ const openAiGenerateJson = async (prompt) => {
         .trim()
     : "";
   return outputText || "{}";
+};
+
+const safeJsonFromText = (value, fallback = null) => {
+  const text = String(value || "").trim();
+  if (!text) return fallback;
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced ? fenced[1].trim() : text;
+  return safeJsonParse(candidate, fallback);
+};
+
+const openAiAnalyzeScreenshot = async ({ screenshotDataUrl, pageUrl = "", pageTitle = "" }) => {
+  if (!OPENAI_API_KEY || !screenshotDataUrl) return null;
+  const prompt = `Analyze this full-page website screenshot and return strict JSON only:
+{
+  "summary": "short string",
+  "layout_pattern": "grid|flexbox|overlay|flow|mixed",
+  "visual_hierarchy": ["..."],
+  "detected_sections": ["Hero section","Feature cards","Pricing section","CTA button"],
+  "detected_components": {"cards":0,"columns":0,"hero_sections":0,"cta_buttons":0,"navbars":0,"sidebars":0},
+  "spacing_signal": "tight|balanced|airy",
+  "confidence": 0-100
+}
+Focus on spacing, layout, and visual hierarchy. URL: ${pageUrl}. Title: ${pageTitle}.`;
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: OPENAI_VISION_MODEL,
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: prompt },
+            { type: "input_image", image_url: screenshotDataUrl },
+          ],
+        },
+      ],
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) return null;
+  const outputText = Array.isArray(payload?.output)
+    ? payload.output
+        .flatMap((item) => (Array.isArray(item?.content) ? item.content : []))
+        .map((content) => String(content?.text || ""))
+        .join("")
+        .trim()
+    : "";
+  const parsed = safeJsonFromText(outputText, null);
+  return parsed && typeof parsed === "object" ? parsed : null;
+};
+
+const buildHeuristicVisionSummary = ({ layoutAnalysis, domComponentTree, computedStyles }) => {
+  const sections = Array.isArray(domComponentTree?.flat_sections) ? domComponentTree.flat_sections : [];
+  const patterns = layoutAnalysis?.patterns || {};
+  const components = layoutAnalysis?.components || {};
+  const sampled = Number(computedStyles?.sampled_elements || 0);
+  const displayHistogram = computedStyles?.display_histogram || {};
+  const textLayout = Number(displayHistogram.block || 0) + Number(displayHistogram.inline || 0);
+  const spacingSignal = sampled > 600 ? "airy" : sampled > 220 ? "balanced" : "tight";
+  const layoutPattern =
+    Number(patterns.grid || 0) > Number(patterns.flexbox || 0)
+      ? "grid"
+      : Number(patterns.flexbox || 0) > 0
+        ? "flexbox"
+        : Number(patterns.overlay || 0) > 0
+          ? "overlay"
+          : "flow";
+  const detectedSections = Array.from(
+    new Set(
+      [
+        ...sections,
+        components?.hero_sections > 0 ? "Hero section" : "",
+        components?.cards > 0 ? "Feature cards" : "",
+        components?.columns > 0 ? "Column layout" : "",
+        components?.navbars > 0 ? "Navbar" : "",
+      ].filter(Boolean)
+    )
+  ).slice(0, 12);
+  return {
+    summary: `Heuristic vision pass: ${layoutPattern} layout with ${components?.cards || 0} card-like blocks and ${components?.columns || 0} column containers.`,
+    layout_pattern: layoutPattern,
+    visual_hierarchy: [
+      "Top navigation and hero emphasis",
+      textLayout > 0 ? "Readable text blocks with section rhythm" : "Sparse text hierarchy",
+      components?.cta_buttons > 0 ? "Clear CTA prominence" : "CTA prominence inferred from buttons/links",
+    ],
+    detected_sections: detectedSections,
+    detected_components: {
+      cards: Number(components?.cards || 0),
+      columns: Number(components?.columns || 0),
+      hero_sections: Number(components?.hero_sections || 0),
+      cta_buttons: Number(components?.cta_buttons || 0),
+      navbars: Number(components?.navbars || 0),
+      sidebars: Number(components?.sidebars || 0),
+    },
+    spacing_signal: spacingSignal,
+    confidence: 72,
+    source: "heuristic",
+  };
 };
 
 const createStripeCheckoutSession = async ({ user, plan }) => {
@@ -2071,6 +2740,394 @@ const aiActions = {
   },
 };
 
+const cloneActions = {
+  render: async (payload = {}) => {
+    const url = String(payload?.url || "").trim();
+    if (!isHttpUrl(url)) {
+      const error = new Error("Valid http(s) url is required.");
+      error.statusCode = 400;
+      throw error;
+    }
+    const waitUntilRaw = String(payload?.waitUntil || "networkidle").trim();
+    const waitUntil = ["load", "domcontentloaded", "networkidle", "commit"].includes(waitUntilRaw)
+      ? waitUntilRaw
+      : "networkidle";
+    const timeoutMs = Math.min(120000, Math.max(8000, Number(payload?.timeoutMs || 45000)));
+    const maxLinks = Math.min(200, Math.max(10, Number(payload?.maxLinks || 80)));
+    const viewportWidth = Math.min(1920, Math.max(360, Number(payload?.viewportWidth || 1440)));
+    const viewportHeight = Math.min(2400, Math.max(480, Number(payload?.viewportHeight || 900)));
+    const includeComputedStyles = payload?.includeComputedStyles !== false;
+    const styleSampleLimit = Math.min(4000, Math.max(100, Number(payload?.styleSampleLimit || 1400)));
+    const includeScreenshot = payload?.includeScreenshot === true;
+    const includeVisionAnalysis = payload?.includeVisionAnalysis !== false;
+    const includeResponsiveDetection = payload?.includeResponsiveDetection !== false;
+    const screenshotQuality = Math.min(90, Math.max(30, Number(payload?.screenshotQuality || 62)));
+    const componentRepeatThreshold = Math.max(2, Number(payload?.componentRepeatThreshold || 4));
+
+    const playwright = await getPlaywrightModule();
+    if (!playwright?.chromium) {
+      const error = new Error("Playwright is not installed on the gateway. Install it with: npm i playwright");
+      error.statusCode = 503;
+      throw error;
+    }
+
+    let browser = null;
+    let context = null;
+    let page = null;
+    try {
+      browser = await playwright.chromium.launch({ headless: true });
+      context = await browser.newContext({
+        viewport: { width: viewportWidth, height: viewportHeight },
+      });
+      page = await context.newPage();
+      await page.goto(url, { waitUntil, timeout: timeoutMs });
+      await page.waitForTimeout(250);
+      const finalUrl = page.url();
+      const title = await page.title();
+      const html = await page.content();
+      const screenshotBuffer = await page.screenshot({
+        type: "jpeg",
+        quality: screenshotQuality,
+        fullPage: true,
+      });
+      const screenshotBase64 = screenshotBuffer.toString("base64");
+      const screenshotDataUrl = `data:image/jpeg;base64,${screenshotBase64}`;
+      const domComponentTree = buildDomComponentTreeFromHtml(html, {
+        maxDepth: 6,
+        maxChildrenPerNode: 14,
+        maxTotalNodes: 420,
+      });
+      const computedStyles = includeComputedStyles
+        ? await page.evaluate((limit) => {
+            const elements = Array.from(document.querySelectorAll("*"));
+            const sample = elements.slice(0, Math.max(1, Number(limit || 1400)));
+            const displayHistogram = {};
+            const tagHistogram = {};
+            const styleRows = sample.map((el, index) => {
+              const style = window.getComputedStyle(el);
+              const display = String(style.display || "").trim();
+              const tag = String(el.tagName || "").toLowerCase();
+              displayHistogram[display] = (displayHistogram[display] || 0) + 1;
+              tagHistogram[tag] = (tagHistogram[tag] || 0) + 1;
+              const rect = el.getBoundingClientRect();
+              const className = typeof el.className === "string" ? el.className : "";
+              return {
+                index,
+                tag,
+                id: String(el.id || ""),
+                class: className.split(/\s+/).filter(Boolean).slice(0, 6).join(" "),
+                role: String(el.getAttribute("role") || ""),
+                text_sample: String(el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 96),
+                color: String(style.color || ""),
+                background_color: String(style.backgroundColor || ""),
+                font_family: String(style.fontFamily || ""),
+                font_size: String(style.fontSize || ""),
+                font_weight: String(style.fontWeight || ""),
+                line_height: String(style.lineHeight || ""),
+                margin: String(style.margin || ""),
+                padding: String(style.padding || ""),
+                display,
+                position: String(style.position || ""),
+                width: String(style.width || ""),
+                height: String(style.height || ""),
+                max_width: String(style.maxWidth || ""),
+                min_height: String(style.minHeight || ""),
+                border_radius: String(style.borderRadius || ""),
+                border: String(style.border || ""),
+                box_shadow: String(style.boxShadow || ""),
+                opacity: String(style.opacity || ""),
+                z_index: String(style.zIndex || ""),
+                gap: String(style.gap || ""),
+                justify_content: String(style.justifyContent || ""),
+                align_items: String(style.alignItems || ""),
+                grid_template_columns: String(style.gridTemplateColumns || ""),
+                transform: String(style.transform || ""),
+                transition: String(style.transition || ""),
+                rect: {
+                  x: Number(rect.x || 0),
+                  y: Number(rect.y || 0),
+                  width: Number(rect.width || 0),
+                  height: Number(rect.height || 0),
+                },
+              };
+            });
+            return {
+              total_elements: elements.length,
+              sampled_elements: styleRows.length,
+              truncated: elements.length > styleRows.length,
+              display_histogram: displayHistogram,
+              tag_histogram: tagHistogram,
+              rows: styleRows,
+            };
+          }, styleSampleLimit)
+        : null;
+      const layoutAnalysis = detectLayoutPatterns({
+        computedStyles,
+        domComponentTree,
+        html,
+      });
+      const componentDetection = detectReusableComponentsFromTree(domComponentTree, {
+        minRepeats: componentRepeatThreshold,
+      });
+      const heuristicVision = buildHeuristicVisionSummary({
+        layoutAnalysis,
+        domComponentTree,
+        computedStyles,
+      });
+      const visionModelOutput = includeVisionAnalysis
+        ? await openAiAnalyzeScreenshot({
+            screenshotDataUrl,
+            pageUrl: finalUrl,
+            pageTitle: title,
+          }).catch(() => null)
+        : null;
+      const visionAnalysis = visionModelOutput
+        ? { ...visionModelOutput, source: "openai-vision" }
+        : heuristicVision;
+      const responsiveDetection = includeResponsiveDetection
+        ? await runResponsiveViewportTesting(finalUrl, {
+            waitUntil,
+            timeoutMs,
+          }).catch(() => null)
+        : null;
+      const internalLinks = extractInternalLinksFromHtmlRaw(html, finalUrl, maxLinks);
+      const assets = extractAssetsFromHtmlRaw(html, finalUrl);
+      return {
+        ok: true,
+        mode: "headless-browser-render",
+        requested_url: url,
+        final_url: finalUrl,
+        title,
+        html,
+        internal_links: internalLinks,
+        assets,
+        asset_counts: Object.fromEntries(Object.entries(assets).map(([key, list]) => [key, list.length])),
+        dom_component_tree: domComponentTree,
+        component_detection: componentDetection,
+        computed_styles: computedStyles,
+        layout_analysis: layoutAnalysis,
+        screenshot: includeScreenshot
+          ? {
+              mime_type: "image/jpeg",
+              base64: screenshotBase64,
+              data_url: screenshotDataUrl,
+            }
+          : {
+              mime_type: "image/jpeg",
+              bytes: screenshotBuffer.byteLength,
+            },
+        vision_analysis: visionAnalysis,
+        responsive_detection: responsiveDetection,
+      };
+    } catch (err) {
+      const error = new Error(`Headless render failed: ${String(err?.message || "unknown error")}`);
+      error.statusCode = 502;
+      throw error;
+    } finally {
+      try {
+        if (page) await page.close();
+      } catch {
+        // noop
+      }
+      try {
+        if (context) await context.close();
+      } catch {
+        // noop
+      }
+      try {
+        if (browser) await browser.close();
+      } catch {
+        // noop
+      }
+    }
+  },
+};
+
+cloneActions.crawl = async (payload = {}) => {
+  const startUrl = String(payload?.url || "").trim();
+  if (!isHttpUrl(startUrl)) {
+    const error = new Error("Valid http(s) url is required.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const maxPages = Math.min(40, Math.max(1, Number(payload?.maxPages || 12)));
+  const maxQueue = Math.max(20, maxPages * 6);
+  const queue = [startUrl];
+  const visited = new Set();
+  const pages = [];
+  const failedPages = [];
+
+  while (queue.length > 0 && visited.size < maxPages) {
+    const current = queue.shift();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+    try {
+      const rendered = await cloneActions.render({
+        ...payload,
+        url: current,
+        includeScreenshot: false,
+      });
+      const finalUrl = String(rendered?.final_url || current);
+      const internalLinks = Array.isArray(rendered?.internal_links) ? rendered.internal_links : [];
+      pages.push({
+        url: finalUrl,
+        title: String(rendered?.title || ""),
+        html: String(rendered?.html || ""),
+        internal_links: internalLinks.slice(0, 120),
+        assets: rendered?.assets && typeof rendered.assets === "object" ? rendered.assets : {},
+        asset_counts: rendered?.asset_counts && typeof rendered.asset_counts === "object" ? rendered.asset_counts : {},
+        dom_component_tree: rendered?.dom_component_tree || null,
+        component_detection: rendered?.component_detection || null,
+        computed_styles: rendered?.computed_styles || null,
+        layout_analysis: rendered?.layout_analysis || null,
+        vision_analysis: rendered?.vision_analysis || null,
+        responsive_detection: rendered?.responsive_detection || null,
+        mode: "headless-browser-render",
+      });
+      internalLinks.forEach((link) => {
+        if (!link || visited.has(link) || queue.includes(link)) return;
+        if (queue.length < maxQueue) queue.push(link);
+      });
+    } catch (err) {
+      failedPages.push({
+        url: current,
+        reason: String(err?.message || "crawl failure"),
+      });
+    }
+  }
+
+  const detectedPaths = Array.from(
+    new Set(
+      pages.map((page) => {
+        try {
+          const parsed = new URL(String(page?.url || ""));
+          const rawPath = parsed.pathname || "/";
+          const withoutIndex = rawPath.replace(/\/index\.html?$/i, "/");
+          const clean = withoutIndex.replace(/\.html?$/i, "");
+          return clean || "/";
+        } catch {
+          return "/";
+        }
+      })
+    )
+  )
+    .map((value) => String(value || "/").replace(/\/{2,}/g, "/"))
+    .sort((a, b) => {
+      if (a === "/") return -1;
+      if (b === "/") return 1;
+      return a.localeCompare(b);
+    });
+
+  return {
+    ok: true,
+    mode: "multi-page-crawl",
+    start_url: startUrl,
+    max_pages: maxPages,
+    visited_count: visited.size,
+    detected_paths: detectedPaths,
+    pages,
+    failed_pages: failedPages.slice(0, 30),
+  };
+};
+
+cloneActions["pixel-validate"] = async (payload = {}) => {
+  const originalUrl = String(payload?.originalUrl || payload?.sourceUrl || "").trim();
+  const cloneUrl = String(payload?.cloneUrl || payload?.targetUrl || "").trim();
+  if (!isHttpUrl(originalUrl) || !isHttpUrl(cloneUrl)) {
+    const error = new Error("originalUrl and cloneUrl must be valid http(s) URLs.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const thresholdPercent = Math.min(100, Math.max(0.1, Number(payload?.thresholdPercent || 3)));
+  const waitUntilRaw = String(payload?.waitUntil || "networkidle").trim();
+  const waitUntil = ["load", "domcontentloaded", "networkidle", "commit"].includes(waitUntilRaw)
+    ? waitUntilRaw
+    : "networkidle";
+  const timeoutMs = Math.min(120000, Math.max(8000, Number(payload?.timeoutMs || 45000)));
+  const viewportWidth = Math.min(1920, Math.max(360, Number(payload?.viewportWidth || 1440)));
+  const viewportHeight = Math.min(2400, Math.max(480, Number(payload?.viewportHeight || 900)));
+
+  try {
+    const [originalShot, cloneShot] = await Promise.all([
+      screenshotPagePngBuffer(originalUrl, {
+        waitUntil,
+        timeoutMs,
+        viewportWidth,
+        viewportHeight,
+      }),
+      screenshotPagePngBuffer(cloneUrl, {
+        waitUntil,
+        timeoutMs,
+        viewportWidth,
+        viewportHeight,
+      }),
+    ]);
+
+    const [originalPngRaw, clonePngRaw] = await Promise.all([
+      parsePngBuffer(originalShot.buffer),
+      parsePngBuffer(cloneShot.buffer),
+    ]);
+
+    const width = Math.max(originalPngRaw.width, clonePngRaw.width);
+    const height = Math.max(originalPngRaw.height, clonePngRaw.height);
+    const originalPng = normalizePngDimensions(originalPngRaw, width, height);
+    const clonePng = normalizePngDimensions(clonePngRaw, width, height);
+    const diffPng = new PNG({ width, height });
+
+    const diffPixelCount = pixelmatch(
+      originalPng.data,
+      clonePng.data,
+      diffPng.data,
+      width,
+      height,
+      {
+        threshold: 0.1,
+        includeAA: true,
+      }
+    );
+    const totalPixels = width * height;
+    const differencePercent = totalPixels > 0 ? (diffPixelCount / totalPixels) * 100 : 100;
+    const pass = differencePercent <= thresholdPercent;
+
+    return {
+      ok: true,
+      mode: "pixel-accuracy-validator",
+      original: {
+        requested_url: originalUrl,
+        final_url: originalShot.finalUrl,
+        title: originalShot.title,
+      },
+      clone: {
+        requested_url: cloneUrl,
+        final_url: cloneShot.finalUrl,
+        title: cloneShot.title,
+      },
+      threshold_percent: Number(thresholdPercent.toFixed(3)),
+      difference_percent: Number(differencePercent.toFixed(4)),
+      pass,
+      pixels: {
+        total: totalPixels,
+        different: diffPixelCount,
+      },
+      dimensions: {
+        width,
+        height,
+      },
+      adjustment_hints: buildPixelAdjustmentHints(differencePercent, thresholdPercent),
+      diff_image: payload?.includeDiffImage
+        ? {
+            mime_type: "image/png",
+            base64: PNG.sync.write(diffPng).toString("base64"),
+          }
+        : undefined,
+    };
+  } catch (err) {
+    const error = new Error(`Pixel validation failed: ${String(err?.message || "unknown error")}`);
+    error.statusCode = 502;
+    throw error;
+  }
+};
+
 const serveHostedSite = async (req, res) => {
   const pathname = new URL(req.url || "/", HOST_BASE_URL).pathname;
   const rest = pathname.replace(/^\/sites\//, "");
@@ -2220,6 +3277,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if ((req.method === "POST" || req.method === "GET") && req.url?.startsWith("/api/clone/")) {
+    await handleApiAction(req, res, "clone", cloneActions, { authMode: "none" });
+    return;
+  }
+
   if (req.method === "GET" && req.url?.startsWith("/sites/")) {
     await serveHostedSite(req, res);
     return;
@@ -2251,6 +3313,6 @@ const server = http.createServer(async (req, res) => {
   sendJson(res, 404, { error: "Not found" });
 });
 
-server.listen(PORT, () => {
-  console.log(`[registrar-gateway] listening on http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`[registrar-gateway] listening on http://${HOST}:${PORT}`);
 });

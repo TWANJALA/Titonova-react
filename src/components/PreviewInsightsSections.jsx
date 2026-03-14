@@ -1,5 +1,6 @@
-import React from "react";
-import MarketplacePanels from "./MarketplacePanels";
+import React, { Suspense } from "react";
+
+const MarketplacePanels = React.lazy(() => import("./MarketplacePanels"));
 
 export default function PreviewInsightsSections(props) {
   const {
@@ -771,7 +772,9 @@ export default function PreviewInsightsSections(props) {
       {!publishedSiteId ? (
         <p style={styles.siteMeta}>Tip: enter a domain and click One-Click Hosting to auto-publish, attach domain, and verify SSL/CDN.</p>
       ) : null}
-      <MarketplacePanels {...marketProps} />
+      <Suspense fallback={<section style={styles.marketCard}><small style={styles.ecosystemIntro}>Loading marketplace...</small></section>}>
+        <MarketplacePanels {...marketProps} />
+      </Suspense>
     </>
   );
 }

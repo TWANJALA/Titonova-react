@@ -1,0 +1,272 @@
+name: titonova-prod-baseline
+
+x-worker-common-env: &worker-common-env
+  NODE_ENV: production
+  REDIS_URL: redis://redis:6379
+  MAX_JOB_ATTEMPTS: ${MAX_JOB_ATTEMPTS:-3}
+  CLONE_DLQ_NAME: clone_jobs_dlq
+  EXPORT_DLQ_NAME: export_jobs_dlq
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_SERVICE_NAMESPACE: titonova
+
+services:
+  api:
+    build:
+      context: ../services/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-titonova}
+      CLONE_QUEUE_NAME: clone_jobs
+      EXPORT_QUEUE_NAME: export_jobs
+      CLONE_DLQ_NAME: clone_jobs_dlq
+      EXPORT_DLQ_NAME: export_jobs_dlq
+      MAX_JOB_ATTEMPTS: ${MAX_JOB_ATTEMPTS:-3}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-titonova-exports}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      S3_SIGNED_URL_TTL_SECONDS: ${S3_SIGNED_URL_TTL_SECONDS:-900}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: api
+      OTEL_SERVICE_NAMESPACE: titonova
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8080}:8080"
+    networks: [backend]
+
+  ai-orchestrator:
+    build:
+      context: ../services/ai-orchestrator
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      REDIS_URL: redis://redis:6379
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: ai-orchestrator
+      OTEL_SERVICE_NAMESPACE: titonova
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "${AI_PORT:-8000}:8000"
+    networks: [backend]
+
+  clone-worker:
+    build:
+      context: ../workers/clone-worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *worker-common-env
+      CLONE_QUEUE_NAME: clone_jobs
+      CLONE_WORKER_SLEEP_MS: 1500
+      OTEL_SERVICE_NAME: clone-worker
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [backend]
+
+  export-worker:
+    build:
+      context: ../workers/export-worker
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *worker-common-env
+      EXPORT_QUEUE_NAME: export_jobs
+      EXPORT_WORKER_SLEEP_MS: 900
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_BUCKET: ${S3_BUCKET:-titonova-exports}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      OTEL_SERVICE_NAME: export-worker
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    networks: [backend]
+
+  # Worker autoscaling profile baseline for traffic spikes.
+  clone-worker-scale-2:
+    build:
+      context: ../workers/clone-worker
+      dockerfile: Dockerfile
+    profiles: ["autoscale-workers"]
+    restart: unless-stopped
+    environment:
+      <<: *worker-common-env
+      CLONE_QUEUE_NAME: clone_jobs
+      CLONE_WORKER_SLEEP_MS: 1500
+      OTEL_SERVICE_NAME: clone-worker-scale-2
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [backend]
+
+  export-worker-scale-2:
+    build:
+      context: ../workers/export-worker
+      dockerfile: Dockerfile
+    profiles: ["autoscale-workers"]
+    restart: unless-stopped
+    environment:
+      <<: *worker-common-env
+      EXPORT_QUEUE_NAME: export_jobs
+      EXPORT_WORKER_SLEEP_MS: 900
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
+      S3_BUCKET: ${S3_BUCKET:-titonova-exports}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
+      OTEL_SERVICE_NAME: export-worker-scale-2
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [backend]
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "${REDIS_EXPORTER_PORT:-9121}:9121"
+    networks: [backend]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-titonova}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-titonova}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks: [backend]
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    networks: [backend]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector.yml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "${OTEL_GRPC_PORT:-4317}:4317"
+      - "${OTEL_HTTP_PORT:-4318}:4318"
+      - "${OTEL_PROM_PORT:-9464}:9464"
+    networks: [backend]
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      api:
+        condition: service_started
+      redis-exporter:
+        condition: service_started
+      otel-collector:
+        condition: service_started
+    networks: [backend]
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+    networks: [backend]
+
+  # Baseline CDN/reverse proxy edge (replace with managed CDN in production)
+  edge:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+      ai-orchestrator:
+        condition: service_started
+    ports:
+      - "${EDGE_PORT:-80}:80"
+    volumes:
+      - ./nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+    networks: [backend]
+
+volumes:
+  redis_data:
+  postgres_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  backend:
+    driver: bridge

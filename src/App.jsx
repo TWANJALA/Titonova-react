@@ -3311,6 +3311,23 @@ export default function App() {
     const pageCount = applySectionToMatchingPages ? sectionMatchingPages.length : 1;
     return sectionFieldCount * pageCount;
   }, [sectionFieldCount, applySectionToMatchingPages, sectionMatchingPages.length]);
+  const previewPageLabel = useMemo(
+    () => PAGE_CONFIG.find((page) => page.key === previewPage)?.label || "Page",
+    [previewPage]
+  );
+  const previewAddress = useMemo(() => {
+    const rawDomain = String(customDomain || `${businessName || "preview"}.com`)
+      .trim()
+      .toLowerCase();
+    const normalizedDomain = rawDomain
+      .replace(/^https?:\/\//, "")
+      .replace(/\/.*$/, "")
+      .replace(/[^a-z0-9.-]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "preview.titonova.site";
+    const path = previewPage === "index.html" ? "" : `/${previewPage}`;
+    return `https://${normalizedDomain}${path}`;
+  }, [businessName, customDomain, previewPage]);
 
   const pageSections = useMemo(() => {
     if (!previewHtml) return [];
@@ -7424,16 +7441,30 @@ Return practical text for headlines, CTA, contact info, and section filler copy.
           )}
 
           <div className={`preview-frame device-${previewDevice}`}>
-            {previewHtml ? (
-              <iframe
-                ref={iframeRef}
-                title="Website preview"
-                srcDoc={isInlineEditing ? editableHtml : previewHtml}
-                sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
-              />
-            ) : (
-              <div className="preview-empty">Generate a website to preview your draft here.</div>
-            )}
+            <div className="preview-browser">
+              <div className="preview-browser-chrome">
+                <div className="preview-browser-dots" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+                <div className="preview-browser-address">{previewAddress}</div>
+                <div className="preview-browser-meta">
+                  <span>{previewPageLabel}</span>
+                  <span>{previewDevice}</span>
+                </div>
+              </div>
+              {previewHtml ? (
+                <iframe
+                  ref={iframeRef}
+                  title="Website preview"
+                  srcDoc={isInlineEditing ? editableHtml : previewHtml}
+                  sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+                />
+              ) : (
+                <div className="preview-empty">Generate a website to preview your draft here.</div>
+              )}
+            </div>
           </div>
         </aside>
       </main>
