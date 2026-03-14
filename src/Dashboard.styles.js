@@ -3479,6 +3479,43 @@ const styles = {
     fontWeight: 700,
     cursor: "pointer"
   },
+  inlineSectionEditorCard: {
+    marginTop: "8px",
+    display: "grid",
+    gap: "8px",
+    padding: "10px",
+    borderRadius: "10px",
+    border: "1px solid #93c5fd",
+    background: "rgba(239,246,255,0.92)"
+  },
+  inlineSectionHeader: {
+    display: "grid",
+    gap: "2px"
+  },
+  inlineSectionTitle: {
+    color: "#0f172a",
+    fontSize: "12px"
+  },
+  inlineSectionMeta: {
+    color: "#1e3a8a",
+    fontSize: "11px",
+    fontWeight: 700
+  },
+  inlineSectionField: {
+    display: "grid",
+    gap: "4px"
+  },
+  inlineSectionLabel: {
+    color: "#334155",
+    fontSize: "11px",
+    fontWeight: 700
+  },
+  inlineSectionActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    flexWrap: "wrap"
+  },
   inlineSuggestionWrap: {
     marginTop: "6px",
     display: "grid",
@@ -3953,7 +3990,8 @@ const styles = {
     borderRadius: "12px",
     minHeight: "420px",
     cursor: "text",
-    padding: "4px"
+    padding: "4px",
+    caretColor: "#2563eb"
   },
   error: {
     color: "#fecaca",

@@ -93,6 +93,7 @@ export default function PreviewPane(props) {
     fieldLockMode,
     setFieldLockMode,
     selectedEditableMeta,
+    selectedSectionMeta,
     floatingToolbarPos,
     isCompactInlineEditor,
     viewportWidth,
@@ -101,6 +102,12 @@ export default function PreviewPane(props) {
     syncInlineSiteModelFromDom,
     setSelectedEditableMeta,
     handleInlineImageReplace,
+    handleSectionFieldChange,
+    handleImproveSelectedSection,
+    handleReplaceSelectedSection,
+    handleMoveSelectedSection,
+    handleDeleteSelectedSection,
+    selectInlineSection,
     previewEditableStyle,
     handlePreviewLinkNavigation,
     handleInlinePointerActivate,
@@ -276,6 +283,7 @@ export default function PreviewPane(props) {
                   fieldLockMode={fieldLockMode}
                   setFieldLockMode={setFieldLockMode}
                   selectedEditableMeta={selectedEditableMeta}
+                  selectedSectionMeta={selectedSectionMeta}
                   floatingToolbarPos={floatingToolbarPos}
                   isCompactInlineEditor={isCompactInlineEditor}
                   viewportWidth={viewportWidth}
@@ -284,6 +292,11 @@ export default function PreviewPane(props) {
                   syncInlineSiteModelFromDom={syncInlineSiteModelFromDom}
                   setSelectedEditableMeta={setSelectedEditableMeta}
                   handleInlineImageReplace={handleInlineImageReplace}
+                  handleSectionFieldChange={handleSectionFieldChange}
+                  handleImproveSelectedSection={handleImproveSelectedSection}
+                  handleReplaceSelectedSection={handleReplaceSelectedSection}
+                  handleMoveSelectedSection={handleMoveSelectedSection}
+                  handleDeleteSelectedSection={handleDeleteSelectedSection}
                 />
               </Suspense>
               <div
@@ -304,7 +317,10 @@ export default function PreviewPane(props) {
                   if (!isInlineEditing) return;
                   setInlineDraftDirty(true);
                   syncInlineSiteModelFromDom();
-                  if (event.target instanceof Element) selectInlineEditableNode(event.target);
+                  if (event.target instanceof Element) {
+                    selectInlineSection(event.target);
+                    selectInlineEditableNode(event.target);
+                  }
                 }}
                 onBlurCapture={(event) => {
                   if (!isInlineEditing) return;

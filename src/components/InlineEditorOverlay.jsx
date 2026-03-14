@@ -41,6 +41,7 @@ export default function InlineEditorOverlay({
   fieldLockMode,
   setFieldLockMode,
   selectedEditableMeta,
+  selectedSectionMeta,
   floatingToolbarPos,
   isCompactInlineEditor,
   viewportWidth,
@@ -49,10 +50,16 @@ export default function InlineEditorOverlay({
   syncInlineSiteModelFromDom,
   setSelectedEditableMeta,
   handleInlineImageReplace,
+  handleSectionFieldChange,
+  handleImproveSelectedSection,
+  handleReplaceSelectedSection,
+  handleMoveSelectedSection,
+  handleDeleteSelectedSection,
 }) {
   if (!isInlineEditing) return null;
 
   const canRewriteSelection = Boolean(inlineSelectionText || selectedEditableMeta?.type === "text");
+  const canEditSection = Boolean(selectedSectionMeta?.id);
   const preserveInlineSelection = (event) => {
     event.preventDefault();
   };
@@ -160,6 +167,57 @@ export default function InlineEditorOverlay({
               ) : null}
             </>
           )}
+          {selectedSectionMeta ? (
+            <div style={styles.inlineSectionEditorCard}>
+              <div style={styles.inlineSectionHeader}>
+                <strong style={styles.inlineSectionTitle}>Section Editor</strong>
+                <small style={styles.inlineSectionMeta}>
+                  {selectedSectionMeta.component || "section"} • {selectedSectionMeta.sectionType || "general"}
+                </small>
+              </div>
+              <label style={styles.inlineSectionField}>
+                <small style={styles.inlineSectionLabel}>Title</small>
+                <input
+                  style={stylesInput}
+                  value={selectedSectionMeta.title || ""}
+                  onChange={(event) => handleSectionFieldChange("title", event.target.value)}
+                />
+              </label>
+              <label style={styles.inlineSectionField}>
+                <small style={styles.inlineSectionLabel}>Subtitle</small>
+                <textarea
+                  style={{ ...stylesInput, minHeight: 72, resize: "vertical" }}
+                  value={selectedSectionMeta.subtitle || ""}
+                  onChange={(event) => handleSectionFieldChange("subtitle", event.target.value)}
+                />
+              </label>
+              <label style={styles.inlineSectionField}>
+                <small style={styles.inlineSectionLabel}>Button Text</small>
+                <input
+                  style={stylesInput}
+                  value={selectedSectionMeta.buttonText || ""}
+                  onChange={(event) => handleSectionFieldChange("buttonText", event.target.value)}
+                />
+              </label>
+              <div style={styles.inlineSectionActions}>
+                <button style={styles.inlineAutoApplyButton} onMouseDown={preserveInlineSelection} onClick={handleImproveSelectedSection}>
+                  Improve
+                </button>
+                <button style={styles.inlineAutoApplyButton} onMouseDown={preserveInlineSelection} onClick={handleReplaceSelectedSection}>
+                  Replace
+                </button>
+                <button style={styles.inlineSmartChip} onMouseDown={preserveInlineSelection} onClick={() => handleMoveSelectedSection("up")}>
+                  Move Up
+                </button>
+                <button style={styles.inlineSmartChip} onMouseDown={preserveInlineSelection} onClick={() => handleMoveSelectedSection("down")}>
+                  Move Down
+                </button>
+                <button style={styles.cancelButton} onMouseDown={preserveInlineSelection} onClick={handleDeleteSelectedSection}>
+                  Delete
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
         <div style={inlineEditActionsStyle}>
           <span style={inlineDraftDirty ? styles.inlineDirtyBadge : styles.inlineCleanBadge}>
@@ -179,7 +237,7 @@ export default function InlineEditorOverlay({
           <button style={styles.inlineAutoApplyButton} onClick={handleImproveInlinePageCopy} disabled={inlineBulkImproving}>
             {inlineBulkImproving ? "Improving..." : "Improve Page Copy"}
           </button>
-          <button style={styles.inlineAutoApplyButton} onClick={handleImproveInlineSectionCopy} disabled={inlineBulkImproving}>
+          <button style={styles.inlineAutoApplyButton} onClick={handleImproveInlineSectionCopy} disabled={inlineBulkImproving || !canEditSection}>
             Improve Section
           </button>
           <button style={styles.saveButton} onClick={handleImproveAndSaveInlinePageCopy} disabled={inlineBulkImproving}>
