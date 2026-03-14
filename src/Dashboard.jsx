@@ -8942,6 +8942,24 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       if (sectionType === "hero") return `${cleaned} Partner with ${projectKeyword} for fast onboarding, trusted execution, and measurable outcomes.`;
       return `${cleaned} We deliver measurable results with clear timelines, transparent updates, and trusted support.`;
     }
+    if (actionKey === "persuasive") {
+      if (sectionType === "hero") {
+        return `${cleaned.replace(/[.!?]+$/, "")}. Move forward with ${projectKeyword} for faster results, clearer value, and a more confident next step.`;
+      }
+      if (sectionType === "pricing") {
+        return `${cleaned.replace(/[.!?]+$/, "")}. Choose the option that gives you transparent value, dependable support, and confidence from day one.`;
+      }
+      if (sectionType === "services") {
+        return `${cleaned.replace(/[.!?]+$/, "")}. Designed to deliver meaningful outcomes with a smoother process and stronger support at every step.`;
+      }
+      if (sectionType === "contact") {
+        return `${cleaned.replace(/[.!?]+$/, "")}. Reach out today and get clear answers, practical next steps, and responsive support without delay.`;
+      }
+      if (sectionType === "testimonials") {
+        return `${cleaned.replace(/[.!?]+$/, "")}. Trusted by clients who value reliable delivery, responsive communication, and measurable results.`;
+      }
+      return `${cleaned.replace(/[.!?]+$/, "")}. ${projectKeyword} helps you move faster with trusted ${industryKeyword} support and a clearer path to results.`;
+    }
     if (actionKey === "seo") {
       const sectionKeyword =
         sectionType === "pricing"
@@ -9049,7 +9067,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     if (!isInlineEditing) return;
     const actionKey = parseInlineSmartAction(rawCommand || inlineSmartCommand);
     if (!actionKey) {
-      setInlineSmartStatus("Use /smart, /shorten, /expand, /seo, /cta, /professional, /friendly, or /fix.");
+      setInlineSmartStatus("Use /smart, /shorten, /persuasive, /expand, /seo, /cta, /professional, /friendly, or /fix.");
       return;
     }
     const root = previewEditableRef.current;
@@ -10516,7 +10534,6 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
           inlineSuggestions={inlineSuggestions}
           handleApplyInlineSuggestion={handleApplyInlineSuggestion}
           inlineEditActionsStyle={inlineEditActionsStyle}
-          inlineBestSuggestion={inlineBestSuggestion}
           handleImproveInlinePageCopy={handleImproveInlinePageCopy}
           inlineBulkImproving={inlineBulkImproving}
           handleImproveInlineSectionCopy={handleImproveInlineSectionCopy}

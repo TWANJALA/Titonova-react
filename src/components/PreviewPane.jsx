@@ -79,7 +79,6 @@ export default function PreviewPane(props) {
     inlineSuggestions,
     handleApplyInlineSuggestion,
     inlineEditActionsStyle,
-    inlineBestSuggestion,
     handleImproveInlinePageCopy,
     inlineBulkImproving,
     handleImproveInlineSectionCopy,
@@ -259,7 +258,6 @@ export default function PreviewPane(props) {
                   handleApplyInlineSuggestion={handleApplyInlineSuggestion}
                   inlineEditActionsStyle={inlineEditActionsStyle}
                   inlineDraftDirty={inlineDraftDirty}
-                  inlineBestSuggestion={inlineBestSuggestion}
                   handleImproveInlinePageCopy={handleImproveInlinePageCopy}
                   inlineBulkImproving={inlineBulkImproving}
                   handleImproveInlineSectionCopy={handleImproveInlineSectionCopy}

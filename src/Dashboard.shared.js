@@ -1038,6 +1038,7 @@ export const parseInlineSmartAction = (rawValue) => {
   if (/(smart|improve|best|premium|convert|conversion|optimize)/.test(value)) return "smart";
   if (value.includes("short")) return "shorten";
   if (value.includes("expand")) return "expand";
+  if (/(persuasive|persuade|convince|sales)/.test(value)) return "persuasive";
   if (value.includes("seo")) return "seo";
   if (value.includes("cta")) return "cta";
   if (value.includes("professional")) return "professional";
@@ -1080,14 +1081,14 @@ export const buildInlineSuggestions = (text, sectionType = "general", rewriteFn)
   if (!source) return [];
   const section = String(sectionType || "general").toLowerCase();
   const preferredBySection = {
-    hero: ["smart", "cta", "shorten", "seo"],
-    pricing: ["smart", "cta", "professional", "shorten"],
+    hero: ["smart", "persuasive", "cta", "shorten", "seo"],
+    pricing: ["smart", "persuasive", "cta", "professional", "shorten"],
     faq: ["smart", "fix", "shorten", "professional"],
-    testimonials: ["smart", "professional", "shorten", "cta"],
-    services: ["smart", "shorten", "seo", "cta"],
-    contact: ["smart", "cta", "professional", "shorten"],
-    about: ["smart", "professional", "shorten", "seo"],
-    general: ["smart", "shorten", "professional", "seo", "cta"],
+    testimonials: ["smart", "persuasive", "professional", "shorten", "cta"],
+    services: ["smart", "persuasive", "shorten", "seo", "cta"],
+    contact: ["smart", "persuasive", "cta", "professional", "shorten"],
+    about: ["smart", "persuasive", "professional", "shorten", "seo"],
+    general: ["smart", "persuasive", "shorten", "professional", "seo", "cta"],
   };
   const confidenceForSuggestion = (actionKey, rewrittenText) => {
     const preferred = preferredBySection[section] || preferredBySection.general;
@@ -1107,15 +1108,17 @@ export const buildInlineSuggestions = (text, sectionType = "general", rewriteFn)
   const templatesBySection = {
     hero: [
       { key: "smart", label: "Hero smart upgrade" },
+      { key: "persuasive", label: "More persuasive hero" },
       { key: "shorten", label: "Hero punchline" },
       { key: "cta", label: "Hero CTA" },
-      { key: "seo", label: "Hero SEO line" },
+      { key: "seo", label: "Hero SEO line" }
     ],
     pricing: [
       { key: "smart", label: "Pricing smart upgrade" },
+      { key: "persuasive", label: "Value-focused pricing" },
       { key: "cta", label: "Pricing CTA" },
       { key: "professional", label: "Trust-focused pricing" },
-      { key: "shorten", label: "Clearer pricing copy" },
+      { key: "shorten", label: "Clearer pricing copy" }
     ],
     faq: [
       { key: "smart", label: "FAQ smart answer" },
@@ -1125,34 +1128,39 @@ export const buildInlineSuggestions = (text, sectionType = "general", rewriteFn)
     ],
     testimonials: [
       { key: "smart", label: "Proof smart polish" },
+      { key: "persuasive", label: "Stronger proof" },
       { key: "professional", label: "Proof-focused tone" },
       { key: "shorten", label: "Stronger quote" },
-      { key: "cta", label: "Trust CTA" },
+      { key: "cta", label: "Trust CTA" }
     ],
     services: [
       { key: "smart", label: "Service smart upgrade" },
+      { key: "persuasive", label: "More persuasive service copy" },
       { key: "shorten", label: "Service clarity" },
       { key: "seo", label: "Service SEO" },
-      { key: "cta", label: "Book this service" },
+      { key: "cta", label: "Book this service" }
     ],
     contact: [
       { key: "smart", label: "Contact smart CTA" },
+      { key: "persuasive", label: "Higher-conversion contact copy" },
       { key: "cta", label: "Contact CTA" },
       { key: "professional", label: "Professional contact tone" },
-      { key: "shorten", label: "Simpler contact copy" },
+      { key: "shorten", label: "Simpler contact copy" }
     ],
     about: [
       { key: "smart", label: "About smart polish" },
+      { key: "persuasive", label: "More compelling story" },
       { key: "professional", label: "Mission tone" },
       { key: "shorten", label: "Tighter story" },
-      { key: "seo", label: "About SEO line" },
+      { key: "seo", label: "About SEO line" }
     ],
     general: [
       { key: "smart", label: "Smart rewrite" },
+      { key: "persuasive", label: "More persuasive" },
       { key: "shorten", label: "Make shorter" },
       { key: "professional", label: "Professional tone" },
       { key: "seo", label: "SEO boost" },
-      { key: "cta", label: "Add CTA" },
+      { key: "cta", label: "Add CTA" }
     ],
   };
   const candidates = (templatesBySection[section] || templatesBySection.general)
@@ -1178,14 +1186,14 @@ export const buildInlineSuggestions = (text, sectionType = "general", rewriteFn)
 export const getInlineCommandOptions = (sectionType = "general") => {
   const section = String(sectionType || "general").toLowerCase();
   const optionsBySection = {
-    hero: ["/smart", "/shorten", "/cta", "/seo", "/expand", "/professional", "/fix"],
-    pricing: ["/smart", "/cta", "/professional", "/shorten", "/seo", "/expand", "/fix"],
+    hero: ["/smart", "/persuasive", "/shorten", "/cta", "/seo", "/expand", "/professional", "/fix"],
+    pricing: ["/smart", "/persuasive", "/cta", "/professional", "/shorten", "/seo", "/expand", "/fix"],
     faq: ["/smart", "/fix", "/shorten", "/professional", "/expand", "/seo", "/friendly"],
-    testimonials: ["/smart", "/professional", "/shorten", "/cta", "/seo", "/friendly", "/fix"],
-    services: ["/smart", "/shorten", "/seo", "/cta", "/expand", "/professional", "/fix"],
-    contact: ["/smart", "/cta", "/professional", "/shorten", "/friendly", "/seo", "/fix"],
-    about: ["/smart", "/professional", "/shorten", "/seo", "/expand", "/friendly", "/fix"],
-    general: ["/smart", "/shorten", "/expand", "/seo", "/cta", "/professional", "/friendly", "/fix"],
+    testimonials: ["/smart", "/persuasive", "/professional", "/shorten", "/cta", "/seo", "/friendly", "/fix"],
+    services: ["/smart", "/persuasive", "/shorten", "/seo", "/cta", "/expand", "/professional", "/fix"],
+    contact: ["/smart", "/persuasive", "/cta", "/professional", "/shorten", "/friendly", "/seo", "/fix"],
+    about: ["/smart", "/persuasive", "/professional", "/shorten", "/seo", "/expand", "/friendly", "/fix"],
+    general: ["/smart", "/persuasive", "/shorten", "/expand", "/seo", "/cta", "/professional", "/friendly", "/fix"],
   };
   return optionsBySection[section] || optionsBySection.general;
 };

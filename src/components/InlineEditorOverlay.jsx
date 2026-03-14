@@ -23,7 +23,6 @@ export default function InlineEditorOverlay({
   handleApplyInlineSuggestion,
   inlineEditActionsStyle,
   inlineDraftDirty,
-  inlineBestSuggestion,
   handleImproveInlinePageCopy,
   inlineBulkImproving,
   handleImproveInlineSectionCopy,
@@ -52,6 +51,17 @@ export default function InlineEditorOverlay({
   setSelectedEditableMeta,
 }) {
   if (!isInlineEditing) return null;
+
+  const canRewriteSelection = Boolean(inlineSelectionText || selectedEditableMeta?.type === "text");
+  const preserveInlineSelection = (event) => {
+    event.preventDefault();
+  };
+  const rewriteButtons = [
+    { label: "Improve Text", command: "/smart" },
+    { label: "Shorter", command: "/shorten" },
+    { label: "More Persuasive", command: "/persuasive" },
+    { label: "SEO Optimized", command: "/seo" },
+  ];
 
   return (
     <>
@@ -139,6 +149,7 @@ export default function InlineEditorOverlay({
                       <small style={styles.inlineSuggestionText}>{item.text}</small>
                       <button
                         style={styles.inlineSuggestionApply}
+                        onMouseDown={preserveInlineSelection}
                         onClick={() => handleApplyInlineSuggestion(item.text, item.label, item.confidence)}
                       >
                         Apply
@@ -154,22 +165,17 @@ export default function InlineEditorOverlay({
           <span style={inlineDraftDirty ? styles.inlineDirtyBadge : styles.inlineCleanBadge}>
             {inlineDraftDirty ? "Unsaved changes" : "Saved"}
           </span>
-          <button
-            style={styles.inlineAutoApplyButton}
-            onClick={() => {
-              if (inlineBestSuggestion) {
-                handleApplyInlineSuggestion(
-                  inlineBestSuggestion.text,
-                  `best suggestion (${inlineBestSuggestion.label})`,
-                  inlineBestSuggestion.confidence
-                );
-              } else {
-                handleRunInlineSmartCommand("/fix");
-              }
-            }}
-          >
-            Improve Selected Text
-          </button>
+          {rewriteButtons.map((item) => (
+            <button
+              key={item.command}
+              style={styles.inlineAutoApplyButton}
+              disabled={!canRewriteSelection}
+              onMouseDown={preserveInlineSelection}
+              onClick={() => handleRunInlineSmartCommand(item.command)}
+            >
+              {item.label}
+            </button>
+          ))}
           <button style={styles.inlineAutoApplyButton} onClick={handleImproveInlinePageCopy} disabled={inlineBulkImproving}>
             {inlineBulkImproving ? "Improving..." : "Improve Page Copy"}
           </button>
