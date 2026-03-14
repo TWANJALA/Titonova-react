@@ -8467,12 +8467,12 @@ ${uiDesignClause}${buildUltraSmartPromptClause(ultraSmartPlan)}${buildSmartQaPro
       };
     } catch (err) {
       const message = String(err?.message || "Unknown generation error.");
-      setError(message);
+      setError(hasInstantDraft ? "" : message);
       if (!hasInstantDraft) {
         setGeneratedSite(null);
         setGeneratedPages({});
       }
-      setPublishStatus("error");
+      setPublishStatus(hasInstantDraft ? "info" : "error");
       setPublishMessage(
         hasInstantDraft
           ? `Instant draft is ready. AI refinement failed: ${message}`
