@@ -1108,6 +1108,7 @@ export default function Dashboard() {
   const previewEditableRef = useRef(null);
   const inlineHoverNodeRef = useRef(null);
   const selectedEditableNodeRef = useRef(null);
+  const pendingInstantEditRef = useRef(false);
   const appShellRef = useRef(null);
   const promptTextareaRef = useRef(null);
 
@@ -3041,6 +3042,139 @@ ${(audit.directives || []).map((line) => `  - ${line}`).join("\n")}
     }
   };
 
+  const getEditableComponentSlug = (node) => {
+    if (!(node instanceof Element)) return "page";
+    const componentRoot =
+      node.closest("[data-component], [data-tn-section], section, article, header, footer, nav, aside, main, [id], [class]") || node;
+    const raw =
+      String(componentRoot.getAttribute("data-component") || "").trim() ||
+      String(componentRoot.getAttribute("data-tn-section") || "").trim() ||
+      String(componentRoot.getAttribute("id") || "").trim() ||
+      String(componentRoot.getAttribute("class") || "").trim() ||
+      String(componentRoot.tagName || "page").trim();
+    return raw
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "page";
+  };
+
+  const getInjectedEditableType = (node) => {
+    if (!(node instanceof HTMLElement)) return "";
+    const tag = String(node.tagName || "").toLowerCase();
+    if (tag === "img") return "image";
+    if (tag === "button") return "button";
+    if (tag === "a") {
+      const classBlob = `${node.className || ""} ${node.getAttribute("role") || ""}`.toLowerCase();
+      return /(btn|button|cta|action)/.test(classBlob) ? "button" : "link";
+    }
+    if (/^(h1|h2|h3|h4|p|li|span|small|strong|em|summary|label)$/.test(tag)) {
+      const text = String(node.textContent || "").replace(/\s+/g, " ").trim();
+      if (!text) return "";
+      if (Array.from(node.children).some((child) => child instanceof HTMLElement)) return "";
+      return "text";
+    }
+    return "";
+  };
+
+  const injectEditableLayerIntoHtml = (html, pageKey = "index.html") => {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(`<body>${String(html || "")}</body>`, "text/html");
+      const pageSlug = makeProjectSlug(pageKey.replace(/\.html$/i, "") || "page");
+
+      const componentNodes = Array.from(doc.body.querySelectorAll("section, article, header, footer, nav, aside, main"));
+      componentNodes.forEach((node, index) => {
+        if (!(node instanceof HTMLElement)) return;
+        if (!node.dataset.component) {
+          node.dataset.component = getEditableComponentSlug(node) || `section-${index + 1}`;
+        }
+        if (!node.dataset.id) {
+          node.dataset.id = `${pageSlug}-${node.dataset.component || `section-${index + 1}`}`;
+        }
+      });
+
+      const counters = {};
+      const editables = Array.from(doc.body.querySelectorAll("h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label, img"));
+      editables.forEach((node) => {
+        if (!(node instanceof HTMLElement)) return;
+        const type = getInjectedEditableType(node);
+        if (!type) return;
+        const component = getEditableComponentSlug(node);
+        counters[`${component}:${type}`] = (counters[`${component}:${type}`] || 0) + 1;
+        const sequence = counters[`${component}:${type}`];
+        node.dataset.editable = type;
+        node.dataset.component = component;
+        node.dataset.binding =
+          type === "image" ? "src" : type === "link" ? "href" : type === "button" ? "content" : "content";
+        node.dataset.id = node.dataset.id || `${pageSlug}-${component}-${type}-${sequence}`;
+      });
+
+      return doc.body.innerHTML || String(html || "");
+    } catch {
+      return String(html || "");
+    }
+  };
+
+  const buildInlineSiteModelFromHtml = (html) => {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(`<body>${String(html || "")}</body>`, "text/html");
+      const model = {};
+      const nodes = Array.from(doc.body.querySelectorAll("[data-editable][data-id]"));
+      nodes.forEach((node) => {
+        if (!(node instanceof HTMLElement)) return;
+        const id = String(node.dataset.id || "").trim();
+        const type = String(node.dataset.editable || "").trim();
+        if (!id || !type) return;
+        const component = String(node.dataset.component || "").trim();
+        const binding = String(node.dataset.binding || "").trim();
+        if (type === "image") {
+          model[id] = {
+            id,
+            type,
+            component,
+            binding,
+            src: String(node.getAttribute("src") || "").trim(),
+            alt: String(node.getAttribute("alt") || "").trim(),
+          };
+          return;
+        }
+        if (type === "link") {
+          model[id] = {
+            id,
+            type,
+            component,
+            binding,
+            href: String(node.getAttribute("href") || "").trim(),
+            content: String(node.textContent || "").replace(/\s+/g, " ").trim(),
+          };
+          return;
+        }
+        if (type === "button") {
+          model[id] = {
+            id,
+            type,
+            component,
+            binding,
+            text: String(node.textContent || "").replace(/\s+/g, " ").trim(),
+            link: String(node.getAttribute("href") || "").trim(),
+          };
+          return;
+        }
+        model[id] = {
+          id,
+          type,
+          component,
+          binding,
+          content: String(node.textContent || "").replace(/\s+/g, " ").trim(),
+        };
+      });
+      return model;
+    } catch {
+      return {};
+    }
+  };
+
   const buildHtmlFromGeneratedData = (
     data,
     pageKey = "index.html",
@@ -4031,6 +4165,19 @@ ${(audit.directives || []).map((line) => `  - ${line}`).join("\n")}
           [data-tn-theme-root="true"] li {
             text-wrap: pretty;
           }
+          [data-tn-theme-root="true"] [data-editable] {
+            position: relative;
+          }
+          [data-tn-theme-root="true"] [data-editable]:hover {
+            outline: 2px solid rgba(79, 70, 229, 0.82);
+            cursor: text;
+          }
+          [data-tn-theme-root="true"] [data-editable="image"]:hover {
+            cursor: pointer;
+          }
+          [data-tn-theme-root="true"] [data-editable].tn-editable-active {
+            outline: 3px solid rgba(59, 130, 246, 0.92);
+          }
           [data-tn-theme-root="true"] [data-tn-reveal] {
             opacity: 0;
             transform: translate3d(0, 24px, 0);
@@ -4773,7 +4920,8 @@ ${(audit.directives || []).map((line) => `  - ${line}`).join("\n")}
 
     return uniqueKeys.reduce((acc, key) => {
       const page = pageMap[key] || fallback;
-      acc[key] = buildHtmlFromGeneratedData({ pages: [page] }, key, uniqueKeys, palette, typography, uiDesign);
+      const renderedHtml = buildHtmlFromGeneratedData({ pages: [page] }, key, uniqueKeys, palette, typography, uiDesign);
+      acc[key] = injectEditableLayerIntoHtml(renderedHtml, key);
       return acc;
     }, {});
   };
@@ -6095,7 +6243,7 @@ ${currentHtml.slice(0, 14000)}`,
       return;
     }
     const nextKeys = orderPageKeys([...Object.keys(current), "client-dashboard.html"]);
-    const template = buildHtmlFromGeneratedData(
+    const template = injectEditableLayerIntoHtml(buildHtmlFromGeneratedData(
       {
         pages: [
           buildAutomationPageModel("client-dashboard.html"),
@@ -6106,7 +6254,7 @@ ${currentHtml.slice(0, 14000)}`,
       themeColors,
       textStyle,
       uiDesignSpec
-    );
+    ), "client-dashboard.html");
     const synced = syncNavigationAcrossPages({ ...current, "client-dashboard.html": template });
     setGeneratedPages(synced);
     if (activePage === "index.html" || !generatedSite) {
@@ -6473,7 +6621,7 @@ Return strict JSON:
             const tmpKey = `smoke-test-${Date.now().toString().slice(-4)}.html`;
             const withTmp = syncNavigationAcrossPages({
               ...working,
-              [tmpKey]: buildHtmlFromGeneratedData(
+              [tmpKey]: injectEditableLayerIntoHtml(buildHtmlFromGeneratedData(
                 {
                   pages: [
                     {
@@ -6490,7 +6638,7 @@ Return strict JSON:
                 orderPageKeys([...Object.keys(working), tmpKey]),
                 themeColors,
                 textStyle
-              ),
+              ), tmpKey),
             });
             const withoutTmp = { ...withTmp };
             delete withoutTmp[tmpKey];
@@ -6733,7 +6881,7 @@ Return strict JSON:
 
     const current = getWorkingPages();
     const nextKeys = orderPageKeys([...Object.keys(current), pageKey]);
-    const template = buildHtmlFromGeneratedData(
+    const template = injectEditableLayerIntoHtml(buildHtmlFromGeneratedData(
       {
         pages: [
           {
@@ -6750,7 +6898,7 @@ Return strict JSON:
       nextKeys,
       themeColors,
       textStyle
-    );
+    ), pageKey);
     const synced = syncNavigationAcrossPages({ ...current, [pageKey]: template });
     setGeneratedPages(synced);
     setActivePage(pageKey);
@@ -6786,13 +6934,13 @@ Return strict JSON:
   const normalizedCustomDomain = normalizeDomain(customDomain);
   const redesignInsights = deriveRedesignInsights(sourceWebsiteUrl);
   const hasDashboardAccess = true;
+  const hasGeneratedContent = Object.keys(generatedPages).length > 0 || Boolean(generatedSite);
   const shouldShowGuestPreviewPrompt = Boolean(showGuestAuthPrompt && !authUser && hasGeneratedContent);
   const currentPageHtml = generatedPages[activePage] || generatedSite || "";
   const seoChecklist = computeSeoChecklist(currentPageHtml);
   const currentMapQuery = extractMapQueryFromHtml(currentPageHtml);
   const editableImages = extractPageImages(currentPageHtml);
   const selectedImage = editableImages.find((item) => item.id === selectedImageId) || editableImages[0] || null;
-  const hasGeneratedContent = Object.keys(generatedPages).length > 0 || Boolean(generatedSite);
   const isDomainPurchased = Boolean(
     normalizedCustomDomain && purchasedDomains.includes(normalizedCustomDomain)
   );
@@ -6807,6 +6955,38 @@ Return strict JSON:
   ];
   const checklistDoneCount = checklistSteps.filter((step) => step.done).length;
   const checklistProgress = Math.round((checklistDoneCount / checklistSteps.length) * 100);
+  const quickStartSteps = [
+    { key: "name", label: "Add a project name", done: Boolean(String(projectName || "").trim()) },
+    { key: "prompt", label: "Describe what you want to build", done: String(businessOsPrompt || "").trim().length >= 20 },
+    { key: "generate", label: "Generate your website", done: hasGeneratedContent },
+    { key: "publish", label: "Edit and publish", done: Boolean(publishedSiteId) },
+  ];
+  const recommendedNextStep = quickStartSteps.find((item) => !item.done)?.label || "Your site is ready. Edit, publish, or add a domain.";
+  const previewJourneySteps = [
+    { key: "generated", label: "Website generated", done: hasGeneratedContent },
+    { key: "editing", label: "Inline editing ready", done: hasGeneratedContent && isInlineEditing },
+    { key: "saved", label: "Changes saved", done: hasGeneratedContent && !inlineDraftDirty },
+    { key: "published", label: "Published live", done: Boolean(publishedSiteId) },
+  ];
+  const previewRecommendedStep = previewJourneySteps.find((item) => !item.done)?.label || "Review your pages, then publish when ready.";
+  const publishPrimaryLabel = oneClickHostingRunning
+    ? "Provisioning hosting..."
+    : publishing
+      ? "Publishing..."
+      : publishedSiteId
+        ? "Publish Update"
+        : "Go Live";
+  const publishPrimaryAction = normalizedCustomDomain ? () => handleOneClickHosting() : () => handleGoLive();
+  const publishPrimaryHint = normalizedCustomDomain
+    ? "With a domain added, TitoNova can attach the domain, verify DNS, and publish in one guided step."
+    : "Publish instantly with a temporary live URL now. Add a custom domain any time after that.";
+  const isMobilePreview = viewportWidth < 720;
+  const publishReadinessMessage =
+    publishStatus === "error"
+      ? "Publishing needs a reachable hosting gateway. Keep the gateway running, then try Go Live again."
+      : publishedSiteId
+        ? "Your site has been published. You can re-publish anytime after edits."
+        : "Generate, review the preview, make quick inline edits, then publish when ready.";
   const isCompactInlineEditor = viewportWidth < 960;
   const inlineEditToolbarStyle = isCompactInlineEditor
     ? {
@@ -8790,28 +8970,7 @@ ${JSON.stringify(sourceTexts)}`,
   const syncInlineSiteModelFromDom = useCallback(() => {
     const root = previewEditableRef.current;
     if (!(root instanceof HTMLElement)) return;
-    const nextModel = {};
-    const editableNodes = Array.from(root.querySelectorAll("[data-editable][data-id]"));
-    editableNodes.forEach((node) => {
-      if (!(node instanceof HTMLElement)) return;
-      const id = String(node.dataset.id || "").trim();
-      const type = String(node.dataset.editable || "").trim();
-      if (!id || !type) return;
-      const binding = String(node.dataset.binding || "").trim();
-      const component = String(node.dataset.component || "").trim();
-      nextModel[id] = {
-        id,
-        type,
-        binding,
-        component,
-        ...(type === "image"
-          ? { src: readInlineEditableValue(node, type), alt: String(node.getAttribute("alt") || "").trim() }
-          : type === "link"
-            ? { href: readInlineEditableValue(node, type), content: String(node.textContent || "").trim() }
-            : { content: readInlineEditableValue(node, type) }),
-      };
-    });
-    setInlineSiteModel(nextModel);
+    setInlineSiteModel(buildInlineSiteModelFromHtml(root.innerHTML || ""));
   }, []);
 
   const updateFloatingToolbarPosition = useCallback((node) => {
@@ -8831,6 +8990,10 @@ ${JSON.stringify(sourceTexts)}`,
     if (!(node instanceof HTMLElement) || !(root instanceof HTMLElement)) return;
     const editableNode = node.closest("[data-editable][data-id]");
     if (!(editableNode instanceof HTMLElement)) return;
+    if (selectedEditableNodeRef.current instanceof HTMLElement && selectedEditableNodeRef.current !== editableNode) {
+      selectedEditableNodeRef.current.classList.remove("tn-editable-active");
+    }
+    editableNode.classList.add("tn-editable-active");
     const type = String(editableNode.dataset.editable || "").trim();
     const id = String(editableNode.dataset.id || "").trim();
     const component = String(editableNode.dataset.component || "").trim();
@@ -8868,6 +9031,11 @@ ${JSON.stringify(sourceTexts)}`,
     });
     syncInlineSiteModelFromDom();
   }, [activePage, syncInlineSiteModelFromDom]);
+
+  const queueInstantInlineEditing = useCallback(() => {
+    pendingInstantEditRef.current = true;
+    setIsInlineEditing(true);
+  }, []);
 
   const handleGenerate = async (options = {}) => {
     const resolvedProjectName = String(options.projectNameOverride || projectName || "").trim();
@@ -8992,7 +9160,7 @@ ${JSON.stringify(sourceTexts)}`,
         setGeneratedSite(instantFirstHtml);
         setDraftHtml(instantFirstHtml);
         setEditHistory([instantFirstHtml]);
-        setIsInlineEditing(true);
+        queueInstantInlineEditing();
         setPublishStatus("info");
         setPublishMessage("Instant draft generated. Refining with AI...");
       }
@@ -9122,7 +9290,7 @@ ${uiDesignClause}${buildUltraSmartPromptClause(ultraSmartPlan)}${buildSmartQaPro
       setDnsVerifyStatus("idle");
       setDnsVerifyMessage("");
       setNewPageName("");
-      setIsInlineEditing(true);
+      queueInstantInlineEditing();
       if (resolvedProjectName !== projectName) setProjectName(resolvedProjectName);
       if (authToken && authUser?.id) {
         setShowGuestAuthPrompt(false);
@@ -9447,7 +9615,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       setDnsVerifyStatus("idle");
       setDnsVerifyMessage("");
       setNewPageName("");
-      setIsInlineEditing(true);
+      queueInstantInlineEditing();
       if (!projectName.trim()) setProjectName(insights.brand);
       runDeferred(async () => {
         await runMarketingAutopilot({ source: "redesign" });
@@ -10403,6 +10571,9 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
   useEffect(() => {
     if (isInlineEditing) return undefined;
     clearInlineHoverNode();
+    if (selectedEditableNodeRef.current instanceof HTMLElement) {
+      selectedEditableNodeRef.current.classList.remove("tn-editable-active");
+    }
     selectedEditableNodeRef.current = null;
     setSelectedEditableMeta(null);
     setInlineSmartStatus("");
@@ -10455,6 +10626,34 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
   }, [activePage, isInlineEditing, fieldLockMode, focusInlineEditableNode]);
 
   useEffect(() => {
+    if (!isInlineEditing || !pendingInstantEditRef.current) return;
+    let cancelled = false;
+    let rafB = 0;
+    const run = () => {
+      if (cancelled) return;
+      const root = previewEditableRef.current;
+      if (!(root instanceof HTMLElement)) return;
+      annotateInlineEditableDom();
+      const firstEditable = root.querySelector("[data-editable='text'][data-id], [data-editable][data-id]");
+      if (firstEditable instanceof HTMLElement) {
+        selectInlineEditableNode(firstEditable);
+        focusInlineEditableNode(firstEditable);
+      } else {
+        focusInlineEditableNode();
+      }
+      pendingInstantEditRef.current = false;
+    };
+    const rafA = window.requestAnimationFrame(() => {
+      rafB = window.requestAnimationFrame(run);
+    });
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(rafA);
+      if (rafB) window.cancelAnimationFrame(rafB);
+    };
+  }, [draftHtml, activePage, isInlineEditing, annotateInlineEditableDom, selectInlineEditableNode, focusInlineEditableNode]);
+
+  useEffect(() => {
     if (!selectedEditableMeta) return undefined;
     const syncToolbar = () => {
       if (selectedEditableNodeRef.current instanceof HTMLElement) {
@@ -10477,6 +10676,15 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       window.removeEventListener("resize", syncToolbar);
     };
   }, [selectedEditableMeta, updateFloatingToolbarPosition]);
+
+  useEffect(() => {
+    const html = String(draftHtml || generatedSite || "").trim();
+    if (!html) {
+      setInlineSiteModel({});
+      return;
+    }
+    setInlineSiteModel(buildInlineSiteModelFromHtml(html));
+  }, [draftHtml, generatedSite, activePage]);
 
   useEffect(() => {
     const onScrollOrResize = () => applyParallaxTransforms();
@@ -11005,7 +11213,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
             </div>
           )}
         </section>
-        {authUser && (
+        {authUser && showAdvancedTools && (
           <section style={styles.authCard}>
             <div style={styles.authHeader}>
               <strong style={styles.authTitle}>Stripe Billing + Plan Gating</strong>
@@ -11057,7 +11265,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
             </div>
           </section>
         )}
-        {authUser && (
+        {authUser && showAdvancedTools && (
           <section style={styles.authCard}>
             <div style={styles.authHeader}>
               <strong style={styles.authTitle}>Team Workspaces & Roles</strong>
@@ -11134,7 +11342,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
             )}
           </section>
         )}
-        {hasGeneratedContent && (
+        {hasGeneratedContent && showAdvancedTools && (
           <section style={styles.authCard}>
             <div style={styles.authHeader}>
               <strong style={styles.authTitle}>AI Variant Scoring + One-Click Improve</strong>
@@ -11182,6 +11390,57 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
             </div>
           </section>
         )}
+        <section style={styles.quickStartCard}>
+          <div style={styles.quickStartHeader}>
+            <div>
+              <strong style={styles.quickStartTitle}>Quick Start Guide</strong>
+              <small style={styles.quickStartMeta}>Recommended next step: {recommendedNextStep}</small>
+            </div>
+            <span style={styles.quickStartBadge}>
+              {quickStartSteps.filter((item) => item.done).length}/{quickStartSteps.length} complete
+            </span>
+          </div>
+          <div style={styles.quickStartSteps}>
+            {quickStartSteps.map((step, index) => (
+              <article key={step.key} style={step.done ? styles.quickStartStepDone : styles.quickStartStepPending}>
+                <span style={styles.quickStartStepIndex}>{index + 1}</span>
+                <div style={styles.quickStartStepContent}>
+                  <strong style={styles.quickStartStepTitle}>{step.label}</strong>
+                  <small style={styles.quickStartStepMeta}>{step.done ? "Done" : "Up next"}</small>
+                </div>
+              </article>
+            ))}
+          </div>
+          <div style={styles.quickStartActions}>
+            <button
+              type="button"
+              style={styles.quickStartAction}
+              onClick={() => handleQuickPromptChip("SaaS landing page")}
+            >
+              Use Example Prompt
+            </button>
+            <button type="button" style={styles.quickStartAction} onClick={handleSmartFillPrompt}>
+              Fill Missing Details
+            </button>
+            <button
+              type="button"
+              style={styles.quickStartActionPrimary}
+              onClick={handlePrimaryGenerateWebsite}
+              disabled={loading || uiDesignLoading || businessOsLaunching}
+            >
+              Generate Website
+            </button>
+            {hasGeneratedContent ? (
+              <button
+                type="button"
+                style={styles.quickStartAction}
+                onClick={() => previewEditableRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              >
+                Jump to Preview
+              </button>
+            ) : null}
+          </div>
+        </section>
 
         <div style={styles.solutionRow}>
           <label style={styles.solutionLabel}>📁 Project Name *</label>
@@ -11213,6 +11472,9 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
           />
           <small style={styles.businessOsHint}>
             Paste your full website idea here. Sections, style, colors, and features are all supported.
+          </small>
+          <small style={styles.promptExampleHint}>
+            Example: "Create a modern home care agency website in Dallas with services, testimonials, pricing, and online booking."
           </small>
           <div style={styles.promptAssistRow}>
             <div style={styles.promptAssistActions}>
@@ -11340,7 +11602,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
         <div style={styles.businessOsCard}>
           <label style={styles.solutionLabel}>Optional Advanced Tools</label>
           <small style={styles.businessOsHint}>
-            Use these only when you want extra automation, redesign, brand, or growth controls.
+            Use these only when you want extra automation, redesign, brand, growth controls, billing, or team workspace settings.
           </small>
           <button style={styles.advancedToggleButton} onClick={() => setShowAdvancedTools((prev) => !prev)}>
             {showAdvancedTools ? "Hide Advanced Tools" : "Show Advanced Tools"}
@@ -11385,6 +11647,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
             </ul>
           </section>
         )}
+        {showAdvancedTools && (
         <section style={styles.funnelBuilderCard}>
           <div style={styles.funnelBuilderHeader}>
             <strong style={styles.funnelBuilderTitle}>🌐 TitoNova Cloud Engine Website + Funnel Builder</strong>
@@ -11432,6 +11695,8 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
             ))}
           </div>
         </section>
+        )}
+        {showAdvancedTools && (
         <section style={styles.pipelineCard}>
           <div style={styles.pipelineHeader}>
             <strong style={styles.pipelineTitle}>🧠 TitoNova Cloud Engine Generation System</strong>
@@ -11500,6 +11765,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
             </div>
           )}
         </section>
+        )}
         {showAdvancedTools && (
           <>
         {businessOsOutput && (
@@ -12257,55 +12523,17 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
             <div style={styles.preview}>
           <div style={styles.previewHeader}>
             <h2 style={styles.previewTitle}>Generated Website Preview</h2>
-            <div style={styles.headerActions}>
+            <div style={isMobilePreview ? styles.headerActionsCompact : styles.headerActions}>
               <input
-                style={styles.domainInput}
+                style={isMobilePreview ? styles.domainInputCompact : styles.domainInput}
                 placeholder="Domain (example.com)"
                 value={customDomain}
                 onChange={(event) => setCustomDomain(event.target.value)}
               />
-              <button
-                style={styles.addDomainButton}
-                onClick={handleAddDomainNow}
-                disabled={domainLoading || publishing || !customDomain.trim() || !publishedSiteId}
-              >
-                {domainLoading ? "Adding..." : "Add Domain"}
-              </button>
-              <button
-                style={styles.verifyDnsButton}
-                onClick={handleVerifyDnsNow}
-                disabled={verifyingDns || !customDomain.trim()}
-              >
-                {verifyingDns ? "Verifying..." : "Verify DNS now"}
-              </button>
-              <button
-                style={styles.oneClickHostingButton}
-                onClick={handleOneClickHosting}
-                disabled={oneClickHostingRunning || publishing}
-              >
-                {oneClickHostingRunning ? "Provisioning..." : "One-Click Hosting"}
-              </button>
-              <button style={styles.goLiveButton} onClick={() => handleGoLive()} disabled={publishing}>
-                {publishing ? "Publishing..." : "Go Live"}
-              </button>
-              <button
-                style={styles.republishButton}
-                onClick={() => handleGoLive({ republish: true })}
-                disabled={publishing || !publishedSiteId}
-              >
-                Re-publish
-              </button>
-              <button
-                style={styles.unpublishButton}
-                onClick={handleUnpublish}
-                disabled={publishing || !publishedSiteId}
-              >
-                Unpublish
-              </button>
               <button style={styles.exportButton} onClick={handleExportHtml}>
                 Export HTML
               </button>
-              <div style={styles.exportBundleControls}>
+              <div style={isMobilePreview ? styles.exportBundleControlsCompact : styles.exportBundleControls}>
                 <select
                   style={styles.exportFrameworkSelect}
                   value={exportFramework}
@@ -12326,7 +12554,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
                   Start Editing
                 </button>
               ) : (
-                <div style={styles.editActions}>
+                <div style={isMobilePreview ? styles.editActionsCompact : styles.editActions}>
                   <button style={styles.undoButton} onClick={handleUndoInlineEdit}>
                     Undo
                   </button>
@@ -12340,6 +12568,118 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               )}
             </div>
           </div>
+          <section style={styles.publishFlowCard}>
+            <div style={styles.publishFlowHeader}>
+              <div>
+                <strong style={styles.publishFlowTitle}>Publish Flow</strong>
+                <small style={styles.publishFlowMeta}>{publishPrimaryHint}</small>
+              </div>
+              <span style={publishedSiteId ? styles.publishFlowBadgeLive : styles.publishFlowBadgeDraft}>
+                {publishedSiteId ? "Live" : "Draft"}
+              </span>
+            </div>
+            <div style={styles.publishFlowPrimaryRow}>
+              <button
+                style={styles.publishFlowPrimaryButton}
+                onClick={publishPrimaryAction}
+                disabled={oneClickHostingRunning || publishing}
+              >
+                {publishPrimaryLabel}
+              </button>
+              <button
+                style={styles.publishFlowSecondaryButton}
+                onClick={handleAddDomainNow}
+                disabled={domainLoading || publishing || !customDomain.trim() || !publishedSiteId}
+              >
+                {domainLoading ? "Adding..." : "Attach Domain"}
+              </button>
+              <button
+                style={styles.publishFlowSecondaryButton}
+                onClick={handleVerifyDnsNow}
+                disabled={verifyingDns || !customDomain.trim()}
+              >
+                {verifyingDns ? "Verifying..." : "Verify DNS"}
+              </button>
+            </div>
+            <div style={styles.publishFlowSecondaryRow}>
+              <button
+                style={styles.oneClickHostingButton}
+                onClick={handleOneClickHosting}
+                disabled={oneClickHostingRunning || publishing}
+              >
+                {oneClickHostingRunning ? "Provisioning..." : "One-Click Hosting"}
+              </button>
+              <button
+                style={styles.republishButton}
+                onClick={() => handleGoLive({ republish: true })}
+                disabled={publishing || !publishedSiteId}
+              >
+                Re-publish
+              </button>
+              <button
+                style={styles.unpublishButton}
+                onClick={handleUnpublish}
+                disabled={publishing || !publishedSiteId}
+              >
+                Unpublish
+              </button>
+            </div>
+            <div style={styles.publishFlowFacts}>
+              <small style={styles.publishFlowFact}>Domain: {normalizedCustomDomain || "Not set yet"}</small>
+              <small style={styles.publishFlowFact}>Site ID: {publishedSiteId || "Generated after first publish"}</small>
+              <small style={styles.publishFlowFact}>
+                DNS: {dnsVerifyStatus === "success" ? "Verified" : normalizedCustomDomain ? "Needs verification" : "Not started"}
+              </small>
+            </div>
+          </section>
+          <section style={styles.previewActionCard}>
+            <div style={styles.previewActionHeader}>
+              <div>
+                <strong style={styles.previewActionTitle}>Action Center</strong>
+                <small style={styles.previewActionMeta}>Next step: {previewRecommendedStep}</small>
+              </div>
+              <span style={styles.previewActionBadge}>
+                {previewJourneySteps.filter((item) => item.done).length}/{previewJourneySteps.length} done
+              </span>
+            </div>
+            <div style={styles.previewActionSteps}>
+              {previewJourneySteps.map((step) => (
+                <article key={step.key} style={step.done ? styles.previewActionStepDone : styles.previewActionStepPending}>
+                  <strong style={styles.previewActionStepTitle}>{step.label}</strong>
+                  <small style={styles.previewActionStepMeta}>{step.done ? "Ready" : "Pending"}</small>
+                </article>
+              ))}
+            </div>
+            <div style={styles.previewActionButtons}>
+              <button
+                type="button"
+                style={styles.previewActionButtonPrimary}
+                onClick={() => previewEditableRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
+              >
+                Focus Preview
+              </button>
+              <button type="button" style={styles.previewActionButton} onClick={handleStartInlineEdit} disabled={isInlineEditing}>
+                {isInlineEditing ? "Editing Active" : "Start Editing"}
+              </button>
+              <button type="button" style={styles.previewActionButton} onClick={handleSaveInlineEdit} disabled={!inlineDraftDirty}>
+                Save Changes
+              </button>
+              <button type="button" style={styles.previewActionButton} onClick={() => handleGoLive()} disabled={publishing}>
+                {publishing ? "Publishing..." : publishedSiteId ? "Publish Update" : "Go Live"}
+              </button>
+            </div>
+            <small
+              style={
+                publishStatus === "error"
+                  ? styles.previewActionStatusError
+                  : publishedSiteId
+                    ? styles.previewActionStatusSuccess
+                    : styles.previewActionStatusInfo
+              }
+            >
+              {publishReadinessMessage}
+            </small>
+          </section>
           <div style={styles.pageTabs}>
             {orderPageKeys(Object.keys(generatedPages)).map((pageKey) => (
               <button
@@ -12437,6 +12777,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               </div>
             </section>
           )}
+          {showAdvancedTools && (
           <section style={styles.mobileAppCard}>
             <div style={styles.mobileAppHeader}>
               <strong style={styles.mobileAppTitle}>📱 Mobile Business App</strong>
@@ -12504,7 +12845,8 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               </div>
             </div>
           </section>
-          {growthCoachInsights.length > 0 && (
+          )}
+          {showAdvancedTools && growthCoachInsights.length > 0 && (
             <section style={styles.growthCoachCard}>
               <div style={styles.growthCoachHeader}>
                 <strong style={styles.growthCoachTitle}>TitoNova Cloud Engine Growth Coach</strong>
@@ -12536,7 +12878,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               </div>
             </section>
           )}
-          {businessCoachInsights.length > 0 && (
+          {showAdvancedTools && businessCoachInsights.length > 0 && (
             <section style={styles.businessCoachCard}>
               <div style={styles.businessCoachHeader}>
                 <strong style={styles.businessCoachTitle}>TitoNova Cloud Engine Business Coach</strong>
@@ -12557,7 +12899,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               </div>
             </section>
           )}
-          {selfOptimizationHistory.length > 0 && (
+          {showAdvancedTools && selfOptimizationHistory.length > 0 && (
             <section style={styles.selfOptimizeCard}>
               <div style={styles.selfOptimizeHeader}>
                 <strong style={styles.selfOptimizeTitle}>Self-Optimization History</strong>
@@ -12577,7 +12919,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               </div>
             </section>
           )}
-          {(autonomousLog.length > 0 || autonomousPricingNote) && (
+          {showAdvancedTools && (autonomousLog.length > 0 || autonomousPricingNote) && (
             <section style={styles.autonomousCard}>
               <div style={styles.autonomousHeader}>
                 <strong style={styles.autonomousTitle}>Autonomous Business Mode</strong>
@@ -12600,7 +12942,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               </div>
             </section>
           )}
-          {uiDesignSpec && (
+          {showAdvancedTools && uiDesignSpec && (
             <section style={styles.uiDesignCard}>
               <div style={styles.uiDesignHeader}>
                 <strong style={styles.uiDesignTitle}>TitoNova Cloud Engine UI Design Spec</strong>
@@ -12619,7 +12961,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               </small>
             </section>
           )}
-          {competitorIntel && (
+          {showAdvancedTools && competitorIntel && (
             <section style={styles.competitorCard}>
               <div style={styles.competitorHeader}>
                 <strong style={styles.competitorTitle}>TitoNova Cloud Engine Competitor Intelligence</strong>
@@ -12657,7 +12999,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               )}
             </section>
           )}
-          {smartContentItems.length > 0 && (
+          {showAdvancedTools && smartContentItems.length > 0 && (
             <section style={styles.smartContentCard}>
               <div style={styles.smartContentHeader}>
                 <strong style={styles.smartContentTitle}>Smart Content Engine</strong>
@@ -12677,7 +13019,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               </div>
             </section>
           )}
-          {appBuilderArtifacts && (
+          {showAdvancedTools && appBuilderArtifacts && (
             <section style={styles.appBuilderCard}>
               <div style={styles.appBuilderHeader}>
                 <strong style={styles.appBuilderTitle}>TitoNova Cloud Engine App Builder</strong>
@@ -13073,6 +13415,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               {dnsVerifyMessage}
             </p>
           )}
+          {showAdvancedTools && (
           <section style={styles.checklistCard}>
             <div style={styles.checklistHeader}>
               <strong>Manual Domain Checklist</strong>
@@ -13089,7 +13432,8 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               ))}
             </div>
           </section>
-          {publishedSiteId && <p style={styles.siteMeta}>Published site ID: {publishedSiteId}</p>}
+          )}
+          {showAdvancedTools && publishedSiteId && <p style={styles.siteMeta}>Published site ID: {publishedSiteId}</p>}
           {hostingProfile?.domain && (
             <section style={styles.hostingSummaryCard}>
               <div style={styles.hostingSummaryHeader}>
@@ -13116,6 +13460,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
           {!publishedSiteId && (
             <p style={styles.siteMeta}>Tip: enter a domain and click One-Click Hosting to auto-publish, attach domain, and verify SSL/CDN.</p>
           )}
+          {showAdvancedTools && (
           <section style={styles.marketCard}>
             <div style={styles.marketHeader}>
               <h3 style={styles.marketTitle}>Domain Marketplace</h3>
@@ -13245,6 +13590,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               </div>
             )}
           </section>
+          )}
           <section style={styles.marketCard}>
             <div style={styles.marketHeader}>
               <h3 style={styles.marketTitle}>Marketplace Ecosystem</h3>
@@ -13616,6 +13962,17 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               <p style={styles.previewEmptyText}>
                 Generate a website to pin the interactive multi-page preview here while you keep working in the command center.
               </p>
+              <div style={styles.previewEmptyActions}>
+                <button type="button" style={styles.previewEmptyPrimary} onClick={handlePrimaryGenerateWebsite}>
+                  Generate Website
+                </button>
+                <button type="button" style={styles.previewEmptySecondary} onClick={handleSmartFillPrompt}>
+                  Fill Missing Details
+                </button>
+                <button type="button" style={styles.previewEmptySecondary} onClick={() => handleQuickPromptChip("SaaS landing page")}>
+                  Use Example Prompt
+                </button>
+              </div>
             </div>
           )}
         </aside>
@@ -13918,8 +14275,121 @@ const styles = {
     display: "grid",
     gap: "8px"
   },
+  quickStartCard: {
+    border: "1px solid #bfdbfe",
+    borderRadius: "16px",
+    background: "linear-gradient(180deg,#eff6ff,#ffffff)",
+    padding: "14px",
+    marginBottom: "12px",
+    display: "grid",
+    gap: "12px"
+  },
+  quickStartHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "10px",
+    flexWrap: "wrap"
+  },
+  quickStartTitle: {
+    display: "block",
+    color: "#0f172a",
+    fontSize: "15px"
+  },
+  quickStartMeta: {
+    display: "block",
+    color: "#475569",
+    fontSize: "12px",
+    marginTop: "3px"
+  },
+  quickStartBadge: {
+    background: "#dbeafe",
+    color: "#1d4ed8",
+    border: "1px solid #93c5fd",
+    borderRadius: "999px",
+    padding: "5px 10px",
+    fontSize: "12px",
+    fontWeight: 700
+  },
+  quickStartSteps: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))",
+    gap: "8px"
+  },
+  quickStartStepDone: {
+    display: "flex",
+    gap: "10px",
+    alignItems: "center",
+    border: "1px solid #86efac",
+    background: "#f0fdf4",
+    borderRadius: "12px",
+    padding: "10px"
+  },
+  quickStartStepPending: {
+    display: "flex",
+    gap: "10px",
+    alignItems: "center",
+    border: "1px solid #cbd5e1",
+    background: "#ffffff",
+    borderRadius: "12px",
+    padding: "10px"
+  },
+  quickStartStepIndex: {
+    width: "28px",
+    height: "28px",
+    borderRadius: "999px",
+    display: "grid",
+    placeItems: "center",
+    background: "#0f172a",
+    color: "#ffffff",
+    fontSize: "12px",
+    fontWeight: 700,
+    flexShrink: 0
+  },
+  quickStartStepContent: {
+    display: "grid",
+    gap: "2px"
+  },
+  quickStartStepTitle: {
+    color: "#0f172a",
+    fontSize: "13px"
+  },
+  quickStartStepMeta: {
+    color: "#64748b",
+    fontSize: "11px"
+  },
+  quickStartActions: {
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap"
+  },
+  quickStartAction: {
+    background: "#ffffff",
+    color: "#0f172a",
+    border: "1px solid #cbd5e1",
+    borderRadius: "10px",
+    padding: "8px 12px",
+    fontSize: "12px",
+    fontWeight: 700,
+    cursor: "pointer"
+  },
+  quickStartActionPrimary: {
+    background: "#1d4ed8",
+    color: "#ffffff",
+    border: "1px solid #1d4ed8",
+    borderRadius: "10px",
+    padding: "8px 12px",
+    fontSize: "12px",
+    fontWeight: 700,
+    cursor: "pointer"
+  },
   businessOsHint: {
     color: "#c6f6d5",
+    fontSize: "12px",
+    lineHeight: 1.45
+  },
+  promptExampleHint: {
+    color: "#8fd9bb",
     fontSize: "12px",
     lineHeight: 1.45
   },
@@ -15298,6 +15768,32 @@ const styles = {
     lineHeight: 1.6,
     maxWidth: "65ch"
   },
+  previewEmptyActions: {
+    marginTop: "16px",
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "10px"
+  },
+  previewEmptyPrimary: {
+    background: "linear-gradient(135deg,#22c55e,#16a34a)",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "999px",
+    padding: "10px 14px",
+    fontSize: "13px",
+    fontWeight: 700,
+    cursor: "pointer"
+  },
+  previewEmptySecondary: {
+    background: "rgba(255,255,255,0.08)",
+    color: "#d1fae5",
+    border: "1px solid rgba(167,243,208,0.24)",
+    borderRadius: "999px",
+    padding: "10px 14px",
+    fontSize: "13px",
+    fontWeight: 600,
+    cursor: "pointer"
+  },
   previewHeader: {
     display: "flex",
     alignItems: "center",
@@ -15310,6 +15806,106 @@ const styles = {
     color: "#0b3a2b",
     fontSize: "24px",
     letterSpacing: "-0.02em"
+  },
+  previewActionCard: {
+    border: "1px solid #bbf7d0",
+    borderRadius: "14px",
+    background: "linear-gradient(180deg,#ffffff 0%,#f0fdf4 100%)",
+    padding: "14px",
+    display: "grid",
+    gap: "12px"
+  },
+  previewActionHeader: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: "12px",
+    flexWrap: "wrap"
+  },
+  previewActionTitle: {
+    display: "block",
+    color: "#14532d",
+    fontSize: "15px"
+  },
+  previewActionMeta: {
+    color: "#166534",
+    fontSize: "12px"
+  },
+  previewActionBadge: {
+    borderRadius: "999px",
+    background: "#dcfce7",
+    color: "#166534",
+    padding: "5px 10px",
+    fontSize: "12px",
+    fontWeight: 700
+  },
+  previewActionSteps: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))",
+    gap: "10px"
+  },
+  previewActionStepDone: {
+    border: "1px solid #86efac",
+    borderRadius: "12px",
+    background: "#f0fdf4",
+    padding: "10px",
+    display: "grid",
+    gap: "4px"
+  },
+  previewActionStepPending: {
+    border: "1px solid #d1d5db",
+    borderRadius: "12px",
+    background: "#ffffff",
+    padding: "10px",
+    display: "grid",
+    gap: "4px"
+  },
+  previewActionStepTitle: {
+    color: "#0f172a",
+    fontSize: "13px"
+  },
+  previewActionStepMeta: {
+    color: "#475569",
+    fontSize: "11px"
+  },
+  previewActionButtons: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px"
+  },
+  previewActionButtonPrimary: {
+    background: "#0f766e",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "999px",
+    padding: "9px 14px",
+    fontSize: "12px",
+    fontWeight: 700,
+    cursor: "pointer"
+  },
+  previewActionButton: {
+    background: "#ecfdf5",
+    color: "#166534",
+    border: "1px solid #a7f3d0",
+    borderRadius: "999px",
+    padding: "9px 14px",
+    fontSize: "12px",
+    fontWeight: 700,
+    cursor: "pointer"
+  },
+  previewActionStatusInfo: {
+    color: "#166534",
+    fontSize: "12px"
+  },
+  previewActionStatusSuccess: {
+    color: "#047857",
+    fontSize: "12px",
+    fontWeight: 700
+  },
+  previewActionStatusError: {
+    color: "#b91c1c",
+    fontSize: "12px",
+    fontWeight: 700
   },
   seoCard: {
     border: "1px solid #bbf7d0",
@@ -16467,6 +17063,12 @@ const styles = {
     flexWrap: "wrap",
     gap: "8px"
   },
+  headerActionsCompact: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "8px",
+    width: "100%"
+  },
   domainInput: {
     minWidth: "220px",
     padding: "8px 10px",
@@ -16474,10 +17076,25 @@ const styles = {
     border: "1px solid #cbd5e1",
     fontSize: "13px"
   },
+  domainInputCompact: {
+    width: "100%",
+    minWidth: 0,
+    gridColumn: "1 / -1",
+    padding: "10px 12px",
+    borderRadius: "10px",
+    border: "1px solid #cbd5e1",
+    fontSize: "14px"
+  },
   editActions: {
     display: "flex",
     alignItems: "center",
     gap: "8px"
+  },
+  editActionsCompact: {
+    display: "grid",
+    gridTemplateColumns: "repeat(3,minmax(0,1fr))",
+    gap: "8px",
+    width: "100%"
   },
   exportButton: {
     background: "#0369a1",
@@ -16491,6 +17108,12 @@ const styles = {
     display: "inline-flex",
     alignItems: "center",
     gap: "8px",
+  },
+  exportBundleControlsCompact: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: "8px",
+    width: "100%"
   },
   exportFrameworkSelect: {
     padding: "8px 10px",
@@ -16532,6 +17155,92 @@ const styles = {
     padding: "8px 12px",
     cursor: "pointer",
     fontWeight: 700
+  },
+  publishFlowCard: {
+    border: "1px solid #86efac",
+    borderRadius: "14px",
+    background: "linear-gradient(180deg,#f7fee7 0%,#f0fdf4 100%)",
+    padding: "14px",
+    display: "grid",
+    gap: "12px"
+  },
+  publishFlowHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "10px",
+    flexWrap: "wrap"
+  },
+  publishFlowTitle: {
+    display: "block",
+    color: "#166534",
+    fontSize: "15px"
+  },
+  publishFlowMeta: {
+    color: "#15803d",
+    fontSize: "12px",
+    lineHeight: 1.5,
+    maxWidth: "62ch"
+  },
+  publishFlowBadgeDraft: {
+    borderRadius: "999px",
+    padding: "5px 10px",
+    background: "#e2e8f0",
+    color: "#334155",
+    fontSize: "12px",
+    fontWeight: 700
+  },
+  publishFlowBadgeLive: {
+    borderRadius: "999px",
+    padding: "5px 10px",
+    background: "#16a34a",
+    color: "#ffffff",
+    fontSize: "12px",
+    fontWeight: 700
+  },
+  publishFlowPrimaryRow: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))",
+    gap: "8px"
+  },
+  publishFlowSecondaryRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px"
+  },
+  publishFlowPrimaryButton: {
+    background: "linear-gradient(135deg,#f97316,#ea580c)",
+    color: "#ffffff",
+    border: "none",
+    borderRadius: "10px",
+    padding: "11px 14px",
+    fontSize: "13px",
+    fontWeight: 800,
+    cursor: "pointer"
+  },
+  publishFlowSecondaryButton: {
+    background: "#ffffff",
+    color: "#166534",
+    border: "1px solid #86efac",
+    borderRadius: "10px",
+    padding: "11px 14px",
+    fontSize: "12px",
+    fontWeight: 700,
+    cursor: "pointer"
+  },
+  publishFlowFacts: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))",
+    gap: "8px"
+  },
+  publishFlowFact: {
+    border: "1px solid #dcfce7",
+    background: "#ffffff",
+    borderRadius: "10px",
+    padding: "8px 10px",
+    color: "#14532d",
+    fontSize: "11px",
+    lineHeight: 1.4
   },
   republishButton: {
     background: "#0ea5e9",
