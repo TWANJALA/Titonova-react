@@ -1,6 +1,7 @@
 const HOSTING_API_BASE = import.meta.env.VITE_HOSTING_API_BASE_URL || import.meta.env.VITE_REGISTRAR_API_BASE_URL || "";
 const HOSTING_GATEWAY_TOKEN = import.meta.env.VITE_REGISTRAR_GATEWAY_TOKEN || "";
 const DEFAULT_TIMEOUT_MS = 15000;
+const ENABLE_LOCAL_GATEWAY_FALLBACK = String(import.meta.env.VITE_ENABLE_LOCAL_GATEWAY_FALLBACK || "true").toLowerCase() !== "false";
 
 const buildUrl = (baseUrl, path) => {
   const trimmed = path.replace(/^\/+/, "");
@@ -34,25 +35,30 @@ const isUsableApiBaseUrl = (value, allowLocal) => {
 const buildCandidateUrls = (path) => {
   const isLocalHost =
     typeof window !== "undefined" && isLocalHostName(String(window.location.hostname || ""));
-  const envBaseUrls = [HOSTING_API_BASE, import.meta.env.VITE_REGISTRAR_API_BASE_URL || ""].filter((value) =>
-    isUsableApiBaseUrl(value, isLocalHost)
-  );
+  const envBaseUrls = [
+    HOSTING_API_BASE,
+    import.meta.env.VITE_REGISTRAR_API_BASE_URL || "",
+    import.meta.env.VITE_API_GATEWAY_URL || "",
+    import.meta.env.VITE_REGISTRAR_GATEWAY_URL || "",
+  ].filter((value) => isUsableApiBaseUrl(value, isLocalHost));
   const sameOriginBase =
     typeof window !== "undefined" ? String(window.location.origin || "").replace(/\/$/, "") : "";
   const sameOriginFallbackUrls = [
     sameOriginBase ? buildUrl(sameOriginBase, path) : "",
     buildUrl("", path),
   ];
-  const localFallbackUrls = [
-    ...sameOriginFallbackUrls,
+  const localGatewayFallbackUrls = [
+    buildUrl("http://127.0.0.1:8787", path),
     buildUrl("http://localhost:8787", path),
     buildUrl("http://localhost:4173", path),
   ];
+  const includeLocalGatewayFallback = isLocalHost || ENABLE_LOCAL_GATEWAY_FALLBACK;
   return Array.from(
     new Set(
       [
         ...envBaseUrls.map((baseUrl) => buildUrl(baseUrl, path)),
-        ...(isLocalHost ? localFallbackUrls : sameOriginFallbackUrls),
+        ...sameOriginFallbackUrls,
+        ...(includeLocalGatewayFallback ? localGatewayFallbackUrls : []),
       ].filter(Boolean)
     )
   );
@@ -62,6 +68,7 @@ const postHosting = async (path, body) => {
   const requestBody = JSON.stringify(body || {});
   const candidateUrls = buildCandidateUrls(path);
   let lastError = null;
+  const responseStatuses = [];
 
   for (const url of candidateUrls) {
     const controller = new AbortController();
@@ -79,6 +86,7 @@ const postHosting = async (path, body) => {
 
       const payload = await parseJsonSafe(response);
       if (response.ok) return payload || {};
+      responseStatuses.push({ url, status: response.status });
       lastError = new Error(payload?.error || `Hosting API error (${response.status}) via ${url}`);
     } catch (error) {
       lastError =
@@ -90,8 +98,15 @@ const postHosting = async (path, body) => {
     }
   }
 
+  const all404 =
+    responseStatuses.length > 0 &&
+    responseStatuses.every((item) => Number(item.status) === 404);
+  const hint = all404
+    ? " All candidates returned HTTP 404. Verify your deployment includes `api/[...path].js` and configure `API_GATEWAY_URL` or `REGISTRAR_GATEWAY_URL` for `/api` proxying."
+    : "";
+
   throw new Error(
-    `${String(lastError?.message || "Hosting gateway unreachable.")} Start \`npm run dev:gateway\` and retry. Tried: ${candidateUrls.join(", ")}`
+    `${String(lastError?.message || "Hosting gateway unreachable.")}${hint} Start \`npm run dev:gateway\` and retry. Tried: ${candidateUrls.join(", ")}`
   );
 };
 
