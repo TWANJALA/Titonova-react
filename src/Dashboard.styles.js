@@ -2,7 +2,7 @@ const styles = {
   wrapper: {
     minHeight: "100vh",
     background:
-      "radial-gradient(circle at 12% 8%, rgba(244, 114, 182, 0.18), transparent 30%), radial-gradient(circle at 86% 14%, rgba(56, 189, 248, 0.22), transparent 34%), radial-gradient(circle at 48% 100%, rgba(20, 184, 166, 0.2), transparent 38%), linear-gradient(156deg, #05040c 0%, #11152c 44%, #0c2e3d 100%)",
+      "radial-gradient(circle at 18% 12%, rgba(45,212,191,0.22), transparent 34%), radial-gradient(circle at 78% 16%, rgba(59,130,246,0.24), transparent 38%), radial-gradient(circle at 52% 88%, rgba(16,185,129,0.16), transparent 40%), linear-gradient(148deg, #020817 0%, #081734 42%, #0b2344 100%)",
     padding: "clamp(16px, 2.4vw, 28px) clamp(14px, 2.2vw, 24px) 44px",
     color: "#edf2fb",
     fontFamily: "'Manrope', 'Plus Jakarta Sans', 'Segoe UI', sans-serif",
@@ -18,10 +18,10 @@ const styles = {
     padding: "clamp(16px, 2.4vw, 28px) clamp(14px, 2.6vw, 28px) clamp(12px, 2vw, 24px)",
     textAlign: "center",
     boxSizing: "border-box",
-    border: "1px solid rgba(125, 211, 252, 0.32)",
+    border: "1px solid rgba(148,163,184,0.22)",
     borderRadius: "24px",
     background:
-      "radial-gradient(1200px 360px at 50% -16%, rgba(248, 113, 113, 0.13), rgba(248, 113, 113, 0) 58%), radial-gradient(760px 260px at 8% 96%, rgba(20, 184, 166, 0.16), rgba(20, 184, 166, 0) 60%), linear-gradient(164deg, rgba(15, 19, 36, 0.94), rgba(17, 32, 55, 0.86))",
+      "linear-gradient(180deg, rgba(9,18,42,0.78), rgba(9,20,46,0.58))",
     backdropFilter: "blur(12px)",
     boxShadow: "0 24px 56px rgba(3, 6, 18, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08)",
     overflow: "hidden"
@@ -30,8 +30,8 @@ const styles = {
     display: "inline-flex",
     alignItems: "center",
     gap: "8px",
-    border: "1px solid rgba(56, 189, 248, 0.46)",
-    color: "#dbeafe",
+    border: "1px solid rgba(45,212,191,0.45)",
+    color: "#63f5b4",
     fontSize: "11px",
     fontWeight: 800,
     letterSpacing: "0.13em",
@@ -39,12 +39,12 @@ const styles = {
     borderRadius: "999px",
     padding: "7px 12px",
     marginBottom: "14px",
-    background: "linear-gradient(135deg, rgba(11, 24, 48, 0.85), rgba(13, 42, 57, 0.72))",
+    background: "rgba(7,16,38,0.75)",
     boxShadow: "0 10px 22px rgba(6, 13, 30, 0.32)"
   },
   title: {
     margin: 0,
-    color: "#f8fbff",
+    color: "#39df82",
     fontFamily: "'Sora', 'Space Grotesk', 'Avenir Next', sans-serif",
     fontSize: "clamp(30px, 4.3vw, 56px)",
     lineHeight: 1.02,
@@ -54,7 +54,7 @@ const styles = {
   },
   subtitle: {
     margin: 0,
-    color: "#d6e4f6",
+    color: "#c8d8ef",
     fontSize: "14px",
     maxWidth: "700px",
     lineHeight: 1.55,
@@ -70,7 +70,7 @@ const styles = {
   },
   subtitleLead: {
     margin: 0,
-    color: "#fef2f2",
+    color: "#f8fafc",
     fontSize: "16px",
     fontWeight: 700,
     maxWidth: "760px",
@@ -87,9 +87,8 @@ const styles = {
   },
   landingHighlightCard: {
     borderRadius: "16px",
-    border: "1px solid rgba(148, 163, 184, 0.32)",
-    background:
-      "radial-gradient(260px 180px at 82% -20%, rgba(56, 189, 248, 0.18), rgba(56, 189, 248, 0) 60%), linear-gradient(154deg, rgba(15, 23, 42, 0.92), rgba(20, 38, 67, 0.86))",
+    border: "1px solid rgba(99,245,180,0.28)",
+    background: "linear-gradient(160deg, rgba(11,28,56,0.88), rgba(10,20,44,0.92))",
     padding: "14px",
     boxShadow: "0 18px 30px rgba(2, 6, 23, 0.28)",
     overflow: "visible",
@@ -98,7 +97,7 @@ const styles = {
   },
   landingHighlightTitle: {
     margin: "0 0 8px",
-    color: "#f9fafb",
+    color: "#9cfed0",
     fontFamily: "'Sora', 'Space Grotesk', sans-serif",
     fontSize: "15px",
     lineHeight: 1.3,
@@ -106,7 +105,7 @@ const styles = {
   },
   landingHighlightText: {
     margin: 0,
-    color: "#dbe7fb",
+    color: "#d5e3f8",
     fontSize: "13px",
     lineHeight: 1.55,
     overflowWrap: "anywhere",
