@@ -4078,8 +4078,8 @@ ${content || ""}
     try {
       const parser = new DOMParser();
       const doc = parser.parseFromString(`<body>${html || ""}</body>`, "text/html");
-      return Array.from(doc.body.querySelectorAll("img[data-image-id]")).map((img, index) => ({
-        id: String(img.getAttribute("data-image-id") || `image-${index + 1}`),
+      return Array.from(doc.body.querySelectorAll("img")).map((img, index) => ({
+        id: String(img.getAttribute("data-image-id") || `tn-image-${index + 1}`),
         src: String(img.getAttribute("src") || ""),
         alt: String(img.getAttribute("alt") || ""),
       }));
@@ -4092,10 +4092,15 @@ ${content || ""}
     try {
       const parser = new DOMParser();
       const doc = parser.parseFromString(`<body>${html || ""}</body>`, "text/html");
-      const target = Array.from(doc.body.querySelectorAll("img[data-image-id]")).find(
-        (img) => String(img.getAttribute("data-image-id") || "") === String(imageId || "")
-      );
+      const target = Array.from(doc.body.querySelectorAll("img")).find((img, index) => {
+        const explicitId = String(img.getAttribute("data-image-id") || "");
+        const fallbackId = `tn-image-${index + 1}`;
+        return explicitId === String(imageId || "") || (!explicitId && fallbackId === String(imageId || ""));
+      });
       if (!target) return html || "";
+      if (!target.getAttribute("data-image-id")) {
+        target.setAttribute("data-image-id", String(imageId || ""));
+      }
       target.setAttribute("src", String(nextSrc || ""));
       return doc.body.innerHTML || html || "";
     } catch {
@@ -6199,9 +6204,17 @@ Return strict JSON:
 
   const handleInlineImageReplace = (targetNode) => {
     const imageTarget =
-      targetNode instanceof Element ? targetNode.closest("[data-editable='image'][data-id], img[data-image-id]") : null;
+      targetNode instanceof Element ? targetNode.closest("[data-editable='image'][data-id], img") : null;
     if (!(imageTarget instanceof HTMLElement)) return;
-    const imageId = String(imageTarget.getAttribute("data-image-id") || imageTarget.dataset.id || "").trim();
+    const explicitId = String(imageTarget.getAttribute("data-image-id") || imageTarget.dataset.id || "").trim();
+    const fallbackId = (() => {
+      const root = previewEditableRef.current;
+      if (!(root instanceof HTMLElement) || imageTarget.tagName.toLowerCase() !== "img") return "";
+      const images = Array.from(root.querySelectorAll("img"));
+      const index = images.indexOf(imageTarget);
+      return index >= 0 ? `tn-image-${index + 1}` : "";
+    })();
+    const imageId = explicitId || fallbackId;
     if (!imageId) return;
     setSelectedImageId(imageId);
     const input = document.createElement("input");
