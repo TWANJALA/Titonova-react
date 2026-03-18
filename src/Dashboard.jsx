@@ -287,6 +287,7 @@ export default function Dashboard() {
   const selectedSectionNodeRef = useRef(null);
   const pendingInstantEditRef = useRef(false);
   const inlineAutofocusHandlesRef = useRef([]);
+  const inlineAutoSaveTimerRef = useRef(0);
   const appShellRef = useRef(null);
   const promptTextareaRef = useRef(null);
 
@@ -10262,6 +10263,28 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     inlineBestSuggestion,
     inlineBulkImproving,
   ]);
+
+  useEffect(() => {
+    if (!isInlineEditing || !inlineDraftDirty) return undefined;
+    if (typeof window === "undefined") return undefined;
+    if (inlineAutoSaveTimerRef.current) {
+      window.clearTimeout(inlineAutoSaveTimerRef.current);
+    }
+    inlineAutoSaveTimerRef.current = window.setTimeout(() => {
+      const nextHtml = commitInlineDraftForActivePage();
+      setGeneratedSite(nextHtml);
+      setDraftHtml(nextHtml);
+      setInlineDraftDirty(false);
+      setInlineSmartStatus("Auto-saved");
+      inlineAutoSaveTimerRef.current = 0;
+    }, 700);
+    return () => {
+      if (inlineAutoSaveTimerRef.current) {
+        window.clearTimeout(inlineAutoSaveTimerRef.current);
+        inlineAutoSaveTimerRef.current = 0;
+      }
+    };
+  }, [isInlineEditing, inlineDraftDirty, draftHtml, commitInlineDraftForActivePage]);
 
   useEffect(() => {
     if (isInlineEditing) return undefined;

@@ -109,7 +109,7 @@ export default function InlineEditorOverlay({
             Click any text and type. Save when you're done. Shortcuts: Cmd/Ctrl+S save, Cmd/Ctrl+Z undo, Cmd/Ctrl+Y redo.
           </small>
           {simpleInlineMode ? (
-            <small style={styles.inlineSelectionMeta}>Quick steps: 1) Click text in preview 2) Type in the box 3) Click Save.</small>
+            <small style={styles.inlineSelectionMeta}>Quick steps: 1) Click text in preview 2) Type 3) Auto-save runs in background.</small>
           ) : null}
           {inlineSmartStatus ? <small style={styles.inlineSmartStatus}>{inlineSmartStatus}</small> : null}
           <small style={styles.inlineSelectionMeta}>
@@ -270,7 +270,7 @@ export default function InlineEditorOverlay({
         </div>
         <div style={inlineEditActionsStyle}>
           <span style={inlineDraftDirty ? styles.inlineDirtyBadge : styles.inlineCleanBadge}>
-            {inlineDraftDirty ? "Unsaved changes" : "Saved"}
+            {inlineDraftDirty ? (simpleInlineMode ? "Auto-saving..." : "Unsaved changes") : "Saved"}
           </span>
           <button style={styles.undoButton} onClick={handleUndoInlineEdit} disabled={editHistory.length <= 1}>
             Undo
@@ -279,7 +279,7 @@ export default function InlineEditorOverlay({
             Redo
           </button>
           <button style={styles.saveButton} onClick={handleSaveInlineEdit}>
-            Save
+            {simpleInlineMode ? "Save Now" : "Save"}
           </button>
           <button style={styles.cancelButton} onClick={handleCancelInlineEdit}>
             Discard
