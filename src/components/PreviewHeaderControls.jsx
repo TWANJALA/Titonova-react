@@ -11,11 +11,6 @@ export default function PreviewHeaderControls({
   exportFrameworkOptions,
   handleExportProjectBundle,
   exportBundleLoading,
-  isInlineEditing,
-  handleStartInlineEdit,
-  handleUndoInlineEdit,
-  handleSaveInlineEdit,
-  handleCancelInlineEdit,
 }) {
   return (
     <div style={styles.previewHeader}>
@@ -46,23 +41,6 @@ export default function PreviewHeaderControls({
             {exportBundleLoading ? "Exporting..." : "Export Project"}
           </button>
         </div>
-        {!isInlineEditing ? (
-          <button style={styles.editButton} onClick={handleStartInlineEdit}>
-            Start Editing
-          </button>
-        ) : (
-          <div style={isMobilePreview ? styles.editActionsCompact : styles.editActions}>
-            <button style={styles.undoButton} onClick={handleUndoInlineEdit}>
-              Undo
-            </button>
-            <button style={styles.saveButton} onClick={handleSaveInlineEdit}>
-              Save
-            </button>
-            <button style={styles.cancelButton} onClick={handleCancelInlineEdit}>
-              Discard
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

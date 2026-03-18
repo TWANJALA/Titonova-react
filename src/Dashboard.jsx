@@ -3,10 +3,7 @@ import BusinessGeneratorPanels from "./components/BusinessGeneratorPanels";
 import AuthProjectCard from "./components/AuthProjectCard";
 import MarketplacePanels from "./components/MarketplacePanels";
 import PreviewPane from "./components/PreviewPane";
-import PreviewActionCenter from "./components/PreviewActionCenter";
-import PreviewHeaderControls from "./components/PreviewHeaderControls";
 import ProjectPromptPanel from "./components/ProjectPromptPanel";
-import PublishFlow from "./components/PublishFlow";
 import WorkspaceOnboardingPanels from "./components/WorkspaceOnboardingPanels";
 import styles from "./Dashboard.styles";
 import {
@@ -58,16 +55,9 @@ import {
   buildInstantPagesFromPrompt,
   POWER_PROMPT_MARKER,
   POWER_PROMPT_DEFAULT_SECTIONS,
-  injectEditableLayerIntoHtml,
-  buildInlineSiteModelFromHtml,
-  parseInlineSmartAction,
-  detectInlineSectionType,
-  buildInlineSuggestions,
-  getInlineCommandOptions,
   resolveQuickPromptChipValue,
   maybeConvertSiteBlueprintJsonToPrompt
 } from "./Dashboard.shared";
-import useDebouncedSectionsAutosave from "./hooks/useDebouncedSectionsAutosave";
 
 const GenerationWorkflowPanels = React.lazy(() => import("./components/GenerationWorkflowPanels"));
 const AdvancedOperationsPanels = React.lazy(() => import("./components/AdvancedOperationsPanels"));
@@ -214,29 +204,8 @@ export default function Dashboard() {
   const [textStyle, setTextStyle] = useState({ ...DEFAULT_TEXT_STYLE });
   const [exportFramework, setExportFramework] = useState("html");
   const [exportBundleLoading, setExportBundleLoading] = useState(false);
-  const [isInlineEditing, setIsInlineEditing] = useState(true);
-  const [draftHtml, setDraftHtml] = useState("");
-  const [editHistory, setEditHistory] = useState([]);
-  const [redoHistory, setRedoHistory] = useState([]);
-  const [inlineDraftDirty, setInlineDraftDirty] = useState(false);
-  const [inlineSmartCommand, setInlineSmartCommand] = useState("");
-  const [inlineSmartStatus, setInlineSmartStatus] = useState("");
-  const [inlineSelectionText, setInlineSelectionText] = useState("");
-  const [inlineSelectionSection, setInlineSelectionSection] = useState("");
-  const [inlineSuggestions, setInlineSuggestions] = useState([]);
-  const [inlineAutoApplyHighConfidence, setInlineAutoApplyHighConfidence] = useState(false);
-  const [inlineAdvancedOpen, setInlineAdvancedOpen] = useState(false);
-  const [simpleInlineMode, setSimpleInlineMode] = useState(true);
-  const [inlineBulkImproving, setInlineBulkImproving] = useState(false);
-  const [inlineLastPublishSnapshot, setInlineLastPublishSnapshot] = useState(null);
-  const [inlineCheckpoints, setInlineCheckpoints] = useState([]);
-  const [inlineSiteModel, setInlineSiteModel] = useState({});
-  const [sections, setSections] = useState({});
-  const [selectedSectionEditId, setSelectedSectionEditId] = useState("");
-  const [selectedEditableMeta, setSelectedEditableMeta] = useState(null);
-  const [selectedSectionMeta, setSelectedSectionMeta] = useState(null);
-  const [floatingToolbarPos, setFloatingToolbarPos] = useState({ top: 0, left: 0 });
-  const [fieldLockMode, setFieldLockMode] = useState(false);
+  const [, setDraftHtml] = useState("");
+  const [, setEditHistory] = useState([]);
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth : 1280
   );
@@ -284,96 +253,12 @@ export default function Dashboard() {
   const [invoiceServiceInput, setInvoiceServiceInput] = useState("Full Detail");
   const [invoiceAmountInput, setInvoiceAmountInput] = useState("150");
   const previewEditableRef = useRef(null);
-  const inlineHoverNodeRef = useRef(null);
-  const selectedEditableNodeRef = useRef(null);
-  const selectedSectionNodeRef = useRef(null);
-  const pendingInstantEditRef = useRef(false);
-  const inlineAutofocusHandlesRef = useRef([]);
-  const inlineAutoSaveTimerRef = useRef(0);
   const appShellRef = useRef(null);
   const promptTextareaRef = useRef(null);
-
-  const isSectionValueMapEqual = (left, right) => {
-    const leftKeys = Object.keys(left || {});
-    const rightKeys = Object.keys(right || {});
-    if (leftKeys.length !== rightKeys.length) return false;
-    for (let index = 0; index < leftKeys.length; index += 1) {
-      const key = leftKeys[index];
-      if (left[key] !== right[key]) return false;
-    }
-    return true;
-  };
-
-  const buildSectionMapFromInlineModel = useCallback((model) => {
-    if (!model || typeof model !== "object") return {};
-    return Object.values(model).reduce((acc, entry) => {
-      if (!entry || typeof entry !== "object") return acc;
-      const id = String(entry.id || "").trim();
-      const type = String(entry.type || "").trim();
-      if (!id || !type) return acc;
-      if (type === "text" || type === "button" || type === "link") {
-        const value = type === "button" ? String(entry.text || "") : type === "link" ? String(entry.content || "") : String(entry.content || "");
-        acc[id] = value;
-      }
-      return acc;
-    }, {});
-  }, []);
-
-  const setSectionsFromInlineModel = useCallback((model) => {
-    const nextMap = buildSectionMapFromInlineModel(model);
-    setSections((previous) => (isSectionValueMapEqual(previous, nextMap) ? previous : nextMap));
-  }, [buildSectionMapFromInlineModel]);
-
-  const escapeEditableIdForSelector = useCallback((id) => {
-    const value = String(id || "");
-    if (!value) return "";
-    if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-      return CSS.escape(value);
-    }
-    return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-  }, []);
 
   useEffect(() => {
     setMounted(true);
   }, []);
-
-  const toAutosaveSlug = (value) =>
-    String(value || "")
-      .toLowerCase()
-      .trim()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "draft";
-
-  const sectionAutosaveStorageKey = useMemo(
-    () => `titonova_sections_autosave_${toAutosaveSlug(projectName)}_${toAutosaveSlug(activePage)}`,
-    [activePage, projectName]
-  );
-
-  const handleAutosaveSections = useCallback((nextSections) => {
-    if (typeof window === "undefined") return;
-    if (!nextSections || typeof nextSections !== "object") return;
-    try {
-      window.localStorage.setItem(
-        sectionAutosaveStorageKey,
-        JSON.stringify({
-          pageKey: activePage,
-          projectName,
-          publishedSiteId,
-          updatedAt: new Date().toISOString(),
-          sections: nextSections,
-        })
-      );
-    } catch {
-      // Ignore private-mode/localStorage quota failures.
-    }
-  }, [activePage, projectName, publishedSiteId, sectionAutosaveStorageKey]);
-
-  useDebouncedSectionsAutosave({
-    sections,
-    onSave: handleAutosaveSections,
-    delay: 1000,
-    enabled: mounted && isInlineEditing && Object.keys(sections || {}).length > 0,
-  });
 
   const selectedAutomationDefs = AUTOMATION_PAGE_DEFS.filter(
     (page) => Boolean(automationFeatures[page.key]) || (autoRevenueFeatures && REVENUE_MODULE_KEYS.includes(page.key))
@@ -4143,7 +4028,7 @@ ${(audit.directives || []).map((line) => `  - ${line}`).join("\n")}
     return uniqueKeys.reduce((acc, key) => {
       const page = pageMap[key] || fallback;
       const renderedHtml = buildHtmlFromGeneratedData({ pages: [page] }, key, uniqueKeys, palette, typography, uiDesign);
-      acc[key] = injectEditableLayerIntoHtml(renderedHtml, key, makeProjectSlug);
+      acc[key] = renderedHtml;
       return acc;
     }, {});
   };
@@ -4152,10 +4037,10 @@ ${(audit.directives || []).map((line) => `  - ${line}`).join("\n")}
     const baseline = Object.keys(generatedPages).length > 0
       ? { ...generatedPages }
       : { "index.html": generatedSite || "" };
-    const current = isInlineEditing ? draftHtml : generatedSite || baseline[activePage] || "";
+    const current = generatedSite || baseline[activePage] || "";
     if (current) baseline[activePage] = current;
     return baseline;
-  }, [activePage, draftHtml, generatedPages, generatedSite, isInlineEditing]);
+  }, [activePage, generatedPages, generatedSite]);
 
   const buildDocumentHtml = useCallback((content, title) => `<!doctype html>
 <html lang="en">
@@ -4232,28 +4117,6 @@ ${content || ""}
       return doc.body.innerHTML || html || "";
     } catch {
       return html || "";
-    }
-  };
-
-  const applyTextOnlyChanges = (baseHtml, editedHtml) => {
-    try {
-      const parser = new DOMParser();
-      const baseDoc = parser.parseFromString(String(baseHtml || ""), "text/html");
-      const editedDoc = parser.parseFromString(String(editedHtml || ""), "text/html");
-      const editableSelectors = ["h1", "h2", "h3", "h4", "p", "li", "a", "button", "span", "small", "strong", "em", "summary", "label"];
-
-      editableSelectors.forEach((selector) => {
-        const baseNodes = Array.from(baseDoc.body.querySelectorAll(selector));
-        const editedNodes = Array.from(editedDoc.body.querySelectorAll(selector));
-        const length = Math.min(baseNodes.length, editedNodes.length);
-        for (let index = 0; index < length; index += 1) {
-          baseNodes[index].textContent = editedNodes[index].textContent || "";
-        }
-      });
-
-      return baseDoc.body.innerHTML || String(baseHtml || "");
-    } catch {
-      return String(editedHtml || baseHtml || "");
     }
   };
 
@@ -4664,9 +4527,6 @@ ${content || ""}
     const nextHtml = String(variant.html || "");
     if (!nextHtml) return;
     applyGeneratedPreviewState({ ...generatedPages, [activePage]: nextHtml }, activePage, nextHtml);
-    if (isInlineEditing && previewEditableRef.current) {
-      previewEditableRef.current.innerHTML = nextHtml;
-    }
     setPublishStatus("success");
     setPublishMessage(`Applied ${variant.name} variant to ${pageLabelFromKey(activePage)}.`);
   };
@@ -5470,7 +5330,7 @@ ${currentHtml.slice(0, 14000)}`,
       return;
     }
     const nextKeys = orderPageKeys([...Object.keys(current), "client-dashboard.html"]);
-    const template = injectEditableLayerIntoHtml(buildHtmlFromGeneratedData(
+    const template = buildHtmlFromGeneratedData(
       {
         pages: [
           buildAutomationPageModel("client-dashboard.html"),
@@ -5481,7 +5341,7 @@ ${currentHtml.slice(0, 14000)}`,
       themeColors,
       textStyle,
       uiDesignSpec
-    ), "client-dashboard.html", makeProjectSlug);
+    );
     const synced = syncNavigationAcrossPages({ ...current, "client-dashboard.html": template });
     if (activePage === "index.html" || !generatedSite) {
       const html = synced["client-dashboard.html"] || "";
@@ -5846,7 +5706,7 @@ Return strict JSON:
             const tmpKey = `smoke-test-${Date.now().toString().slice(-4)}.html`;
             const withTmp = syncNavigationAcrossPages({
               ...working,
-              [tmpKey]: injectEditableLayerIntoHtml(buildHtmlFromGeneratedData(
+              [tmpKey]: buildHtmlFromGeneratedData(
                 {
                   pages: [
                     {
@@ -5863,7 +5723,7 @@ Return strict JSON:
                 orderPageKeys([...Object.keys(working), tmpKey]),
                 themeColors,
                 textStyle
-              ), tmpKey, makeProjectSlug),
+              ),
             });
             const withoutTmp = { ...withTmp };
             delete withoutTmp[tmpKey];
@@ -5976,37 +5836,17 @@ Return strict JSON:
     URL.revokeObjectURL(url);
   };
 
-  const commitInlineDraftForActivePage = useCallback(() => {
-    const currentHtml = generatedPages[activePage] || generatedSite || "";
-    const sourceHtml = previewEditableRef.current?.innerHTML || draftHtml || currentHtml || "";
-    const nextHtml = fieldLockMode ? applyTextOnlyChanges(currentHtml, sourceHtml) : sourceHtml;
-    setGeneratedPages((previous) => ({ ...previous, [activePage]: nextHtml }));
-    return nextHtml;
-  }, [activePage, draftHtml, fieldLockMode, generatedPages, generatedSite]);
-
   const handleSwitchPage = (pageKey) => {
     if (!pageKey || pageKey === activePage) return;
-    if (isInlineEditing) {
-      commitInlineDraftForActivePage();
-    }
     const nextHtml = generatedPages[pageKey] || "";
     setActivePage(pageKey);
     setGeneratedSite(nextHtml);
     setDraftHtml(nextHtml);
-    setEditHistory(nextHtml ? [nextHtml] : []);
-    setInlineDraftDirty(false);
   };
 
   const handlePreviewLinkNavigation = (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
-    if (isInlineEditing) {
-      const editAnchor = target.closest("a[href]");
-      if (editAnchor) {
-        event.preventDefault();
-      }
-      return;
-    }
     const anchor = target.closest("a[href]");
     if (!anchor) return;
     const href = String(anchor.getAttribute("href") || "").trim();
@@ -6106,13 +5946,9 @@ Return strict JSON:
       return;
     }
 
-    if (isInlineEditing) {
-      handleCancelInlineEdit();
-    }
-
     const current = getWorkingPages();
     const nextKeys = orderPageKeys([...Object.keys(current), pageKey]);
-    const template = injectEditableLayerIntoHtml(buildHtmlFromGeneratedData(
+    const template = buildHtmlFromGeneratedData(
       {
         pages: [
           {
@@ -6129,7 +5965,7 @@ Return strict JSON:
       nextKeys,
       themeColors,
       textStyle
-    ), pageKey, makeProjectSlug);
+    );
     const synced = syncNavigationAcrossPages({ ...current, [pageKey]: template });
     applyGeneratedPreviewState(synced, pageKey, synced[pageKey] || "");
     setNewPageName("");
@@ -6187,8 +6023,7 @@ Return strict JSON:
   const recommendedNextStep = quickStartSteps.find((item) => !item.done)?.label || "Your site is ready. Edit, publish, or add a domain.";
   const previewJourneySteps = [
     { key: "generated", label: "Website generated", done: hasGeneratedContent },
-    { key: "editing", label: "Inline editing ready", done: hasGeneratedContent && isInlineEditing },
-    { key: "saved", label: "Changes saved", done: hasGeneratedContent && !inlineDraftDirty },
+    { key: "review", label: "Preview reviewed", done: hasGeneratedContent },
     { key: "published", label: "Published live", done: Boolean(publishedSiteId) },
   ];
   const previewRecommendedStep = previewJourneySteps.find((item) => !item.done)?.label || "Review your pages, then publish when ready.";
@@ -6209,52 +6044,8 @@ Return strict JSON:
       ? "Publishing needs a reachable hosting gateway. Keep the gateway running, then try Go Live again."
       : publishedSiteId
         ? "Your site has been published. You can re-publish anytime after edits."
-        : "Generate, review the preview, make quick inline edits, then publish when ready.";
-  const isCompactInlineEditor = viewportWidth < 960;
-  const inlineEditToolbarStyle = isCompactInlineEditor
-    ? {
-        ...styles.inlineEditToolbar,
-        position: "sticky",
-        top: "8px",
-        zIndex: 12,
-        alignItems: "stretch",
-        padding: "10px",
-      }
-    : styles.inlineEditToolbar;
-  const inlineEditMetaStyle = isCompactInlineEditor
-    ? {
-        ...styles.inlineEditMeta,
-        minWidth: 0,
-        width: "100%",
-      }
-    : styles.inlineEditMeta;
-  const inlineEditActionsStyle = isCompactInlineEditor
-    ? {
-        ...styles.inlineEditActions,
-        width: "100%",
-        justifyContent: "stretch",
-      }
-    : styles.inlineEditActions;
-  const inlineSmartInputStyle = isCompactInlineEditor
-    ? {
-        ...styles.inlineSmartInput,
-        minWidth: "100%",
-      }
-    : styles.inlineSmartInput;
-  const previewEditableStyle = isCompactInlineEditor
-    ? {
-        ...styles.previewEditable,
-        minHeight: "320px",
-        padding: "8px",
-        outlineOffset: "3px",
-      }
-    : styles.previewEditable;
-  const previewGuestOverlayStyle = isCompactInlineEditor
-    ? {
-        ...styles.previewGuestOverlay,
-        inset: "12px",
-      }
-    : styles.previewGuestOverlay;
+        : "Generate, review the preview, then publish when ready.";
+  const previewGuestOverlayStyle = styles.previewGuestOverlay;
 
   const applyImageUpdate = (imageId, nextSrc, scope = imageApplyScope) => {
     if (!imageId || !nextSrc) return;
@@ -6270,10 +6061,9 @@ Return strict JSON:
       setGeneratedPages(nextPages);
       setGeneratedSite(active);
       setDraftHtml(active);
-      setEditHistory(active ? [active] : []);
       return;
     }
-    const baseHtml = isInlineEditing ? draftHtml : currentPageHtml;
+    const baseHtml = currentPageHtml;
     const nextHtml = updateImageSourceInHtml(baseHtml, imageId, nextSrc);
     setGeneratedPages((previous) => ({ ...previous, [activePage]: nextHtml }));
     setGeneratedSite(nextHtml);
@@ -6301,32 +6091,6 @@ Return strict JSON:
         : `Uploaded image: ${imageId}`
     );
     return dataUrl;
-  };
-
-  const handleInlineImageReplace = (targetNode) => {
-    const imageTarget =
-      targetNode instanceof Element ? targetNode.closest("[data-editable='image'][data-edit-id], [data-editable='image'][data-id], img") : null;
-    if (!(imageTarget instanceof HTMLElement)) return;
-    const explicitId = String(imageTarget.getAttribute("data-image-id") || imageTarget.dataset.id || "").trim();
-    const fallbackId = (() => {
-      const root = previewEditableRef.current;
-      if (!(root instanceof HTMLElement) || imageTarget.tagName.toLowerCase() !== "img") return "";
-      const images = Array.from(root.querySelectorAll("img"));
-      const index = images.indexOf(imageTarget);
-      return index >= 0 ? `tn-image-${index + 1}` : "";
-    })();
-    const imageId = explicitId || fallbackId;
-    if (!imageId) return;
-    setSelectedImageId(imageId);
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.onchange = async (event) => {
-      const file = event.target?.files?.[0];
-      if (!file) return;
-      await replaceInlineImage(imageId, file, imageApplyScope);
-    };
-    input.click();
   };
 
   const handleApplyImageUrl = () => {
@@ -7256,7 +7020,7 @@ ${JSON.stringify(sourceTexts)}`,
   }, [buildDocumentHtml, projectName]);
 
   const handleExportHtml = () => {
-    const content = isInlineEditing ? draftHtml : generatedSite || "";
+    const content = generatedSite || "";
     if (!content) return;
     const filename = makeProjectSlug(projectName);
     const pageLabel = pageLabelFromKey(activePage) || "Page";
@@ -8209,291 +7973,8 @@ ${JSON.stringify(sourceTexts)}`,
     return () => window.removeEventListener("resize", handleViewportResize);
   }, []);
 
-  const INLINE_TEXT_EDITABLE_QUERY = "h1, h2, h3, h4, p, li, blockquote";
-  const INLINE_EDITABLE_QUERY = `${INLINE_TEXT_EDITABLE_QUERY}, a, button, img`;
-
-  const humanizeSectionName = (value) =>
-    String(value || "")
-      .replace(/[-_]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/\b\w/g, (char) => char.toUpperCase()) || "Section";
-
-  const getInlineEditableType = (node) => {
-    if (!(node instanceof HTMLElement)) return "";
-    const tag = String(node.tagName || "").toLowerCase();
-    if (tag === "img") return "image";
-    if (tag === "button") return "button";
-    if (tag === "a") {
-      const classBlob = `${String(node.className || "")} ${String(node.getAttribute("role") || "")}`.toLowerCase();
-      return /(btn|button|cta|action)/.test(classBlob) ? "button" : "link";
-    }
-    if (!/^(h1|h2|h3|h4|p|li|blockquote)$/.test(tag)) return "";
-    const text = String(node.textContent || "").replace(/\s+/g, " ").trim();
-    if (!text) return "";
-    if (
-      Array.from(node.children).some(
-        (child) => child instanceof HTMLElement && child.matches(INLINE_TEXT_EDITABLE_QUERY)
-      )
-    ) {
-      return "";
-    }
-    return "text";
-  };
-
-  const getInlineComponentName = (node, root) => {
-    if (!(node instanceof HTMLElement) || !(root instanceof HTMLElement)) return "page";
-    const sectionRoot =
-      node.closest("[data-tn-section], section, article, main, header, footer, [id], [class]") || root;
-    const explicit =
-      String(sectionRoot?.getAttribute?.("data-tn-section") || "").trim() ||
-      String(sectionRoot?.getAttribute?.("data-section") || "").trim() ||
-      String(sectionRoot?.getAttribute?.("id") || "").trim();
-    if (explicit) return explicit.toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
-    return String(sectionRoot?.tagName || "page").toLowerCase();
-  };
-
-  const readInlineEditableValue = (node) => {
-    if (!(node instanceof HTMLElement)) return "";
-    if (String(node.tagName || "").toLowerCase() === "img") {
-      return String(node.getAttribute("src") || "").trim();
-    }
-    return String(node.textContent || "").replace(/\s+/g, " ").trim();
-  };
-
-  const readEditableId = (node) => {
-    if (!(node instanceof HTMLElement)) return "";
-    return String(node.dataset.editId || node.dataset.id || "").trim();
-  };
-
-  const findSectionFieldNode = (sectionNode, field) => {
-    if (!(sectionNode instanceof HTMLElement)) return null;
-    if (field === "title") {
-      return sectionNode.querySelector("h1, h2, h3, h4");
-    }
-    if (field === "subtitle") {
-      return Array.from(sectionNode.querySelectorAll("p, blockquote")).find(
-        (node) => node instanceof HTMLElement && String(node.textContent || "").trim()
-      ) || null;
-    }
-    if (field === "buttonText") {
-      return sectionNode.querySelector("a[data-editable='button'], button[data-editable='button'], a[href], button");
-    }
-    return null;
-  };
-
-  const buildSectionMeta = useCallback((sectionNode) => {
-    const root = previewEditableRef.current;
-    if (!(sectionNode instanceof HTMLElement) || !(root instanceof HTMLElement)) return null;
-    const sectionId = String(sectionNode.dataset.id || sectionNode.getAttribute("data-id") || "").trim();
-    const component = String(sectionNode.dataset.component || sectionNode.getAttribute("data-component") || "").trim() || "section";
-    const titleNode = findSectionFieldNode(sectionNode, "title");
-    const subtitleNode = findSectionFieldNode(sectionNode, "subtitle");
-    const buttonNode = findSectionFieldNode(sectionNode, "buttonText");
-    const titleId = readEditableId(titleNode);
-    const subtitleId = readEditableId(subtitleNode);
-    const buttonTextId = readEditableId(buttonNode);
-    const titleValue = titleId && Object.prototype.hasOwnProperty.call(sections, titleId)
-      ? String(sections[titleId] || "")
-      : String(titleNode?.textContent || "").replace(/\s+/g, " ").trim();
-    const subtitleValue = subtitleId && Object.prototype.hasOwnProperty.call(sections, subtitleId)
-      ? String(sections[subtitleId] || "")
-      : String(subtitleNode?.textContent || "").replace(/\s+/g, " ").trim();
-    const buttonValue = buttonTextId && Object.prototype.hasOwnProperty.call(sections, buttonTextId)
-      ? String(sections[buttonTextId] || "")
-      : String(buttonNode?.textContent || "").replace(/\s+/g, " ").trim();
-    const headingFallback = String(titleValue || "").trim();
-    const sectionName =
-      String(sectionNode.dataset.sectionName || "").trim() ||
-      headingFallback ||
-      humanizeSectionName(component);
-    return {
-      id: sectionId || component,
-      component,
-      sectionName,
-      sectionType: detectInlineSectionType(sectionNode, root),
-      titleId,
-      subtitleId,
-      buttonTextId,
-      title: titleValue,
-      subtitle: subtitleValue,
-      buttonText: buttonValue,
-    };
-  }, [sections]);
-
-  const findSectionRoot = useCallback((node) => {
-    const root = previewEditableRef.current;
-    if (!(node instanceof Element) || !(root instanceof HTMLElement)) return null;
-    const sectionRoot =
-      node.closest("[data-tn-section-root='true']") ||
-      node.closest("[data-component][data-id], [data-component], [data-tn-section], section, article, header, footer, nav, aside, main") ||
-      null;
-    return sectionRoot instanceof HTMLElement && root.contains(sectionRoot) ? sectionRoot : null;
-  }, []);
-
-  const selectInlineSection = useCallback((node) => {
-    const sectionRoot = findSectionRoot(node);
-    if (!(sectionRoot instanceof HTMLElement)) return null;
-    if (selectedSectionNodeRef.current instanceof HTMLElement && selectedSectionNodeRef.current !== sectionRoot) {
-      selectedSectionNodeRef.current.classList.remove("tn-section-active");
-    }
-    sectionRoot.classList.add("tn-section-active");
-    selectedSectionNodeRef.current = sectionRoot;
-    const meta = buildSectionMeta(sectionRoot);
-    setSelectedSectionMeta(meta);
-    const preferredEditableNode =
-      node instanceof Element ? node.closest("[data-editable][data-edit-id], [data-editable][data-id]") : null;
-    const preferredEditableId =
-      preferredEditableNode instanceof HTMLElement && sectionRoot.contains(preferredEditableNode)
-        ? readEditableId(preferredEditableNode)
-        : "";
-    if (preferredEditableId) {
-      setSelectedSectionEditId(preferredEditableId);
-    } else if (meta?.titleId) {
-      setSelectedSectionEditId(meta.titleId);
-    } else if (meta?.subtitleId) {
-      setSelectedSectionEditId(meta.subtitleId);
-    } else if (meta?.buttonTextId) {
-      setSelectedSectionEditId(meta.buttonTextId);
-    } else {
-      setSelectedSectionEditId("");
-    }
-    return meta;
-  }, [buildSectionMeta, findSectionRoot]);
-
-  const syncInlineSiteModelFromDom = useCallback(() => {
-    const root = previewEditableRef.current;
-    if (!(root instanceof HTMLElement)) return;
-    const nextInlineModel = buildInlineSiteModelFromHtml(root.innerHTML || "");
-    setInlineSiteModel(nextInlineModel);
-    setSectionsFromInlineModel(nextInlineModel);
-  }, [setSectionsFromInlineModel]);
-
-  const updateFloatingToolbarPosition = useCallback((node) => {
-    if (!(node instanceof HTMLElement) || typeof window === "undefined") return;
-    const rect = node.getBoundingClientRect();
-    const toolbarWidth = viewportWidth < 640 ? Math.max(220, viewportWidth - 24) : 320;
-    const top = Math.max(12, rect.top - 56);
-    const left = Math.min(
-      Math.max(12, rect.left),
-      Math.max(12, viewportWidth - toolbarWidth - 12)
-    );
-    setFloatingToolbarPos({ top, left });
-  }, [viewportWidth]);
-
-  const selectInlineEditableNode = useCallback((node) => {
-    const root = previewEditableRef.current;
-    if (!(node instanceof HTMLElement) || !(root instanceof HTMLElement)) return;
-    const editableNode = node.closest("[data-editable][data-edit-id], [data-editable][data-id]");
-    if (!(editableNode instanceof HTMLElement)) return;
-    if (selectedEditableNodeRef.current instanceof HTMLElement && selectedEditableNodeRef.current !== editableNode) {
-      selectedEditableNodeRef.current.classList.remove("tn-editable-active");
-    }
-    editableNode.classList.add("tn-editable-active");
-    const type = String(editableNode.dataset.editable || "").trim();
-    const id = readEditableId(editableNode);
-    const component = String(editableNode.dataset.component || "").trim();
-    const value = Object.prototype.hasOwnProperty.call(sections, id) ? String(sections[id] || "") : readInlineEditableValue(editableNode);
-    selectedEditableNodeRef.current = editableNode;
-    setSelectedEditableMeta({ id, type, component, value });
-    if (id && (type === "text" || type === "button" || type === "link")) {
-      setSelectedSectionEditId(id);
-    }
-    updateFloatingToolbarPosition(editableNode);
-    if (type === "image") {
-      const imageId = String(editableNode.getAttribute("data-image-id") || id).trim();
-      if (imageId) setSelectedImageId(imageId);
-    }
-  }, [sections, updateFloatingToolbarPosition]);
-
-  const annotateInlineEditableDom = useCallback(() => {
-    const root = previewEditableRef.current;
-    if (!(root instanceof HTMLElement)) return;
-    const pagePrefix = makeProjectSlug(activePage || "page");
-    Array.from(root.querySelectorAll("[data-tn-section-root='true']")).forEach((node) => {
-      if (!(node instanceof HTMLElement)) return;
-      delete node.dataset.tnSectionRoot;
-    });
-    const candidateSectionNodes = Array.from(
-      root.querySelectorAll("[data-component][data-id], [data-component], [data-tn-section], section, article, header, footer, nav, aside, main")
-    );
-    const sectionNodes = [];
-    candidateSectionNodes.forEach((sectionNode) => {
-      if (!(sectionNode instanceof HTMLElement)) return;
-      if (sectionNode === root) return;
-      if (sectionNode.closest("[data-tn-section-root='true']")) return;
-      if (!sectionNode.querySelector("[data-editable], " + INLINE_EDITABLE_QUERY)) return;
-      sectionNode.dataset.tnSectionRoot = "true";
-      sectionNodes.push(sectionNode);
-    });
-    let sectionSequence = 0;
-    const usedSectionIds = new Set();
-    sectionNodes.forEach((sectionNode) => {
-      if (!(sectionNode instanceof HTMLElement)) return;
-      const component =
-        String(sectionNode.dataset.component || "").trim() || getInlineComponentName(sectionNode, root);
-      let sectionId = String(sectionNode.dataset.id || "").trim();
-      if (!sectionId || usedSectionIds.has(sectionId)) {
-        do {
-          sectionSequence += 1;
-          sectionId = `${pagePrefix}-${component || "section"}-${sectionSequence}`;
-        } while (usedSectionIds.has(sectionId));
-      }
-      const headingText = String(
-        sectionNode.querySelector("h1, h2, h3, h4")?.textContent || ""
-      ).replace(/\s+/g, " ").trim();
-      usedSectionIds.add(sectionId);
-      sectionNode.dataset.component = component || `section-${sectionSequence}`;
-      sectionNode.dataset.id = sectionId;
-      sectionNode.dataset.sectionName = headingText || humanizeSectionName(component || sectionId);
-    });
-
-    let sequence = 0;
-    const usedEditableIds = new Set();
-    const editableNodes = Array.from(root.querySelectorAll("[data-editable], " + INLINE_EDITABLE_QUERY));
-    editableNodes.forEach((node) => {
-      if (!(node instanceof HTMLElement)) return;
-      const currentType = String(node.dataset.editable || "").trim();
-      const detectedType = getInlineEditableType(node);
-      const type = currentType || detectedType;
-      if (!type) return;
-      const component = getInlineComponentName(node, root);
-      const existingId = String(node.dataset.editId || node.dataset.id || "").trim();
-      let id = existingId;
-      if (!id || usedEditableIds.has(id)) {
-        do {
-          sequence += 1;
-          id = `${pagePrefix}-${component}-${type}-${sequence}`;
-        } while (usedEditableIds.has(id));
-      }
-      usedEditableIds.add(id);
-      node.dataset.editable = type;
-      node.dataset.id = id;
-      node.dataset.editId = id;
-      node.dataset.component = component;
-      node.dataset.binding =
-        type === "image" ? "src" : type === "link" ? "href" : type === "button" ? "content" : "content";
-      node.dataset.editRole = "content";
-      if (type === "image") {
-        node.removeAttribute("contenteditable");
-        node.setAttribute("tabindex", "0");
-        node.removeAttribute("spellcheck");
-      } else {
-        node.setAttribute("contenteditable", "true");
-        node.setAttribute("tabindex", "0");
-        node.setAttribute("spellcheck", "true");
-      }
-    });
-    syncInlineSiteModelFromDom();
-  }, [activePage, INLINE_EDITABLE_QUERY, syncInlineSiteModelFromDom]);
-
-  const queueInstantInlineEditing = useCallback(() => {
-    pendingInstantEditRef.current = true;
-    setIsInlineEditing(true);
-  }, []);
-
   const applyGeneratedPreviewState = useCallback(
-    (pages, pageKey, html, { resetHistory = true } = {}) => {
+    (pages, pageKey, html) => {
       const safePages = pages && typeof pages === "object" ? pages : {};
       const safePageKey = String(pageKey || "").trim();
       const nextHtml = String(html || safePages[safePageKey] || "").trim();
@@ -8501,10 +7982,8 @@ ${JSON.stringify(sourceTexts)}`,
       if (safePageKey) setActivePage(safePageKey);
       setGeneratedSite(nextHtml);
       setDraftHtml(nextHtml);
-      setEditHistory(resetHistory && nextHtml ? [nextHtml] : []);
-      queueInstantInlineEditing();
     },
-    [queueInstantInlineEditing]
+    []
   );
 
   const handleGenerate = async (options = {}) => {
@@ -9103,1367 +8582,6 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     }
   };
 
-  const focusInlineEditableNode = useCallback((targetNode = null, { placeCursorAtEnd = true } = {}) => {
-    const root = previewEditableRef.current;
-    if (!root || typeof window === "undefined") return null;
-    const editableSelector =
-      "[data-editable='text'][data-edit-id], [data-editable='text'][data-id], [data-editable='button'][data-edit-id], [data-editable='button'][data-id], [data-editable='link'][data-edit-id], [data-editable='link'][data-id]";
-    const selectedTarget =
-      targetNode instanceof Element ? targetNode.closest(editableSelector) : null;
-    const fallbackTarget = root.querySelector(editableSelector);
-    const focusTarget = selectedTarget instanceof HTMLElement ? selectedTarget : fallbackTarget;
-
-    if (!(focusTarget instanceof HTMLElement)) return null;
-
-    const selection = window.getSelection();
-    if (!selection) return null;
-
-    const range = document.createRange();
-    range.selectNodeContents(focusTarget);
-    range.collapse(!placeCursorAtEnd);
-    focusTarget.focus({ preventScroll: true });
-
-    selection.removeAllRanges();
-    selection.addRange(range);
-    return focusTarget;
-  }, []);
-
-  const clearInlineAutofocusQueue = useCallback(() => {
-    if (typeof window === "undefined") return;
-    inlineAutofocusHandlesRef.current.forEach((handle) => {
-      if (!handle) return;
-      if (handle.type === "timeout") {
-        window.clearTimeout(handle.id);
-      } else if (handle.type === "frame") {
-        window.cancelAnimationFrame(handle.id);
-      }
-    });
-    inlineAutofocusHandlesRef.current = [];
-  }, []);
-
-  const scheduleInlineAutofocus = useCallback((targetNode = null) => {
-    if (typeof window === "undefined") return;
-    clearInlineAutofocusQueue();
-    const attemptFocus = () => {
-      const focusTarget = focusInlineEditableNode(targetNode);
-      if (!(focusTarget instanceof HTMLElement)) return;
-      const selection = window.getSelection();
-      const activeElement = document.activeElement;
-      const hasCollapsedCaret = Boolean(selection && selection.rangeCount > 0 && selection.isCollapsed);
-      if ((activeElement === focusTarget || focusTarget.contains(activeElement)) && hasCollapsedCaret) {
-        return;
-      }
-      focusInlineEditableNode(focusTarget);
-    };
-    [0, 40, 120, 240, 420].forEach((delay) => {
-      const timeoutId = window.setTimeout(attemptFocus, delay);
-      inlineAutofocusHandlesRef.current.push({ type: "timeout", id: timeoutId });
-    });
-  }, [clearInlineAutofocusQueue, focusInlineEditableNode]);
-
-  const handleStartInlineEdit = () => {
-    const currentHtml = generatedPages[activePage] || generatedSite || "";
-    if (!currentHtml) return;
-    setFieldLockMode(false);
-    setDraftHtml(currentHtml);
-    setEditHistory([currentHtml]);
-    setRedoHistory([]);
-    setInlineDraftDirty(false);
-    setInlineSmartStatus("");
-    setInlineSmartCommand("");
-    setInlineSelectionText("");
-    setInlineSelectionSection("");
-    setInlineSuggestions([]);
-    setInlineAutoApplyHighConfidence(false);
-    setInlineAdvancedOpen(false);
-    setInlineLastPublishSnapshot(null);
-    setInlineCheckpoints([
-      {
-        id: `cp-${Date.now()}`,
-        label: "Start Edit",
-        pageKey: activePage,
-        html: currentHtml,
-        at: new Date().toISOString(),
-      },
-    ]);
-    setIsInlineEditing(true);
-    scheduleInlineAutofocus();
-  };
-
-  const handleSaveInlineEdit = useCallback(() => {
-    const nextHtml = commitInlineDraftForActivePage();
-    setGeneratedSite(nextHtml);
-    setDraftHtml(nextHtml);
-    setEditHistory([nextHtml]);
-    setRedoHistory([]);
-    setInlineDraftDirty(false);
-    setInlineSelectionText("");
-    setInlineSelectionSection("");
-    setInlineSuggestions([]);
-    setInlineAutoApplyHighConfidence(false);
-    setInlineAdvancedOpen(false);
-    setInlineLastPublishSnapshot(null);
-    setInlineCheckpoints([]);
-    setIsInlineEditing(true);
-    setPublishStatus("success");
-    setPublishMessage("Inline edits saved. Edit mode remains active.");
-  }, [commitInlineDraftForActivePage]);
-
-  const handleCancelInlineEdit = useCallback(() => {
-    if (inlineDraftDirty && !window.confirm("Discard unsaved inline edits?")) return;
-    const currentHtml = generatedPages[activePage] || generatedSite || "";
-    setDraftHtml(currentHtml);
-    setEditHistory(currentHtml ? [currentHtml] : []);
-    setRedoHistory([]);
-    setInlineDraftDirty(false);
-    setInlineSelectionText("");
-    setInlineSelectionSection("");
-    setInlineSuggestions([]);
-    setInlineAutoApplyHighConfidence(false);
-    setInlineAdvancedOpen(false);
-    setInlineLastPublishSnapshot(null);
-    setInlineCheckpoints([]);
-    setIsInlineEditing(true);
-    setPublishStatus("info");
-    setPublishMessage("Changes discarded. Edit mode remains active.");
-  }, [activePage, generatedPages, generatedSite, inlineDraftDirty]);
-
-  const handleUndoInlineEdit = useCallback(() => {
-    setEditHistory((previous) => {
-      if (previous.length <= 1) return previous;
-      const next = previous.slice(0, -1);
-      const restored = next[next.length - 1] || "";
-      const removed = previous[previous.length - 1] || "";
-      if (removed) {
-        setRedoHistory((redoPrevious) => [removed, ...redoPrevious].slice(0, 50));
-      }
-      setDraftHtml(restored);
-      setInlineDraftDirty(true);
-      if (previewEditableRef.current) previewEditableRef.current.innerHTML = restored;
-      return next;
-    });
-  }, []);
-
-  const handleRedoInlineEdit = useCallback(() => {
-    setRedoHistory((previousRedo) => {
-      if (previousRedo.length === 0) return previousRedo;
-      const [nextHtml, ...restRedo] = previousRedo;
-      if (!nextHtml) return restRedo;
-      setDraftHtml(nextHtml);
-      setInlineDraftDirty(true);
-      if (previewEditableRef.current) previewEditableRef.current.innerHTML = nextHtml;
-      setEditHistory((previousHistory) => {
-        if (previousHistory[previousHistory.length - 1] === nextHtml) return previousHistory;
-        return [...previousHistory.slice(-49), nextHtml];
-      });
-      return restRedo;
-    });
-  }, []);
-
-  const appendInlineHistory = (nextHtml) => {
-    setEditHistory((previous) => {
-      if (previous[previous.length - 1] === nextHtml) return previous;
-      return [...previous.slice(-49), nextHtml];
-    });
-    setRedoHistory([]);
-  };
-
-  const snapshotInlineDraft = () => {
-    if (!isInlineEditing) return;
-    const nextHtml = previewEditableRef.current?.innerHTML || draftHtml || generatedSite || "";
-    setDraftHtml(nextHtml);
-    appendInlineHistory(nextHtml);
-  };
-
-  const commitInlineDomMutation = useCallback((message = "", checkpointLabel = "", nextSectionId = "") => {
-    const root = previewEditableRef.current;
-    if (!(root instanceof HTMLElement)) return;
-    annotateInlineEditableDom();
-    syncInlineSiteModelFromDom();
-    const nextHtml = root.innerHTML || "";
-    setDraftHtml(nextHtml);
-    setInlineDraftDirty(true);
-    appendInlineHistory(nextHtml);
-    if (checkpointLabel) {
-      setInlineCheckpoints((previous) => [
-        ...previous.slice(-5),
-        {
-          id: `cp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          label: checkpointLabel,
-          pageKey: activePage,
-          html: nextHtml,
-          at: new Date().toISOString(),
-        },
-      ]);
-    }
-    if (message) {
-      setInlineSmartStatus(message);
-    }
-    if (nextSectionId) {
-      const nextSection = Array.from(root.querySelectorAll("[data-component][data-id]")).find(
-        (node) => node instanceof HTMLElement && String(node.dataset.id || "").trim() === String(nextSectionId || "").trim()
-      );
-      if (nextSection instanceof HTMLElement) {
-        selectInlineSection(nextSection);
-      }
-    }
-  }, [activePage, annotateInlineEditableDom, selectInlineSection, syncInlineSiteModelFromDom]);
-
-  const updateSection = useCallback((id, value, options = {}) => {
-    const sectionId = String(id || "").trim();
-    if (!sectionId) return;
-    const nextValue = String(value ?? "");
-    const shouldSyncDraft = options.syncDraft !== false;
-    const skipDomWrite = options.skipDomWrite === true;
-
-    setSections((previous) => {
-      if (previous[sectionId] === nextValue) return previous;
-      return { ...previous, [sectionId]: nextValue };
-    });
-    setSelectedSectionEditId(sectionId);
-
-    const root = previewEditableRef.current;
-    if (root instanceof HTMLElement) {
-      const escapedId = escapeEditableIdForSelector(sectionId);
-      const targetNodes =
-        escapedId
-          ? Array.from(root.querySelectorAll(`[data-editable][data-edit-id="${escapedId}"], [data-editable][data-id="${escapedId}"]`))
-          : [];
-      if (!skipDomWrite) {
-        targetNodes.forEach((targetNode) => {
-          if (!(targetNode instanceof HTMLElement)) return;
-          const targetType = String(targetNode.dataset.editable || "").trim();
-          targetNode.dataset.id = targetNode.dataset.id || sectionId;
-          targetNode.dataset.editId = sectionId;
-          if (targetType === "image") {
-            targetNode.setAttribute("src", nextValue);
-          } else {
-            targetNode.textContent = nextValue;
-          }
-        });
-      }
-      if (shouldSyncDraft) {
-        setDraftHtml(root.innerHTML || "");
-        setInlineDraftDirty(true);
-      }
-    }
-
-    setInlineSiteModel((previous) => {
-      const entry = previous?.[sectionId];
-      if (!entry || typeof entry !== "object") return previous;
-      const nextEntry = entry.type === "image"
-        ? { ...entry, src: nextValue }
-        : entry.type === "button"
-          ? { ...entry, text: nextValue }
-          : entry.type === "link"
-            ? { ...entry, content: nextValue }
-            : { ...entry, content: nextValue };
-      if (JSON.stringify(nextEntry) === JSON.stringify(entry)) return previous;
-      return { ...previous, [sectionId]: nextEntry };
-    });
-
-    setSelectedEditableMeta((previous) => {
-      if (!previous || previous.id !== sectionId) return previous;
-      if (String(previous.value || "") === nextValue) return previous;
-      return { ...previous, value: nextValue };
-    });
-    setSelectedSectionMeta((previous) => {
-      if (!previous) return previous;
-      let changed = false;
-      const nextMeta = { ...previous };
-      if (previous.titleId === sectionId && previous.title !== nextValue) {
-        nextMeta.title = nextValue;
-        changed = true;
-      }
-      if (previous.subtitleId === sectionId && previous.subtitle !== nextValue) {
-        nextMeta.subtitle = nextValue;
-        changed = true;
-      }
-      if (previous.buttonTextId === sectionId && previous.buttonText !== nextValue) {
-        nextMeta.buttonText = nextValue;
-        changed = true;
-      }
-      return changed ? nextMeta : previous;
-    });
-  }, [escapeEditableIdForSelector]);
-
-  const handleSectionFieldChange = useCallback((field, value) => {
-    const sectionRoot = selectedSectionNodeRef.current;
-    if (!(sectionRoot instanceof HTMLElement)) return;
-    const nextValue = String(value || "");
-    const fieldIdFromMeta =
-      field === "title"
-        ? selectedSectionMeta?.titleId
-        : field === "subtitle"
-          ? selectedSectionMeta?.subtitleId
-          : selectedSectionMeta?.buttonTextId;
-    if (fieldIdFromMeta) {
-      updateSection(fieldIdFromMeta, nextValue);
-      setInlineSmartStatus(`Updated section ${field}.`);
-      return;
-    }
-    let fieldNode = findSectionFieldNode(sectionRoot, field);
-
-    if (!(fieldNode instanceof HTMLElement)) {
-      if (field === "title") {
-        fieldNode = document.createElement("h2");
-        sectionRoot.prepend(fieldNode);
-      } else if (field === "subtitle") {
-        fieldNode = document.createElement("p");
-        const titleNode = findSectionFieldNode(sectionRoot, "title");
-        if (titleNode instanceof HTMLElement && titleNode.parentNode === sectionRoot) {
-          titleNode.insertAdjacentElement("afterend", fieldNode);
-        } else {
-          sectionRoot.prepend(fieldNode);
-        }
-      } else if (field === "buttonText") {
-        fieldNode = document.createElement("a");
-        fieldNode.setAttribute("href", "#contact");
-        fieldNode.style.display = "inline-flex";
-        fieldNode.style.alignItems = "center";
-        fieldNode.style.justifyContent = "center";
-        fieldNode.style.padding = "12px 18px";
-        fieldNode.style.borderRadius = "999px";
-        fieldNode.style.background = "var(--tn-cta)";
-        fieldNode.style.color = "var(--tn-button-text)";
-        fieldNode.style.textDecoration = "none";
-        fieldNode.style.fontWeight = "700";
-        sectionRoot.append(fieldNode);
-      }
-    }
-
-    if (!(fieldNode instanceof HTMLElement)) return;
-    if (!fieldNode.dataset.id) {
-      const sectionId = String(sectionRoot.dataset.id || sectionRoot.getAttribute("data-id") || "").trim() || "section";
-      const fieldSlug = field === "buttonText" ? "button" : field;
-      const autoId = `${sectionId}-${fieldSlug}-text`;
-      fieldNode.dataset.id = autoId;
-      fieldNode.dataset.editId = autoId;
-      fieldNode.dataset.editable = field === "buttonText" ? "button" : "text";
-      fieldNode.dataset.component = String(sectionRoot.dataset.component || "section");
-      fieldNode.dataset.binding = "content";
-    } else {
-      fieldNode.dataset.editId = String(fieldNode.dataset.editId || fieldNode.dataset.id || "").trim();
-    }
-    fieldNode.textContent = nextValue;
-    const nodeEditId = readEditableId(fieldNode);
-    if (nodeEditId) {
-      updateSection(nodeEditId, nextValue);
-      setInlineSmartStatus(`Updated section ${field}.`);
-      return;
-    }
-    const sectionId = String(sectionRoot.dataset.id || "").trim();
-    commitInlineDomMutation(`Updated section ${field}.`, "", sectionId);
-  }, [commitInlineDomMutation, selectedSectionMeta, updateSection]);
-
-  const runInlineSmartRewrite = useCallback((selectedText, actionKey, context = {}) => {
-    const source = String(selectedText || "").trim();
-    if (!source) return "";
-    const cleaned = source.replace(/\s+/g, " ").trim();
-    const sentenceParts = cleaned.split(/(?<=[.!?])\s+/).filter(Boolean);
-    const firstSentence = sentenceParts[0] || cleaned;
-    const projectKeyword = projectName.trim() || "your business";
-    const industryKeyword = selectedIndustryPackage?.label || "your industry";
-    const sectionType = String(context.sectionType || "general").toLowerCase();
-    const industryTone = /(health|care|medical|hcbs|clinic)/i.test(industryKeyword)
-      ? "compassionate and trustworthy"
-      : /(saas|software|tech|platform|cloud)/i.test(industryKeyword)
-        ? "clear, outcome-focused, and modern"
-        : /(retail|e-?commerce|shop|store)/i.test(industryKeyword)
-          ? "benefit-led and conversion-focused"
-          : "professional and conversion-focused";
-
-    if (actionKey === "smart") {
-      if (sectionType === "hero") {
-        return `${cleaned.replace(/[.!?]+$/, "")}. ${projectKeyword} helps clients achieve results with ${industryTone} execution and fast onboarding.`;
-      }
-      if (sectionType === "pricing") {
-        return `${cleaned.replace(/[.!?]+$/, "")}. Clear deliverables, transparent pricing, and support are included so buyers can choose confidently.`;
-      }
-      if (sectionType === "faq") {
-        return `${cleaned.replace(/[.!?]+$/, "")}. We keep answers practical, fast, and easy to follow so visitors can move to the next step.`;
-      }
-      if (sectionType === "contact") {
-        return `${cleaned.replace(/[.!?]+$/, "")}. Reach out now and ${projectKeyword} will respond quickly with clear next steps.`;
-      }
-      if (sectionType === "services") {
-        return `${cleaned.replace(/[.!?]+$/, "")}. Every service is designed for reliable outcomes, clear communication, and measurable value.`;
-      }
-      if (sectionType === "testimonials") {
-        return `${cleaned.replace(/[.!?]+$/, "")}. Clients consistently highlight responsive support, strong outcomes, and dependable delivery.`;
-      }
-      return `${cleaned.replace(/[.!?]+$/, "")}. ${projectKeyword} delivers ${industryKeyword} solutions with ${industryTone} standards and measurable outcomes.`;
-    }
-
-    if (actionKey === "shorten") {
-      const words = cleaned.split(/\s+/);
-      const limited = words.slice(0, Math.max(8, Math.floor(words.length * 0.55))).join(" ");
-      return limited.length < cleaned.length ? `${limited.replace(/[,.!?;:]+$/, "")}.` : firstSentence;
-    }
-    if (actionKey === "expand") {
-      if (sectionType === "faq") return `${cleaned} We guide each step clearly, explain timelines, and follow up quickly so families stay informed.`;
-      if (sectionType === "pricing") return `${cleaned} Every plan includes transparent deliverables, clear timelines, and responsive support with no hidden surprises.`;
-      if (sectionType === "hero") return `${cleaned} Partner with ${projectKeyword} for fast onboarding, trusted execution, and measurable outcomes.`;
-      return `${cleaned} We deliver measurable results with clear timelines, transparent updates, and trusted support.`;
-    }
-    if (actionKey === "persuasive") {
-      if (sectionType === "hero") {
-        return `${cleaned.replace(/[.!?]+$/, "")}. Move forward with ${projectKeyword} for faster results, clearer value, and a more confident next step.`;
-      }
-      if (sectionType === "pricing") {
-        return `${cleaned.replace(/[.!?]+$/, "")}. Choose the option that gives you transparent value, dependable support, and confidence from day one.`;
-      }
-      if (sectionType === "services") {
-        return `${cleaned.replace(/[.!?]+$/, "")}. Designed to deliver meaningful outcomes with a smoother process and stronger support at every step.`;
-      }
-      if (sectionType === "contact") {
-        return `${cleaned.replace(/[.!?]+$/, "")}. Reach out today and get clear answers, practical next steps, and responsive support without delay.`;
-      }
-      if (sectionType === "testimonials") {
-        return `${cleaned.replace(/[.!?]+$/, "")}. Trusted by clients who value reliable delivery, responsive communication, and measurable results.`;
-      }
-      return `${cleaned.replace(/[.!?]+$/, "")}. ${projectKeyword} helps you move faster with trusted ${industryKeyword} support and a clearer path to results.`;
-    }
-    if (actionKey === "seo") {
-      const sectionKeyword =
-        sectionType === "pricing"
-          ? "pricing options"
-          : sectionType === "faq"
-            ? "frequently asked questions"
-            : sectionType === "services"
-              ? "service solutions"
-              : sectionType === "contact"
-                ? "contact support"
-                : "trusted solutions";
-      return `${cleaned} ${projectKeyword} delivers trusted ${industryKeyword} ${sectionKeyword} with responsive support and proven outcomes.`;
-    }
-    if (actionKey === "cta") {
-      const stripped = cleaned.replace(/[.!?]+$/, "");
-      if (sectionType === "pricing") {
-        return `Choose the best-fit plan and start with ${projectKeyword} today. ${stripped}.`;
-      }
-      if (sectionType === "faq") {
-        return `Still have questions? Contact ${projectKeyword} today for clear answers and next steps. ${stripped}.`;
-      }
-      if (sectionType === "hero") {
-        return `Get started with ${projectKeyword} today and see results faster. ${stripped}.`;
-      }
-      return `Book your consultation with ${projectKeyword} today to get started quickly and confidently. ${stripped}.`;
-    }
-    if (actionKey === "professional") {
-      return cleaned
-        .replace(/\b(can't|cannot)\b/gi, "can not")
-        .replace(/\b(don't)\b/gi, "do not")
-        .replace(/\b(we're)\b/gi, "we are")
-        .replace(/\b(you'll)\b/gi, "you will");
-    }
-    if (actionKey === "friendly") {
-      return cleaned
-        .replace(/\b(do not)\b/gi, "don't")
-        .replace(/\b(we are)\b/gi, "we're")
-        .replace(/\b(you will)\b/gi, "you'll")
-        .replace(/\.$/, "!") || `${cleaned}!`;
-    }
-    if (actionKey === "fix") {
-      const normalized = cleaned.replace(/\s+/g, " ").replace(/\s([,.!?;:])/g, "$1");
-      return normalized.charAt(0).toUpperCase() + normalized.slice(1);
-    }
-    return "";
-  }, [projectName, selectedIndustryPackage]);
-
-  const handleImproveSelectedSection = useCallback(() => {
-    const root = previewEditableRef.current;
-    const sectionRoot = selectedSectionNodeRef.current;
-    if (!(root instanceof HTMLElement) || !(sectionRoot instanceof HTMLElement)) {
-      setInlineSmartStatus("Select a section first.");
-      return;
-    }
-    let changedCount = 0;
-    Array.from(sectionRoot.querySelectorAll("h1, h2, h3, h4, p, li, blockquote")).slice(0, 80).forEach((node) => {
-      if (!(node instanceof HTMLElement)) return;
-      if (node.children.length > 0) return;
-      const source = String(node.textContent || "").replace(/\s+/g, " ").trim();
-      if (!source || source.length < 5) return;
-      const sectionType = detectInlineSectionType(node, root);
-      const actionKey = source.length > 130 ? "shorten" : "smart";
-      const rewritten = runInlineSmartRewrite(source, actionKey, { sectionType });
-      if (!rewritten || rewritten === source) return;
-      node.textContent = rewritten;
-      changedCount += 1;
-    });
-    const sectionId = String(sectionRoot.dataset.id || "").trim();
-    commitInlineDomMutation(
-      changedCount > 0
-        ? `Improved ${changedCount} text block${changedCount === 1 ? "" : "s"} in this section.`
-        : "No section-level improvements were needed.",
-      "Improve Section",
-      sectionId
-    );
-  }, [commitInlineDomMutation, runInlineSmartRewrite]);
-
-  const handleReplaceSelectedSection = useCallback(() => {
-    const root = previewEditableRef.current;
-    const sectionRoot = selectedSectionNodeRef.current;
-    if (!(root instanceof HTMLElement) || !(sectionRoot instanceof HTMLElement)) {
-      setInlineSmartStatus("Select a section first.");
-      return;
-    }
-    const sectionId = String(sectionRoot.dataset.id || "").trim();
-    const sectionType = detectInlineSectionType(sectionRoot, root);
-    const title = buildSectionMeta(sectionRoot)?.title || "Section headline";
-    const subtitle = buildSectionMeta(sectionRoot)?.subtitle || "Clear supporting copy for this section.";
-    const buttonText = buildSectionMeta(sectionRoot)?.buttonText || (sectionType === "contact" ? "Contact Us" : "Get Started");
-    const benefits = [
-      runInlineSmartRewrite(title, "smart", { sectionType }),
-      runInlineSmartRewrite(subtitle, "persuasive", { sectionType }),
-      runInlineSmartRewrite(buttonText, "cta", { sectionType }),
-    ]
-      .map((item) => String(item || "").replace(/\s+/g, " ").trim())
-      .filter(Boolean)
-      .slice(0, 3);
-    sectionRoot.innerHTML = `
-      <div style="display:grid;gap:16px">
-        <div style="display:grid;gap:10px">
-          <small style="font-size:11px;font-weight:800;letter-spacing:.08em;color:var(--tn-link)">REFRESHED SECTION</small>
-          <h2>${escapeHtml(runInlineSmartRewrite(title, "smart", { sectionType }) || title)}</h2>
-          <p>${escapeHtml(runInlineSmartRewrite(subtitle, "expand", { sectionType }) || subtitle)}</p>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">
-          ${benefits
-            .map(
-              (item) => `
-                <article style="border:1px solid var(--tn-border);border-radius:14px;padding:14px;background:var(--tn-card-bg);box-shadow:var(--tn-shadow-soft)">
-                  <strong style="display:block;color:var(--tn-heading);font-size:14px;line-height:1.4">${escapeHtml(item)}</strong>
-                </article>
-              `
-            )
-            .join("")}
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-          <a href="#contact" style="display:inline-flex;align-items:center;justify-content:center;padding:12px 18px;border-radius:999px;background:var(--tn-cta);color:var(--tn-button-text);text-decoration:none;font-weight:700">
-            ${escapeHtml(runInlineSmartRewrite(buttonText, "cta", { sectionType }) || buttonText)}
-          </a>
-          <span style="color:var(--tn-body);font-size:13px">Benefits, proof, and stronger conversion structure were added automatically.</span>
-        </div>
-      </div>
-    `;
-    commitInlineDomMutation("Section layout replaced with a stronger conversion structure.", "Replace Section", sectionId);
-  }, [buildSectionMeta, commitInlineDomMutation, runInlineSmartRewrite]);
-
-  const handleMoveSelectedSection = useCallback((direction) => {
-    const sectionRoot = selectedSectionNodeRef.current;
-    if (!(sectionRoot instanceof HTMLElement)) {
-      setInlineSmartStatus("Select a section first.");
-      return;
-    }
-    const parent = sectionRoot.parentElement;
-    if (!(parent instanceof HTMLElement)) return;
-    const siblings = Array.from(parent.children).filter(
-      (node) => node instanceof HTMLElement && node.matches("[data-component][data-id], [data-component], section, article, header, footer, nav, aside, main")
-    );
-    const currentIndex = siblings.indexOf(sectionRoot);
-    if (currentIndex < 0) return;
-    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-    const target = siblings[targetIndex];
-    if (!(target instanceof HTMLElement)) return;
-    if (direction === "up") {
-      parent.insertBefore(sectionRoot, target);
-    } else {
-      parent.insertBefore(target, sectionRoot);
-    }
-    const sectionId = String(sectionRoot.dataset.id || "").trim();
-    commitInlineDomMutation(
-      direction === "up" ? "Section moved up." : "Section moved down.",
-      direction === "up" ? "Move Section Up" : "Move Section Down",
-      sectionId
-    );
-  }, [commitInlineDomMutation]);
-
-  const handleDeleteSelectedSection = useCallback(() => {
-    const root = previewEditableRef.current;
-    const sectionRoot = selectedSectionNodeRef.current;
-    if (!(root instanceof HTMLElement) || !(sectionRoot instanceof HTMLElement)) {
-      setInlineSmartStatus("Select a section first.");
-      return;
-    }
-    const sections = Array.from(root.querySelectorAll("[data-component][data-id], [data-component], section, article, header, footer, nav, aside, main"));
-    if (sections.length <= 1) {
-      setInlineSmartStatus("At least one section must remain.");
-      return;
-    }
-    const fallback =
-      sectionRoot.nextElementSibling instanceof HTMLElement
-        ? sectionRoot.nextElementSibling
-        : sectionRoot.previousElementSibling instanceof HTMLElement
-          ? sectionRoot.previousElementSibling
-          : null;
-    sectionRoot.remove();
-    if (selectedEditableNodeRef.current instanceof HTMLElement && !root.contains(selectedEditableNodeRef.current)) {
-      selectedEditableNodeRef.current = null;
-      setSelectedEditableMeta(null);
-    }
-    if (!(fallback instanceof HTMLElement)) {
-      setSelectedSectionMeta(null);
-      selectedSectionNodeRef.current = null;
-      commitInlineDomMutation("Section deleted.", "Delete Section");
-      return;
-    }
-    const fallbackId = String(fallback.dataset.id || "").trim();
-    commitInlineDomMutation("Section deleted.", "Delete Section", fallbackId);
-  }, [commitInlineDomMutation]);
-
-  const clearInlineHoverNode = () => {
-    const node = inlineHoverNodeRef.current;
-    if (!(node instanceof HTMLElement)) return;
-    node.style.boxShadow = node.dataset.tnOldBoxShadow || "";
-    node.style.backgroundColor = node.dataset.tnOldBackground || "";
-    node.style.cursor = node.dataset.tnOldCursor || "";
-    node.style.transition = node.dataset.tnOldTransition || "";
-    delete node.dataset.tnOldBoxShadow;
-    delete node.dataset.tnOldBackground;
-    delete node.dataset.tnOldCursor;
-    delete node.dataset.tnOldTransition;
-    inlineHoverNodeRef.current = null;
-  };
-
-  const handleInlineHoverMove = (event) => {
-    if (!isInlineEditing) return;
-    const target = event.target instanceof Element ? event.target : null;
-    if (!target) return;
-    const node = target.closest(
-      "[data-editable][data-edit-id], [data-editable][data-id]"
-    );
-    if (!(node instanceof HTMLElement)) {
-      clearInlineHoverNode();
-      return;
-    }
-    if (inlineHoverNodeRef.current === node) return;
-    clearInlineHoverNode();
-    node.dataset.tnOldBoxShadow = node.style.boxShadow || "";
-    node.dataset.tnOldBackground = node.style.backgroundColor || "";
-    node.dataset.tnOldCursor = node.style.cursor || "";
-    node.dataset.tnOldTransition = node.style.transition || "";
-    node.style.transition = node.style.transition || "box-shadow 120ms ease, background-color 120ms ease";
-    node.style.boxShadow = "inset 0 0 0 2px rgba(59,130,246,0.78)";
-    node.style.backgroundColor = "rgba(59,130,246,0.09)";
-    const nodeType = String(node.dataset.editable || "");
-    node.style.cursor = nodeType === "image" ? "pointer" : nodeType === "button" || nodeType === "link" ? "text" : "text";
-    inlineHoverNodeRef.current = node;
-  };
-
-  const handleInlineHoverLeave = () => {
-    clearInlineHoverNode();
-  };
-
-  const handleInlinePointerActivate = (event) => {
-    if (!isInlineEditing) return;
-    const target = event.target instanceof Element ? event.target : null;
-    if (!target) return;
-    selectInlineSection(target);
-    const editableTarget = target.closest("[data-editable][data-edit-id], [data-editable][data-id]");
-    if (editableTarget instanceof HTMLElement) {
-      selectInlineEditableNode(editableTarget);
-      const editableType = String(editableTarget.dataset.editable || "").trim().toLowerCase();
-      if (editableType === "image") {
-        event.preventDefault();
-      } else if (typeof window !== "undefined") {
-        window.requestAnimationFrame(() => {
-          focusInlineEditableNode(editableTarget);
-        });
-      }
-      return;
-    }
-    const sectionRoot = findSectionRoot(target);
-    const fallbackEditable =
-      sectionRoot instanceof HTMLElement
-        ? sectionRoot.querySelector("[data-editable][data-edit-id], [data-editable][data-id]")
-        : null;
-    if (fallbackEditable instanceof HTMLElement) {
-      selectInlineEditableNode(fallbackEditable);
-      const fallbackType = String(fallbackEditable.dataset.editable || "").trim().toLowerCase();
-      if (fallbackType !== "image" && typeof window !== "undefined") {
-        window.requestAnimationFrame(() => {
-          focusInlineEditableNode(fallbackEditable);
-        });
-      }
-      return;
-    }
-    if (selectedEditableNodeRef.current instanceof HTMLElement) {
-      selectedEditableNodeRef.current.classList.remove("tn-editable-active");
-    }
-    selectedEditableNodeRef.current = null;
-    setSelectedEditableMeta(null);
-  };
-
-
-  const inlineBestSuggestion = useMemo(
-    () => (Array.isArray(inlineSuggestions) && inlineSuggestions.length > 0 ? inlineSuggestions[0] : null),
-    [inlineSuggestions]
-  );
-
-  const captureInlineSelection = () => {
-    if (!isInlineEditing) return;
-    const root = previewEditableRef.current;
-    const selection = window.getSelection();
-    if (!root || !selection || selection.rangeCount < 1) {
-      setInlineSelectionText("");
-      setInlineSelectionSection("");
-      setInlineSuggestions([]);
-      return;
-    }
-    const range = selection.getRangeAt(0);
-    const selectedText = String(selection.toString() || "").trim();
-    const ancestorNode =
-      range.commonAncestorContainer instanceof Element
-        ? range.commonAncestorContainer
-        : range.commonAncestorContainer?.parentElement;
-    if (!ancestorNode || !root.contains(ancestorNode)) {
-      setInlineSelectionText("");
-      setInlineSelectionSection("");
-      setInlineSuggestions([]);
-      return;
-    }
-    const fallbackNode = ancestorNode.closest("h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label");
-    const fallbackText = String(fallbackNode?.textContent || "").replace(/\s+/g, " ").trim();
-    const effectiveText = selectedText || fallbackText;
-    if (!effectiveText) {
-      setInlineSelectionText("");
-      setInlineSelectionSection("");
-      setInlineSuggestions([]);
-      return;
-    }
-    const sectionType = detectInlineSectionType(ancestorNode, root);
-    selectInlineSection(ancestorNode instanceof Element ? ancestorNode : root);
-    selectInlineEditableNode(
-      ancestorNode instanceof HTMLElement
-        ? ancestorNode
-        : fallbackNode instanceof HTMLElement
-          ? fallbackNode
-          : root
-    );
-    setInlineSelectionText(effectiveText);
-    setInlineSelectionSection(sectionType);
-    const nextSuggestions = buildInlineSuggestions(effectiveText, sectionType, runInlineSmartRewrite);
-    setInlineSuggestions(nextSuggestions);
-    const best = Array.isArray(nextSuggestions) && nextSuggestions.length > 0 ? nextSuggestions[0] : null;
-    const bestConfidence = Number(best?.confidence || 0);
-    if (inlineAutoApplyHighConfidence && best && bestConfidence >= 90) {
-      handleApplyInlineSuggestion(best.text, `best suggestion (${best.label})`, bestConfidence);
-    }
-  };
-
-  const handleRunInlineSmartCommand = useCallback((rawCommand) => {
-    if (!isInlineEditing) return;
-    const actionKey = parseInlineSmartAction(rawCommand || inlineSmartCommand);
-    if (!actionKey) {
-      setInlineSmartStatus("Use /smart, /shorten, /persuasive, /expand, /seo, /cta, /professional, /friendly, or /fix.");
-      return;
-    }
-    const root = previewEditableRef.current;
-    const selection = window.getSelection();
-    if (!root || !selection || selection.rangeCount < 1) {
-      setInlineSmartStatus("Select text in the preview first.");
-      return;
-    }
-    const range = selection.getRangeAt(0);
-    const selectedText = selection.toString().trim();
-    const ancestorNode =
-      range.commonAncestorContainer instanceof Element
-        ? range.commonAncestorContainer
-        : range.commonAncestorContainer?.parentElement;
-    if (!ancestorNode || !root.contains(ancestorNode)) {
-      setInlineSmartStatus("Click inside text in the preview first.");
-      return;
-    }
-    const fallbackNode = ancestorNode.closest("h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label");
-    const fallbackText = String(fallbackNode?.textContent || "").replace(/\s+/g, " ").trim();
-    const effectiveText = selectedText || fallbackText;
-    if (!effectiveText) {
-      setInlineSmartStatus("Click or select text in the preview first.");
-      return;
-    }
-    const sectionType = detectInlineSectionType(ancestorNode, root);
-    const rewritten = runInlineSmartRewrite(effectiveText, actionKey, { sectionType });
-    if (!rewritten || rewritten === effectiveText) {
-      setInlineSmartStatus("No rewrite needed for this selection.");
-      return;
-    }
-    if (selectedText) {
-      range.deleteContents();
-      const nextNode = document.createTextNode(rewritten);
-      range.insertNode(nextNode);
-      const nextRange = document.createRange();
-      nextRange.setStartAfter(nextNode);
-      nextRange.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(nextRange);
-    } else if (fallbackNode instanceof HTMLElement) {
-      fallbackNode.textContent = rewritten;
-      const nextRange = document.createRange();
-      nextRange.selectNodeContents(fallbackNode);
-      nextRange.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(nextRange);
-    }
-    const nextHtml = root.innerHTML;
-    setDraftHtml(nextHtml);
-    setInlineDraftDirty(true);
-    appendInlineHistory(nextHtml);
-    setInlineSmartStatus(`Applied ${actionKey} rewrite (${sectionType}).`);
-    setInlineSelectionText("");
-    setInlineSelectionSection("");
-    setInlineSuggestions([]);
-  }, [inlineSmartCommand, isInlineEditing, runInlineSmartRewrite]);
-
-  const handleApplyInlineSuggestion = useCallback((suggestionText, sourceLabel = "smart suggestion", confidence = null) => {
-    const root = previewEditableRef.current;
-    const selection = window.getSelection();
-    if (!root || !selection || selection.rangeCount < 1) {
-      setInlineSmartStatus("Select text in the preview first.");
-      return;
-    }
-    const range = selection.getRangeAt(0);
-    const selectedText = selection.toString().trim();
-    const ancestorNode =
-      range.commonAncestorContainer instanceof Element
-        ? range.commonAncestorContainer
-        : range.commonAncestorContainer?.parentElement;
-    if (!ancestorNode || !root.contains(ancestorNode)) {
-      setInlineSmartStatus("Click inside text in the preview first.");
-      return;
-    }
-    const fallbackNode = ancestorNode.closest("h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label");
-    const fallbackText = String(fallbackNode?.textContent || "").replace(/\s+/g, " ").trim();
-    if (!selectedText && !fallbackText) {
-      setInlineSmartStatus("Click or select text in the preview first.");
-      return;
-    }
-    const rewritten = String(suggestionText || "").trim();
-    if (!rewritten) return;
-    if (selectedText) {
-      range.deleteContents();
-      const nextNode = document.createTextNode(rewritten);
-      range.insertNode(nextNode);
-      const nextRange = document.createRange();
-      nextRange.setStartAfter(nextNode);
-      nextRange.collapse(true);
-      selection.removeAllRanges();
-      selection.addRange(nextRange);
-    } else if (fallbackNode instanceof HTMLElement) {
-      fallbackNode.textContent = rewritten;
-      const nextRange = document.createRange();
-      nextRange.selectNodeContents(fallbackNode);
-      nextRange.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(nextRange);
-    }
-    const nextHtml = root.innerHTML;
-    setDraftHtml(nextHtml);
-    setInlineDraftDirty(true);
-    setEditHistory((previous) => {
-      if (previous[previous.length - 1] === nextHtml) return previous;
-      return [...previous.slice(-49), nextHtml];
-    });
-    setInlineSmartStatus(
-      confidence
-        ? `Applied ${sourceLabel} (${Math.round(Number(confidence) || 0)}% confidence).`
-        : `Applied ${sourceLabel}.`
-    );
-    setInlineCheckpoints((previous) => [
-      ...previous.slice(-5),
-      {
-        id: `cp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        label: String(sourceLabel || "Smart Apply").slice(0, 28),
-        pageKey: activePage,
-        html: nextHtml,
-        at: new Date().toISOString(),
-      },
-    ]);
-    setInlineSelectionText("");
-    setInlineSelectionSection("");
-    setInlineSuggestions([]);
-  }, [activePage]);
-
-  const handleImproveInlinePageCopy = useCallback(() => {
-    if (!isInlineEditing || inlineBulkImproving) return 0;
-    const root = previewEditableRef.current;
-    if (!root) return 0;
-    setInlineBulkImproving(true);
-    let changedCount = 0;
-    try {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(`<body>${root.innerHTML || ""}</body>`, "text/html");
-      const textNodes = Array.from(
-        doc.body.querySelectorAll("h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label")
-      );
-      textNodes.slice(0, 120).forEach((node) => {
-        if (!(node instanceof HTMLElement)) return;
-        if (node.children.length > 0) return;
-        const source = String(node.textContent || "").replace(/\s+/g, " ").trim();
-        if (!source || source.length < 5) return;
-        const sectionType = detectInlineSectionType(node, doc.body);
-        const actionKey = source.length > 130 ? "shorten" : "fix";
-        const rewritten = runInlineSmartRewrite(source, actionKey, { sectionType });
-        if (!rewritten || rewritten === source) return;
-        node.textContent = rewritten;
-        changedCount += 1;
-      });
-      const nextHtml = doc.body.innerHTML;
-      if (nextHtml && nextHtml !== root.innerHTML) {
-        root.innerHTML = nextHtml;
-        setDraftHtml(nextHtml);
-        setInlineDraftDirty(true);
-        appendInlineHistory(nextHtml);
-        setInlineCheckpoints((previous) => [
-          ...previous.slice(-5),
-          {
-            id: `cp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            label: "Improve Page",
-            pageKey: activePage,
-            html: nextHtml,
-            at: new Date().toISOString(),
-          },
-        ]);
-      }
-      setInlineSmartStatus(
-        changedCount > 0
-          ? `Improved copy across ${changedCount} text block${changedCount === 1 ? "" : "s"}.`
-          : "No page-wide copy fixes were needed."
-      );
-    } finally {
-      setInlineBulkImproving(false);
-    }
-    return changedCount;
-  }, [activePage, inlineBulkImproving, isInlineEditing, runInlineSmartRewrite]);
-
-  const handleImproveInlineSectionCopy = useCallback(() => {
-    if (!isInlineEditing || inlineBulkImproving) return;
-    const root = previewEditableRef.current;
-    const selection = window.getSelection();
-    if (!root || !selection || selection.rangeCount < 1) {
-      setInlineSmartStatus("Select text inside a section first.");
-      return;
-    }
-    const range = selection.getRangeAt(0);
-    const anchorNode =
-      range.commonAncestorContainer instanceof Element
-        ? range.commonAncestorContainer
-        : range.commonAncestorContainer?.parentElement;
-    if (!anchorNode || !root.contains(anchorNode)) {
-      setInlineSmartStatus("Select text inside a section first.");
-      return;
-    }
-    const sectionRoot =
-      anchorNode.closest("[data-tn-section], section, article, main, [id*='section'], [class*='section']") || anchorNode;
-    if (!(sectionRoot instanceof Element)) {
-      setInlineSmartStatus("Could not detect section root.");
-      return;
-    }
-    setInlineBulkImproving(true);
-    let changedCount = 0;
-    try {
-      const textNodes = Array.from(
-        sectionRoot.querySelectorAll("h1, h2, h3, h4, p, li, a, button, span, small, strong, em, summary, label")
-      );
-      textNodes.slice(0, 80).forEach((node) => {
-        if (!(node instanceof HTMLElement)) return;
-        if (node.children.length > 0) return;
-        const source = String(node.textContent || "").replace(/\s+/g, " ").trim();
-        if (!source || source.length < 5) return;
-        const sectionType = detectInlineSectionType(node, root);
-        const actionKey = source.length > 130 ? "shorten" : "fix";
-        const rewritten = runInlineSmartRewrite(source, actionKey, { sectionType });
-        if (!rewritten || rewritten === source) return;
-        node.textContent = rewritten;
-        changedCount += 1;
-      });
-      const nextHtml = root.innerHTML;
-      setDraftHtml(nextHtml);
-      setInlineDraftDirty(true);
-      appendInlineHistory(nextHtml);
-      setInlineCheckpoints((previous) => [
-        ...previous.slice(-5),
-        {
-          id: `cp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          label: "Improve Section",
-          pageKey: activePage,
-          html: nextHtml,
-          at: new Date().toISOString(),
-        },
-      ]);
-      setInlineSmartStatus(
-        changedCount > 0
-          ? `Improved ${changedCount} text block${changedCount === 1 ? "" : "s"} in this section.`
-          : "No section-level improvements were needed."
-      );
-    } finally {
-      setInlineBulkImproving(false);
-    }
-  }, [activePage, inlineBulkImproving, isInlineEditing, runInlineSmartRewrite]);
-
-  const handleImproveAndSaveInlinePageCopy = useCallback(() => {
-    if (!isInlineEditing || inlineBulkImproving) return;
-    handleImproveInlinePageCopy();
-    handleSaveInlineEdit();
-  }, [handleImproveInlinePageCopy, handleSaveInlineEdit, inlineBulkImproving, isInlineEditing]);
-
-  const handleImproveSavePublishInline = useCallback(async () => {
-    if (!isInlineEditing || inlineBulkImproving || publishing) return;
-    const snapshotHtml = generatedPages[activePage] || generatedSite || "";
-    if (snapshotHtml) {
-      setInlineLastPublishSnapshot({
-        pageKey: activePage,
-        html: snapshotHtml,
-        savedAt: new Date().toISOString(),
-      });
-      setInlineCheckpoints((previous) => [
-        ...previous.slice(-5),
-        {
-          id: `cp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          label: "Pre Publish",
-          pageKey: activePage,
-          html: snapshotHtml,
-          at: new Date().toISOString(),
-        },
-      ]);
-    }
-    handleImproveAndSaveInlinePageCopy();
-    await handleGoLive();
-  }, [
-    activePage,
-    generatedPages,
-    generatedSite,
-    handleGoLive,
-    handleImproveAndSaveInlinePageCopy,
-    inlineBulkImproving,
-    isInlineEditing,
-    publishing,
-  ]);
-
-  const handleRollbackInlinePublishSnapshot = useCallback(() => {
-    const snapshot = inlineLastPublishSnapshot;
-    if (!snapshot?.pageKey || !snapshot?.html) return;
-    const nextPages = { ...(generatedPages || {}), [snapshot.pageKey]: snapshot.html };
-    setGeneratedPages(nextPages);
-    setActivePage(snapshot.pageKey);
-    setGeneratedSite(snapshot.html);
-    setDraftHtml(snapshot.html);
-    setEditHistory([snapshot.html]);
-    setRedoHistory([]);
-    setInlineDraftDirty(false);
-    setIsInlineEditing(true);
-    setInlineCheckpoints((previous) => [
-      ...previous.slice(-5),
-      {
-        id: `cp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        label: "Rollback",
-        pageKey: snapshot.pageKey,
-        html: snapshot.html,
-        at: new Date().toISOString(),
-      },
-    ]);
-    setPublishStatus("info");
-    setPublishMessage("Rolled back to pre-publish content for this page. Re-publish when ready.");
-  }, [generatedPages, inlineLastPublishSnapshot]);
-
-  const handleRestoreInlineCheckpoint = (checkpointId) => {
-    const target = (inlineCheckpoints || []).find((item) => item.id === checkpointId);
-    if (!target?.html) return;
-    const nextPages = { ...(generatedPages || {}), [target.pageKey || activePage]: target.html };
-    setGeneratedPages(nextPages);
-    setActivePage(target.pageKey || activePage);
-    setGeneratedSite(target.html);
-    setDraftHtml(target.html);
-    if (previewEditableRef.current) previewEditableRef.current.innerHTML = target.html;
-    setEditHistory((previous) => {
-      if (previous[previous.length - 1] === target.html) return previous;
-      return [...previous.slice(-49), target.html];
-    });
-    setRedoHistory([]);
-    setInlineDraftDirty(true);
-    setInlineSmartStatus(`Restored checkpoint: ${target.label}.`);
-  };
-
-  useEffect(() => {
-    if (!isInlineEditing) return undefined;
-    const onKeyDown = (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-        event.preventDefault();
-        handleSaveInlineEdit();
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z" && !event.shiftKey) {
-        event.preventDefault();
-        handleUndoInlineEdit();
-        return;
-      }
-      if (
-        (event.metaKey || event.ctrlKey) &&
-        (event.key.toLowerCase() === "y" || (event.shiftKey && event.key.toLowerCase() === "z"))
-      ) {
-        event.preventDefault();
-        handleRedoInlineEdit();
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
-        event.preventDefault();
-        if (event.shiftKey) {
-          if (inlineBestSuggestion) {
-            handleApplyInlineSuggestion(
-              inlineBestSuggestion.text,
-              `best suggestion (${inlineBestSuggestion.label})`,
-              inlineBestSuggestion.confidence
-            );
-          } else {
-            handleRunInlineSmartCommand("/smart");
-          }
-        } else {
-          handleRunInlineSmartCommand("/smart");
-        }
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "i") {
-        event.preventDefault();
-        handleImproveInlinePageCopy();
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "l") {
-        event.preventDefault();
-        handleImproveInlineSectionCopy();
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        handleImproveAndSaveInlinePageCopy();
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "p") {
-        event.preventDefault();
-        handleImproveSavePublishInline();
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "u") {
-        event.preventDefault();
-        handleRollbackInlinePublishSnapshot();
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-        event.preventDefault();
-        handleSaveInlineEdit();
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        handleCancelInlineEdit();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [
-    isInlineEditing,
-    handleApplyInlineSuggestion,
-    handleSaveInlineEdit,
-    handleCancelInlineEdit,
-    handleUndoInlineEdit,
-    handleRedoInlineEdit,
-    handleRunInlineSmartCommand,
-    handleImproveInlinePageCopy,
-    handleImproveInlineSectionCopy,
-    handleImproveAndSaveInlinePageCopy,
-    handleImproveSavePublishInline,
-    handleRollbackInlinePublishSnapshot,
-    inlineBestSuggestion,
-    inlineBulkImproving,
-  ]);
-
-  useEffect(() => {
-    if (!isInlineEditing || !inlineDraftDirty) return undefined;
-    if (typeof window === "undefined") return undefined;
-    if (inlineAutoSaveTimerRef.current) {
-      window.clearTimeout(inlineAutoSaveTimerRef.current);
-    }
-    inlineAutoSaveTimerRef.current = window.setTimeout(() => {
-      const nextHtml = commitInlineDraftForActivePage();
-      setGeneratedSite(nextHtml);
-      setDraftHtml(nextHtml);
-      setInlineDraftDirty(false);
-      setInlineSmartStatus("Auto-saved");
-      inlineAutoSaveTimerRef.current = 0;
-    }, 700);
-    return () => {
-      if (inlineAutoSaveTimerRef.current) {
-        window.clearTimeout(inlineAutoSaveTimerRef.current);
-        inlineAutoSaveTimerRef.current = 0;
-      }
-    };
-  }, [isInlineEditing, inlineDraftDirty, draftHtml, commitInlineDraftForActivePage]);
-
-  useEffect(() => {
-    if (isInlineEditing) return undefined;
-    clearInlineHoverNode();
-    if (selectedEditableNodeRef.current instanceof HTMLElement) {
-      selectedEditableNodeRef.current.classList.remove("tn-editable-active");
-    }
-    if (selectedSectionNodeRef.current instanceof HTMLElement) {
-      selectedSectionNodeRef.current.classList.remove("tn-section-active");
-    }
-    selectedEditableNodeRef.current = null;
-    selectedSectionNodeRef.current = null;
-    setSelectedEditableMeta(null);
-    setSelectedSectionMeta(null);
-    setSelectedSectionEditId("");
-    setInlineSmartStatus("");
-    setInlineSmartCommand("");
-    setInlineSelectionText("");
-    setInlineSelectionSection("");
-    setInlineSuggestions([]);
-    setInlineAutoApplyHighConfidence(false);
-    setInlineAdvancedOpen(false);
-    clearInlineAutofocusQueue();
-    return undefined;
-  }, [clearInlineAutofocusQueue, isInlineEditing]);
-
-  useEffect(() => {
-    const root = previewEditableRef.current;
-    if (!root) return;
-    const selector =
-      "[data-editable='text'][data-edit-id], [data-editable='text'][data-id], [data-editable='button'][data-edit-id], [data-editable='button'][data-id], [data-editable='link'][data-edit-id], [data-editable='link'][data-id]";
-
-    if (isInlineEditing) {
-      annotateInlineEditableDom();
-      const editableNodes = Array.from(root.querySelectorAll(selector));
-      editableNodes.forEach((node) => {
-        if (!(node instanceof HTMLElement)) return;
-        node.setAttribute("contenteditable", "true");
-        node.setAttribute("tabindex", "0");
-        node.setAttribute("spellcheck", "true");
-      });
-      const imageNodes = Array.from(
-        root.querySelectorAll("[data-editable='image'][data-edit-id], [data-editable='image'][data-id]")
-      );
-      imageNodes.forEach((node) => {
-        if (!(node instanceof HTMLElement)) return;
-        node.removeAttribute("contenteditable");
-        node.setAttribute("tabindex", "0");
-        node.removeAttribute("spellcheck");
-      });
-      return;
-    }
-
-    const editableNodes = Array.from(root.querySelectorAll(selector));
-    editableNodes.forEach((node) => {
-      if (!(node instanceof HTMLElement)) return;
-      node.removeAttribute("contenteditable");
-      node.removeAttribute("tabindex");
-      node.removeAttribute("spellcheck");
-    });
-    const imageNodes = Array.from(
-      root.querySelectorAll("[data-editable='image'][data-edit-id], [data-editable='image'][data-id]")
-    );
-    imageNodes.forEach((node) => {
-      if (!(node instanceof HTMLElement)) return;
-      node.removeAttribute("tabindex");
-    });
-  }, [isInlineEditing, draftHtml, annotateInlineEditableDom]);
-
-  useEffect(() => {
-    const root = previewEditableRef.current;
-    if (!(root instanceof HTMLElement)) return;
-    const themedRoot = root.querySelector("[data-tn-theme-root='true']");
-    if (!(themedRoot instanceof HTMLElement)) return;
-    if (isInlineEditing) {
-      themedRoot.setAttribute("data-tn-editing", "true");
-    } else {
-      themedRoot.removeAttribute("data-tn-editing");
-    }
-  }, [isInlineEditing, draftHtml, activePage]);
-
-  useEffect(() => {
-    if (!isInlineEditing) return;
-    const root = previewEditableRef.current;
-    if (!root) return;
-    window.requestAnimationFrame(() => {
-      if (!previewEditableRef.current) return;
-      const activeElement = document.activeElement;
-      if (root.contains(activeElement)) return;
-      scheduleInlineAutofocus();
-    });
-  }, [activePage, isInlineEditing, fieldLockMode, scheduleInlineAutofocus]);
-
-  useEffect(() => {
-    if (!isInlineEditing || !pendingInstantEditRef.current) return;
-    let cancelled = false;
-    const run = () => {
-      if (cancelled) return;
-      const root = previewEditableRef.current;
-      if (!(root instanceof HTMLElement)) return;
-      annotateInlineEditableDom();
-      const firstEditable = root.querySelector(
-        "[data-editable='text'][data-edit-id], [data-editable='text'][data-id], [data-editable][data-edit-id], [data-editable][data-id]"
-      );
-      if (firstEditable instanceof HTMLElement) {
-        selectInlineSection(firstEditable);
-        selectInlineEditableNode(firstEditable);
-        scheduleInlineAutofocus(firstEditable);
-      } else {
-        scheduleInlineAutofocus();
-      }
-      pendingInstantEditRef.current = false;
-    };
-    const rafA = window.requestAnimationFrame(run);
-    inlineAutofocusHandlesRef.current.push({ type: "frame", id: rafA });
-    return () => {
-      cancelled = true;
-      window.cancelAnimationFrame(rafA);
-    };
-  }, [draftHtml, activePage, isInlineEditing, annotateInlineEditableDom, selectInlineEditableNode, scheduleInlineAutofocus, selectInlineSection]);
-
-  useEffect(() => {
-    if (!selectedEditableMeta) return undefined;
-    const syncToolbar = () => {
-      if (selectedEditableNodeRef.current instanceof HTMLElement) {
-        updateFloatingToolbarPosition(selectedEditableNodeRef.current);
-        setSelectedEditableMeta((previous) =>
-          previous
-            ? {
-                ...previous,
-                value: readInlineEditableValue(selectedEditableNodeRef.current, previous.type),
-              }
-            : previous
-        );
-      }
-    };
-    syncToolbar();
-    window.addEventListener("scroll", syncToolbar, { passive: true });
-    window.addEventListener("resize", syncToolbar);
-    return () => {
-      window.removeEventListener("scroll", syncToolbar);
-      window.removeEventListener("resize", syncToolbar);
-    };
-  }, [selectedEditableMeta, updateFloatingToolbarPosition]);
-
-  useEffect(() => {
-    const selectedSectionNode = selectedSectionNodeRef.current;
-    if (!(selectedSectionNode instanceof HTMLElement)) return;
-    const nextMeta = buildSectionMeta(selectedSectionNode);
-    if (!nextMeta) return;
-    setSelectedSectionMeta(nextMeta);
-  }, [buildSectionMeta, sections]);
-
-  useEffect(() => {
-    const html = String(draftHtml || generatedSite || "").trim();
-    if (!html) {
-      setInlineSiteModel({});
-      setSections({});
-      return;
-    }
-    const nextInlineModel = buildInlineSiteModelFromHtml(html);
-    setInlineSiteModel(nextInlineModel);
-    setSectionsFromInlineModel(nextInlineModel);
-  }, [draftHtml, generatedSite, activePage, setSectionsFromInlineModel]);
-
   useEffect(() => {
     const onScrollOrResize = () => applyParallaxTransforms();
     applyParallaxTransforms();
@@ -10473,7 +8591,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       window.removeEventListener("scroll", onScrollOrResize);
       window.removeEventListener("resize", onScrollOrResize);
     };
-  }, [generatedSite, activePage, isInlineEditing]);
+  }, [generatedSite, activePage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -11208,11 +9326,6 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
           exportFrameworkOptions={EXPORT_FRAMEWORK_OPTIONS}
           handleExportProjectBundle={handleExportProjectBundle}
           exportBundleLoading={exportBundleLoading}
-          isInlineEditing={isInlineEditing}
-          handleStartInlineEdit={handleStartInlineEdit}
-          handleUndoInlineEdit={handleUndoInlineEdit}
-          handleSaveInlineEdit={handleSaveInlineEdit}
-          handleCancelInlineEdit={handleCancelInlineEdit}
           publishPrimaryHint={publishPrimaryHint}
           publishedSiteId={publishedSiteId}
           publishPrimaryAction={publishPrimaryAction}
@@ -11231,7 +9344,6 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
           previewRecommendedStep={previewRecommendedStep}
           previewJourneySteps={previewJourneySteps}
           previewEditableRef={previewEditableRef}
-          inlineDraftDirty={inlineDraftDirty}
           publishStatus={publishStatus}
           publishReadinessMessage={publishReadinessMessage}
           orderPageKeys={orderPageKeys}
@@ -11247,7 +9359,6 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
           handleAddPage={handleAddPage}
           handleDeleteActivePage={handleDeleteActivePage}
           seoChecklist={seoChecklist}
-          showAdvancedTools={showAdvancedTools}
           insightsProps={{
             styles,
             analyticsSnapshot,
@@ -11363,67 +9474,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
             },
           }}
           shouldShowGuestPreviewPrompt={shouldShowGuestPreviewPrompt}
-          inlineEditToolbarStyle={inlineEditToolbarStyle}
-          inlineEditMetaStyle={inlineEditMetaStyle}
-          inlineSmartStatus={inlineSmartStatus}
-          inlineSiteModel={inlineSiteModel}
-          sections={sections}
-          selectedSectionEditId={selectedSectionEditId}
-          updateSection={updateSection}
-          inlineSelectionText={inlineSelectionText}
-          inlineSelectionSection={inlineSelectionSection}
-          inlineCheckpoints={inlineCheckpoints}
-          handleRestoreInlineCheckpoint={handleRestoreInlineCheckpoint}
-          inlineAdvancedOpen={inlineAdvancedOpen}
-          simpleInlineMode={simpleInlineMode}
-          setSimpleInlineMode={setSimpleInlineMode}
-          inlineSmartInputStyle={inlineSmartInputStyle}
-          inlineSmartCommand={inlineSmartCommand}
-          setInlineSmartCommand={setInlineSmartCommand}
-          handleRunInlineSmartCommand={handleRunInlineSmartCommand}
-          getInlineCommandOptions={getInlineCommandOptions}
-          inlineAutoApplyHighConfidence={inlineAutoApplyHighConfidence}
-          setInlineAutoApplyHighConfidence={setInlineAutoApplyHighConfidence}
-          inlineSuggestions={inlineSuggestions}
-          handleApplyInlineSuggestion={handleApplyInlineSuggestion}
-          inlineEditActionsStyle={inlineEditActionsStyle}
-          handleImproveInlinePageCopy={handleImproveInlinePageCopy}
-          inlineBulkImproving={inlineBulkImproving}
-          handleImproveInlineSectionCopy={handleImproveInlineSectionCopy}
-          handleImproveAndSaveInlinePageCopy={handleImproveAndSaveInlinePageCopy}
-          handleImproveSavePublishInline={handleImproveSavePublishInline}
-          inlineLastPublishSnapshot={inlineLastPublishSnapshot}
-          handleRollbackInlinePublishSnapshot={handleRollbackInlinePublishSnapshot}
-          editHistory={editHistory}
-          handleRedoInlineEdit={handleRedoInlineEdit}
-          redoHistory={redoHistory}
-          setInlineAdvancedOpen={setInlineAdvancedOpen}
-          fieldLockMode={fieldLockMode}
-          setFieldLockMode={setFieldLockMode}
-          selectedEditableMeta={selectedEditableMeta}
-          selectedSectionMeta={selectedSectionMeta}
-          floatingToolbarPos={floatingToolbarPos}
-          isCompactInlineEditor={isCompactInlineEditor}
-          viewportWidth={viewportWidth}
-          focusInlineEditableNode={focusInlineEditableNode}
-          selectedEditableNodeRef={selectedEditableNodeRef}
-          syncInlineSiteModelFromDom={syncInlineSiteModelFromDom}
-          setSelectedEditableMeta={setSelectedEditableMeta}
-          handleInlineImageReplace={handleInlineImageReplace}
-          handleSectionFieldChange={handleSectionFieldChange}
-          handleImproveSelectedSection={handleImproveSelectedSection}
-          handleReplaceSelectedSection={handleReplaceSelectedSection}
-          handleMoveSelectedSection={handleMoveSelectedSection}
-          handleDeleteSelectedSection={handleDeleteSelectedSection}
-          previewEditableStyle={previewEditableStyle}
           handlePreviewLinkNavigation={handlePreviewLinkNavigation}
-          handleInlinePointerActivate={handleInlinePointerActivate}
-          setInlineDraftDirty={setInlineDraftDirty}
-          snapshotInlineDraft={snapshotInlineDraft}
-          captureInlineSelection={captureInlineSelection}
-          handleInlineHoverMove={handleInlineHoverMove}
-          handleInlineHoverLeave={handleInlineHoverLeave}
-          draftHtml={draftHtml}
           generatedSite={generatedSite}
           previewGuestOverlayStyle={previewGuestOverlayStyle}
           setAuthMode={setAuthMode}

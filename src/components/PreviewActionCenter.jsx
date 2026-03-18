@@ -5,10 +5,6 @@ export default function PreviewActionCenter({
   previewRecommendedStep,
   previewJourneySteps,
   previewEditableRef,
-  handleStartInlineEdit,
-  isInlineEditing,
-  handleSaveInlineEdit,
-  inlineDraftDirty,
   handleGoLive,
   publishing,
   publishedSiteId,
@@ -41,12 +37,6 @@ export default function PreviewActionCenter({
           onClick={() => previewEditableRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
         >
           Focus Preview
-        </button>
-        <button type="button" style={styles.previewActionButton} onClick={handleStartInlineEdit} disabled={isInlineEditing}>
-          {isInlineEditing ? "Editing Active" : "Start Editing"}
-        </button>
-        <button type="button" style={styles.previewActionButton} onClick={handleSaveInlineEdit} disabled={!inlineDraftDirty}>
-          Save Changes
         </button>
         <button type="button" style={styles.previewActionButton} onClick={() => handleGoLive()} disabled={publishing}>
           {publishing ? "Publishing..." : publishedSiteId ? "Publish Update" : "Go Live"}

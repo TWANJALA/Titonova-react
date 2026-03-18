@@ -5,7 +5,6 @@ import './index.css'
 
 const Dashboard = React.lazy(() => import('./Dashboard.jsx'))
 const LoginPage = React.lazy(() => import('./LoginPage.jsx'))
-const VisualBuilderStudio = React.lazy(() => import('./visual-editor/components/VisualBuilderStudio.jsx'))
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
@@ -111,10 +110,6 @@ function AppRouter() {
 
   if (path === "/login" || path === "/signup") {
     return <LoginPage mode={path === "/signup" ? "signup" : "login"} onAuthed={onAuthed} />
-  }
-
-  if (path === "/visual-editor") {
-    return <VisualBuilderStudio />
   }
 
   return <Dashboard />
