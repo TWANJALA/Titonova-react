@@ -9299,6 +9299,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     if (!sectionId) return;
     const nextValue = String(value ?? "");
     const shouldSyncDraft = options.syncDraft !== false;
+    const skipDomWrite = options.skipDomWrite === true;
 
     setSections((previous) => {
       if (previous[sectionId] === nextValue) return previous;
@@ -9313,17 +9314,19 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
         escapedId
           ? Array.from(root.querySelectorAll(`[data-editable][data-edit-id="${escapedId}"], [data-editable][data-id="${escapedId}"]`))
           : [];
-      targetNodes.forEach((targetNode) => {
-        if (!(targetNode instanceof HTMLElement)) return;
-        const targetType = String(targetNode.dataset.editable || "").trim();
-        targetNode.dataset.id = targetNode.dataset.id || sectionId;
-        targetNode.dataset.editId = sectionId;
-        if (targetType === "image") {
-          targetNode.setAttribute("src", nextValue);
-        } else {
-          targetNode.textContent = nextValue;
-        }
-      });
+      if (!skipDomWrite) {
+        targetNodes.forEach((targetNode) => {
+          if (!(targetNode instanceof HTMLElement)) return;
+          const targetType = String(targetNode.dataset.editable || "").trim();
+          targetNode.dataset.id = targetNode.dataset.id || sectionId;
+          targetNode.dataset.editId = sectionId;
+          if (targetType === "image") {
+            targetNode.setAttribute("src", nextValue);
+          } else {
+            targetNode.textContent = nextValue;
+          }
+        });
+      }
       if (shouldSyncDraft) {
         setDraftHtml(root.innerHTML || "");
         setInlineDraftDirty(true);
@@ -11365,12 +11368,10 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
           handleReplaceSelectedSection={handleReplaceSelectedSection}
           handleMoveSelectedSection={handleMoveSelectedSection}
           handleDeleteSelectedSection={handleDeleteSelectedSection}
-          selectInlineSection={selectInlineSection}
           previewEditableStyle={previewEditableStyle}
           handlePreviewLinkNavigation={handlePreviewLinkNavigation}
           handleInlinePointerActivate={handleInlinePointerActivate}
           setInlineDraftDirty={setInlineDraftDirty}
-          selectInlineEditableNode={selectInlineEditableNode}
           snapshotInlineDraft={snapshotInlineDraft}
           captureInlineSelection={captureInlineSelection}
           handleInlineHoverMove={handleInlineHoverMove}

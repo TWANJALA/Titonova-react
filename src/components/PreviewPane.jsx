@@ -112,12 +112,10 @@ export default function PreviewPane(props) {
     handleReplaceSelectedSection,
     handleMoveSelectedSection,
     handleDeleteSelectedSection,
-    selectInlineSection,
     previewEditableStyle,
     handlePreviewLinkNavigation,
     handleInlinePointerActivate,
     setInlineDraftDirty,
-    selectInlineEditableNode,
     snapshotInlineDraft,
     captureInlineSelection,
     handleInlineHoverMove,
@@ -335,14 +333,11 @@ export default function PreviewPane(props) {
                         const nextValue =
                           editableType === "image"
                             ? String(editableTarget.getAttribute("src") || "").trim()
-                            : String(editableTarget.textContent || "").replace(/\s+/g, " ").trim();
-                        updateSection(editableId, nextValue, { syncDraft: false });
+                            : String(editableTarget.textContent || "");
+                        updateSection(editableId, nextValue, { syncDraft: true, skipDomWrite: true });
                       }
                     }
-                    selectInlineSection(event.target);
-                    selectInlineEditableNode(event.target);
                   }
-                  syncInlineSiteModelFromDom();
                 }}
                 onBlurCapture={(event) => {
                   if (!isInlineEditing) return;
