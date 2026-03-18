@@ -1531,6 +1531,39 @@ const safeFileName = (name) => {
   return normalized;
 };
 
+const isLoopbackHostName = (value) => {
+  const host = String(value || "").trim().toLowerCase();
+  if (!host) return false;
+  return host === "localhost" || host === "::1" || /^127(?:\.\d{1,3}){3}$/.test(host);
+};
+
+const isLoopbackAddress = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return false;
+  if (isLoopbackHostName(normalized)) return true;
+  if (normalized.startsWith("::ffff:")) return isLoopbackHostName(normalized.slice(7));
+  return false;
+};
+
+const assertHostedEditAccess = (req) => {
+  const remoteAddress = String(req.socket?.remoteAddress || "").trim().toLowerCase();
+  if (isLoopbackAddress(remoteAddress)) return;
+  if (!remoteAddress && isLoopbackHostName(HOST)) return;
+  const error = new Error("Hosted edit mode is local-only.");
+  error.statusCode = 403;
+  throw error;
+};
+
+const safeEditableFileName = (name) => {
+  const safeName = safeFileName(name || "index.html");
+  if (!/\.html?$/i.test(safeName)) {
+    const error = new Error("Only HTML files are editable via hosted edit mode.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return safeName;
+};
+
 const ensureHostedRoot = async () => {
   await fs.mkdir(HOSTED_ROOT, { recursive: true });
 };
@@ -1644,6 +1677,251 @@ const hostingActions = {
     await fs.rm(siteDir(safeId), { recursive: true, force: true });
     return { ok: true, siteId: safeId };
   },
+};
+
+const siteEditActions = {
+  save: async ({ siteId, filePath, html }, context) => {
+    assertHostedEditAccess(context?.req);
+    const safeId = safeSegment(siteId || "");
+    if (!safeId) throw new Error("siteId is required");
+    const safePath = safeEditableFileName(filePath || "index.html");
+    const nextHtml = String(html || "");
+    if (!nextHtml.trim()) throw new Error("html is required");
+    if (Buffer.byteLength(nextHtml, "utf8") > 2 * 1024 * 1024) {
+      const error = new Error("Edited HTML is too large. Limit is 2MB.");
+      error.statusCode = 413;
+      throw error;
+    }
+
+    const targetDir = siteDir(safeId);
+    const outputPath = path.join(targetDir, safePath);
+    const resolvedDir = path.resolve(targetDir);
+    const resolvedOutput = path.resolve(outputPath);
+    if (!(resolvedOutput === resolvedDir || resolvedOutput.startsWith(`${resolvedDir}${path.sep}`))) {
+      throw new Error("Invalid hosted file path");
+    }
+
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await fs.writeFile(outputPath, nextHtml, "utf8");
+
+    const meta = await readSiteMeta(safeId);
+    const updatedAt = new Date().toISOString();
+    if (meta && typeof meta === "object") {
+      const nextMeta = {
+        ...meta,
+        updatedAt,
+        lastEditedFile: safePath,
+      };
+      await writeSiteMeta(safeId, nextMeta);
+    }
+
+    return {
+      ok: true,
+      siteId: safeId,
+      filePath: safePath,
+      updatedAt,
+      url: `${HOST_BASE_URL}/sites/${safeId}/${safePath}`,
+    };
+  },
+};
+
+const buildHostedEditRuntime = ({ siteId, filePath }) => {
+  const payload = JSON.stringify({ siteId, filePath });
+  return `
+  <style data-tn-hosted-editor-style="true">
+    [data-tn-hosted-editor-ui="true"] {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 2147483640;
+      width: min(340px, 92vw);
+      background: rgba(15, 23, 42, 0.96);
+      border: 1px solid rgba(148, 163, 184, 0.45);
+      color: #f8fafc;
+      border-radius: 12px;
+      box-shadow: 0 20px 48px rgba(2, 6, 23, 0.45);
+      padding: 10px 12px;
+      font: 500 13px/1.35 "Inter", "Segoe UI", Arial, sans-serif;
+      backdrop-filter: blur(8px);
+    }
+    [data-tn-hosted-editor-ui="true"] button {
+      border: none;
+      border-radius: 8px;
+      padding: 7px 11px;
+      font: 700 12px/1 "Inter", "Segoe UI", Arial, sans-serif;
+      cursor: pointer;
+    }
+    [data-tn-hosted-editor-ui="true"] .tn-he-save {
+      background: #16a34a;
+      color: #ffffff;
+    }
+    [data-tn-hosted-editor-ui="true"] .tn-he-exit {
+      background: #334155;
+      color: #e2e8f0;
+    }
+    [data-tn-theme-root="true"][data-tn-editing="true"] [data-editable="link"],
+    [data-tn-theme-root="true"][data-tn-editing="true"] [data-editable="button"],
+    [data-tn-theme-root="true"][data-tn-editing="true"] [data-editable="image"] {
+      pointer-events: auto !important;
+    }
+    [data-tn-theme-root="true"][data-tn-editing="true"] [data-editable="image"] {
+      cursor: pointer !important;
+    }
+  </style>
+  <div data-tn-hosted-editor-ui="true">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <strong style="font-size:12px;letter-spacing:.04em;text-transform:uppercase">Hosted Edit Mode</strong>
+      <small style="opacity:.85">Ctrl/Cmd+S</small>
+    </div>
+    <div style="margin-top:4px;opacity:.92" data-tn-he-path></div>
+    <div style="margin-top:8px;display:flex;gap:8px">
+      <button type="button" class="tn-he-save" data-tn-he-save>Save</button>
+      <button type="button" class="tn-he-exit" data-tn-he-exit>Exit</button>
+    </div>
+    <div style="margin-top:8px;min-height:18px;opacity:.9" data-tn-he-status>Edit mode active.</div>
+  </div>
+  <script data-tn-hosted-editor-script="true">
+    (function () {
+      var config = ${payload};
+      var saveBtn = document.querySelector("[data-tn-he-save]");
+      var exitBtn = document.querySelector("[data-tn-he-exit]");
+      var statusNode = document.querySelector("[data-tn-he-status]");
+      var pathNode = document.querySelector("[data-tn-he-path]");
+      var dirty = false;
+      var saving = false;
+      var selector = '[data-editable="text"], [data-editable="link"], [data-editable="button"]';
+      var themedRoot = document.querySelector('[data-tn-theme-root="true"]');
+      if (pathNode) pathNode.textContent = config.siteId + " / " + config.filePath;
+      if (themedRoot) themedRoot.setAttribute("data-tn-editing", "true");
+
+      var setStatus = function (text, color) {
+        if (!statusNode) return;
+        statusNode.textContent = String(text || "");
+        if (color) statusNode.style.color = color;
+      };
+
+      var markDirty = function () {
+        if (!dirty) {
+          dirty = true;
+          setStatus("Unsaved changes.", "#fde68a");
+        }
+      };
+
+      var editableNodes = document.querySelectorAll(selector);
+      for (var i = 0; i < editableNodes.length; i += 1) {
+        var node = editableNodes[i];
+        if (!(node instanceof HTMLElement)) continue;
+        node.setAttribute("contenteditable", "true");
+        node.setAttribute("tabindex", "0");
+        node.setAttribute("spellcheck", "true");
+        node.addEventListener("input", markDirty);
+        node.addEventListener("focus", function () {
+          this.classList.add("tn-editable-active");
+        });
+        node.addEventListener("blur", function () {
+          this.classList.remove("tn-editable-active");
+        });
+        if (node.matches('[data-editable="link"], [data-editable="button"]')) {
+          node.addEventListener("click", function (event) {
+            event.preventDefault();
+          });
+        }
+      }
+
+      var imageNodes = document.querySelectorAll('[data-editable="image"]');
+      for (var j = 0; j < imageNodes.length; j += 1) {
+        var img = imageNodes[j];
+        if (!(img instanceof HTMLElement)) continue;
+        img.addEventListener("click", function (event) {
+          event.preventDefault();
+          var current = String(this.getAttribute("src") || "");
+          var next = window.prompt("Enter image URL", current);
+          if (!next || next === current) return;
+          this.setAttribute("src", next);
+          markDirty();
+        });
+      }
+
+      var buildSavableHtml = function () {
+        var clone = document.documentElement.cloneNode(true);
+        var cleanupNodes = clone.querySelectorAll("[data-tn-hosted-editor-ui], [data-tn-hosted-editor-style], [data-tn-hosted-editor-script]");
+        for (var k = 0; k < cleanupNodes.length; k += 1) cleanupNodes[k].remove();
+        var touched = clone.querySelectorAll("[contenteditable], [tabindex], [spellcheck], .tn-editable-active");
+        for (var m = 0; m < touched.length; m += 1) {
+          touched[m].removeAttribute("contenteditable");
+          touched[m].removeAttribute("tabindex");
+          touched[m].removeAttribute("spellcheck");
+          touched[m].classList.remove("tn-editable-active");
+        }
+        var cloneRoot = clone.querySelector('[data-tn-theme-root="true"]');
+        if (cloneRoot) cloneRoot.removeAttribute("data-tn-editing");
+        return "<!doctype html>\\n" + clone.outerHTML;
+      };
+
+      var saveHostedPage = async function () {
+        if (saving) return;
+        saving = true;
+        setStatus("Saving...", "#93c5fd");
+        try {
+          var response = await fetch("/api/site-edit/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              siteId: config.siteId,
+              filePath: config.filePath,
+              html: buildSavableHtml(),
+            }),
+          });
+          var payload = {};
+          try {
+            payload = await response.json();
+          } catch (_) {}
+          if (!response.ok) {
+            throw new Error((payload && payload.error) || "Failed to save hosted page.");
+          }
+          dirty = false;
+          setStatus("Saved at " + new Date().toLocaleTimeString() + ".", "#86efac");
+        } catch (error) {
+          setStatus("Save failed: " + String(error && error.message ? error.message : "unknown error"), "#fca5a5");
+        } finally {
+          saving = false;
+        }
+      };
+
+      if (saveBtn) saveBtn.addEventListener("click", function () { void saveHostedPage(); });
+      if (exitBtn) {
+        exitBtn.addEventListener("click", function () {
+          if (dirty && !window.confirm("You have unsaved changes. Exit anyway?")) return;
+          var nextUrl = new URL(window.location.href);
+          nextUrl.searchParams.delete("edit");
+          window.location.href = nextUrl.toString();
+        });
+      }
+
+      window.addEventListener("keydown", function (event) {
+        if ((event.metaKey || event.ctrlKey) && String(event.key || "").toLowerCase() === "s") {
+          event.preventDefault();
+          void saveHostedPage();
+        }
+      });
+
+      window.addEventListener("beforeunload", function (event) {
+        if (!dirty) return;
+        event.preventDefault();
+        event.returnValue = "";
+      });
+    })();
+  </script>
+`;
+};
+
+const injectHostedEditRuntime = (html, options) => {
+  const source = String(html || "");
+  const runtime = buildHostedEditRuntime(options);
+  if (/<\/body>/i.test(source)) {
+    return source.replace(/<\/body>/i, `${runtime}\n</body>`);
+  }
+  return `${source}\n${runtime}`;
 };
 
 const generateActions = {
@@ -3129,7 +3407,8 @@ cloneActions["pixel-validate"] = async (payload = {}) => {
 };
 
 const serveHostedSite = async (req, res) => {
-  const pathname = new URL(req.url || "/", HOST_BASE_URL).pathname;
+  const urlObj = new URL(req.url || "/", HOST_BASE_URL);
+  const pathname = urlObj.pathname;
   const rest = pathname.replace(/^\/sites\//, "");
   if (!rest) {
     sendText(res, 200, "Hosted sites root", "text/plain; charset=utf-8");
@@ -3143,9 +3422,15 @@ const serveHostedSite = async (req, res) => {
     return;
   }
 
-  const requestedFile = fileParts.length === 0 || fileParts[fileParts.length - 1] === ""
-    ? "index.html"
-    : safeFileName(fileParts.join("/"));
+  let requestedFile = "index.html";
+  try {
+    requestedFile = fileParts.length === 0 || fileParts[fileParts.length - 1] === ""
+      ? "index.html"
+      : safeFileName(fileParts.join("/"));
+  } catch (error) {
+    sendJson(res, error.statusCode || 400, { error: error.message || "Invalid hosted file path" });
+    return;
+  }
 
   const filePath = path.join(siteDir(safeId), requestedFile);
 
@@ -3153,12 +3438,18 @@ const serveHostedSite = async (req, res) => {
     const content = await fs.readFile(filePath);
     const ext = path.extname(filePath).toLowerCase();
     const contentType = MIME_TYPES[ext] || "application/octet-stream";
+    const shouldInjectHostedEdit =
+      ext === ".html" &&
+      /^(1|true|yes|on)$/i.test(String(urlObj.searchParams.get("edit") || "").trim());
+    const responseBody = shouldInjectHostedEdit
+      ? Buffer.from(injectHostedEditRuntime(content.toString("utf8"), { siteId: safeId, filePath: requestedFile }), "utf8")
+      : content;
     res.writeHead(200, {
       "Content-Type": contentType,
-      "Content-Length": content.length,
+      "Content-Length": responseBody.length,
       "Access-Control-Allow-Origin": "*",
     });
-    res.end(content);
+    res.end(responseBody);
   } catch {
     sendJson(res, 404, { error: "Hosted file not found" });
   }
@@ -3228,6 +3519,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && req.url?.startsWith("/api/hosting/")) {
     await handleApiAction(req, res, "hosting", hostingActions);
+    return;
+  }
+
+  if (req.method === "POST" && req.url?.startsWith("/api/site-edit/")) {
+    await handleApiAction(req, res, "site-edit", siteEditActions, { authMode: "none" });
     return;
   }
 
