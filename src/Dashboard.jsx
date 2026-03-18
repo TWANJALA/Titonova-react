@@ -205,8 +205,6 @@ export default function Dashboard() {
   const [textStyle, setTextStyle] = useState({ ...DEFAULT_TEXT_STYLE });
   const [exportFramework, setExportFramework] = useState("html");
   const [exportBundleLoading, setExportBundleLoading] = useState(false);
-  const [, setDraftHtml] = useState("");
-  const [, setEditHistory] = useState([]);
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window !== "undefined" ? window.innerWidth : 1280
   );
@@ -3182,110 +3180,6 @@ ${(audit.directives || []).map((line) => `  - ${line}`).join("\n")}
           [data-tn-theme-root="true"] li {
             text-wrap: pretty;
           }
-          [data-tn-theme-root="true"] [data-editable] {
-            position: relative;
-          }
-          [data-tn-theme-root="true"] [data-editable="text"][contenteditable="true"] {
-            caret-color: var(--tn-link);
-          }
-          [data-tn-theme-root="true"] [data-editable]:hover {
-            outline: 2px solid rgba(59, 130, 246, 0.9);
-            cursor: text;
-          }
-          [data-tn-theme-root="true"] [data-editable]::after {
-            content: "Click to edit";
-            position: absolute;
-            top: -10px;
-            right: -8px;
-            opacity: 0;
-            transform: translateY(-4px);
-            pointer-events: none;
-            z-index: 4;
-            padding: 2px 7px;
-            border-radius: 999px;
-            background: rgba(30, 64, 175, 0.96);
-            color: #fff;
-            font: 700 10px/1 sans-serif;
-            letter-spacing: .04em;
-            transition: opacity 140ms ease, transform 140ms ease;
-          }
-          [data-tn-theme-root="true"] [data-editable]:hover::after {
-            opacity: 1;
-            transform: translateY(0);
-          }
-          [data-tn-theme-root="true"] [data-editable="image"]:hover {
-            cursor: pointer;
-          }
-          [data-tn-theme-root="true"] [data-editable="image"]::after {
-            content: "Click to replace";
-          }
-          [data-tn-theme-root="true"] [data-editable].tn-editable-active {
-            outline: 3px solid rgba(59, 130, 246, 0.92);
-          }
-          [data-tn-theme-root="true"] [data-tn-section-root="true"] {
-            position: relative;
-          }
-          [data-tn-theme-root="true"] [data-tn-section-root="true"]:hover {
-            outline: 2px solid rgba(59, 130, 246, 0.9);
-            outline-offset: 4px;
-          }
-          [data-tn-theme-root="true"] [data-tn-section-root="true"]::before {
-            content: "Section: " attr(data-section-name);
-            position: absolute;
-            left: 8px;
-            top: -12px;
-            opacity: 0;
-            transform: translateY(-4px);
-            pointer-events: none;
-            z-index: 4;
-            padding: 2px 7px;
-            border-radius: 999px;
-            background: rgba(15, 23, 42, 0.92);
-            color: #e2e8f0;
-            font: 700 10px/1 sans-serif;
-            letter-spacing: .04em;
-            transition: opacity 140ms ease, transform 140ms ease;
-          }
-          [data-tn-theme-root="true"] [data-tn-section-root="true"]:hover::before,
-          [data-tn-theme-root="true"] [data-tn-section-root="true"].tn-section-active::before {
-            opacity: 1;
-            transform: translateY(0);
-          }
-          [data-tn-theme-root="true"] [data-tn-section-root="true"].tn-section-active {
-            outline: 3px solid rgba(14, 165, 233, 0.92);
-            outline-offset: 6px;
-          }
-          [data-tn-theme-root="true"][data-tn-editing="true"] * {
-            user-select: text !important;
-            -webkit-user-select: text !important;
-          }
-          [data-tn-theme-root="true"][data-tn-editing="true"] article:hover,
-          [data-tn-theme-root="true"][data-tn-editing="true"] form:hover,
-          [data-tn-theme-root="true"][data-tn-editing="true"] details:hover,
-          [data-tn-theme-root="true"][data-tn-editing="true"] a:hover,
-          [data-tn-theme-root="true"][data-tn-editing="true"] button:hover {
-            transform: none !important;
-            box-shadow: var(--tn-shadow-soft) !important;
-            filter: none !important;
-          }
-          [data-tn-theme-root="true"][data-tn-editing="true"] a,
-          [data-tn-theme-root="true"][data-tn-editing="true"] button,
-          [data-tn-theme-root="true"][data-tn-editing="true"] input,
-          [data-tn-theme-root="true"][data-tn-editing="true"] textarea,
-          [data-tn-theme-root="true"][data-tn-editing="true"] select,
-          [data-tn-theme-root="true"][data-tn-editing="true"] summary,
-          [data-tn-theme-root="true"][data-tn-editing="true"] iframe,
-          [data-tn-theme-root="true"][data-tn-editing="true"] img {
-            pointer-events: none !important;
-          }
-          [data-tn-theme-root="true"][data-tn-editing="true"] [data-editable="text"] {
-            pointer-events: auto !important;
-          }
-          [data-tn-theme-root="true"][data-tn-editing="true"] [data-editable="image"],
-          [data-tn-theme-root="true"][data-tn-editing="true"] [data-editable="button"],
-          [data-tn-theme-root="true"][data-tn-editing="true"] [data-editable="link"] {
-            pointer-events: auto !important;
-          }
           [data-tn-theme-root="true"] [data-tn-reveal] {
             opacity: 0;
             transform: translate3d(0, 24px, 0);
@@ -5328,8 +5222,6 @@ ${currentHtml.slice(0, 14000)}`,
 
     setGeneratedPages((previous) => ({ ...previous, [activePage]: nextHtml }));
     setGeneratedSite(nextHtml);
-    setDraftHtml(nextHtml);
-    setEditHistory([nextHtml]);
     setPublishStatus("success");
     setPublishMessage("Growth Coach fix applied.");
   };
@@ -5853,7 +5745,6 @@ Return strict JSON:
     const nextHtml = generatedPages[pageKey] || "";
     setActivePage(pageKey);
     setGeneratedSite(nextHtml);
-    setDraftHtml(nextHtml);
   };
 
   const handlePreviewLinkNavigation = (event) => {
@@ -6006,7 +5897,6 @@ Return strict JSON:
   const redesignInsights = deriveRedesignInsights(sourceWebsiteUrl);
   const hasDashboardAccess = true;
   const hasGeneratedContent = Object.keys(generatedPages).length > 0 || Boolean(generatedSite);
-  const shouldShowGuestPreviewPrompt = false;
   const currentPageHtml = generatedPages[activePage] || generatedSite || "";
   const seoChecklist = computeSeoChecklist(currentPageHtml);
   const currentMapQuery = extractMapQueryFromHtml(currentPageHtml);
@@ -6057,7 +5947,6 @@ Return strict JSON:
       : publishedSiteId
         ? "Your site has been published. You can re-publish anytime after edits."
         : "Generate, review the preview, then publish when ready.";
-  const previewGuestOverlayStyle = styles.previewGuestOverlay;
 
   const applyImageUpdate = (imageId, nextSrc, scope = imageApplyScope) => {
     if (!imageId || !nextSrc) return;
@@ -6072,15 +5961,12 @@ Return strict JSON:
       const active = nextPages[activePage] || nextPages[keys[0]] || "";
       setGeneratedPages(nextPages);
       setGeneratedSite(active);
-      setDraftHtml(active);
       return;
     }
     const baseHtml = currentPageHtml;
     const nextHtml = updateImageSourceInHtml(baseHtml, imageId, nextSrc);
     setGeneratedPages((previous) => ({ ...previous, [activePage]: nextHtml }));
     setGeneratedSite(nextHtml);
-    setDraftHtml(nextHtml);
-    setEditHistory([nextHtml]);
   };
 
   const readImageFileAsDataUrl = (file) =>
@@ -6129,8 +6015,6 @@ Return strict JSON:
     const active = nextPages[activePage] || nextPages[keys[0]] || "";
     setGeneratedPages(nextPages);
     setGeneratedSite(active);
-    setDraftHtml(active);
-    setEditHistory(active ? [active] : []);
     setPublishStatus("success");
     setPublishMessage(`Updated map location: ${nextQuery}`);
   };
@@ -6202,8 +6086,6 @@ Return strict JSON:
     const active = nextPages[activePage] || nextPages[keys[0]] || "";
     setGeneratedPages(nextPages);
     setGeneratedSite(active);
-    setDraftHtml(active);
-    setEditHistory(active ? [active] : []);
     setPublishStatus("success");
     setPublishMessage("Brand kit applied across all generated pages.");
   };
@@ -6449,8 +6331,6 @@ Keep each item unique, SEO-friendly, and conversion-oriented.`,
       setTextStyle(nextTextStyle);
       setGeneratedPages(nextPages);
       setGeneratedSite(active);
-      setDraftHtml(active);
-      setEditHistory(active ? [active] : []);
       const timestamp = new Date().toISOString();
       setLastDesignEvolutionAt(timestamp);
       if (!silent) {
@@ -6548,8 +6428,6 @@ Keep each item unique, SEO-friendly, and conversion-oriented.`,
       const timestamp = new Date().toISOString();
       setGeneratedPages(nextPages);
       setGeneratedSite(active);
-      setDraftHtml(active);
-      setEditHistory(active ? [active] : []);
       setLastSelfOptimizationAt(timestamp);
       setSelfOptimizationHistory((previous) => [
         {
@@ -6844,8 +6722,6 @@ ${JSON.stringify(sourceTexts)}`,
       const active = nextPages[activePage] || nextPages[keys[0]] || "";
       setGeneratedPages(nextPages);
       setGeneratedSite(active);
-      setDraftHtml(active);
-      setEditHistory(active ? [active] : []);
       setPublishStatus("success");
       setPublishMessage(`Global translation complete: ${lang}`);
     } finally {
@@ -6875,8 +6751,6 @@ ${JSON.stringify(sourceTexts)}`,
       const active = nextPages[activePage] || nextPages[keys[0]] || "";
       setGeneratedPages(nextPages);
       setGeneratedSite(active);
-      setDraftHtml(active);
-      setEditHistory(active ? [active] : []);
     }
     setPublishStatus("success");
     setPublishMessage("Default colors reset and applied.");
@@ -6907,8 +6781,6 @@ ${JSON.stringify(sourceTexts)}`,
       const active = nextPages[activePage] || nextPages[keys[0]] || "";
       setGeneratedPages(nextPages);
       setGeneratedSite(active);
-      setDraftHtml(active);
-      setEditHistory(active ? [active] : []);
     }
     setPublishStatus("success");
     setPublishMessage("Text defaults reset and applied.");
@@ -6926,8 +6798,6 @@ ${JSON.stringify(sourceTexts)}`,
     const active = nextPages[activePage] || nextPages[keys[0]] || "";
     setGeneratedPages(nextPages);
     setGeneratedSite(active);
-    setDraftHtml(active);
-    setEditHistory(active ? [active] : []);
     setPublishStatus("success");
     setPublishMessage("Text styles and fonts applied across all pages.");
   };
@@ -6943,8 +6813,6 @@ ${JSON.stringify(sourceTexts)}`,
     const active = nextPages[activePage] || nextPages[keys[0]] || "";
     setGeneratedPages(nextPages);
     setGeneratedSite(active);
-    setDraftHtml(active);
-    setEditHistory(active ? [active] : []);
     setPublishStatus("success");
     setPublishMessage("Theme colors applied across all pages.");
   };
@@ -7993,7 +7861,6 @@ ${JSON.stringify(sourceTexts)}`,
       setGeneratedPages(safePages);
       if (safePageKey) setActivePage(safePageKey);
       setGeneratedSite(nextHtml);
-      setDraftHtml(nextHtml);
     },
     []
   );
@@ -9487,11 +9354,8 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
               handlePublishAddon,
             },
           }}
-          shouldShowGuestPreviewPrompt={shouldShowGuestPreviewPrompt}
           handlePreviewLinkNavigation={handlePreviewLinkNavigation}
           generatedSite={generatedSite}
-          previewGuestOverlayStyle={previewGuestOverlayStyle}
-          setAuthMode={setAuthMode}
           handlePrimaryGenerateWebsite={handlePrimaryGenerateWebsite}
           handleSmartFillPrompt={handleSmartFillPrompt}
           handleQuickPromptChip={handleQuickPromptChip}

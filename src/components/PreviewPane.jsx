@@ -52,11 +52,8 @@ export default function PreviewPane(props) {
     handleDeleteActivePage,
     seoChecklist,
     insightsProps,
-    shouldShowGuestPreviewPrompt,
     handlePreviewLinkNavigation,
     generatedSite,
-    previewGuestOverlayStyle,
-    setAuthMode,
     handlePrimaryGenerateWebsite,
     handleSmartFillPrompt,
     handleQuickPromptChip,
@@ -167,29 +164,11 @@ export default function PreviewPane(props) {
             <PreviewInsightsSections {...insightsProps} />
           </Suspense>
           <div style={styles.previewCanvasWrap}>
-            <div style={shouldShowGuestPreviewPrompt ? styles.previewCanvasFaint : undefined}>
-              <div
-                ref={previewEditableRef}
-                onClick={handlePreviewLinkNavigation}
-                dangerouslySetInnerHTML={{ __html: generatedSite }}
-              />
-            </div>
-            {shouldShowGuestPreviewPrompt ? (
-              <div style={previewGuestOverlayStyle}>
-                <strong style={styles.previewGuestTitle}>Create an account to save and publish this website</strong>
-                <small style={styles.previewGuestMeta}>
-                  Your generated site is ready. Sign up here to unlock dashboard saves, publishing, and project access.
-                </small>
-                <div style={styles.previewGuestActions}>
-                  <button type="button" style={styles.authPrimaryButton} onClick={() => setAuthMode("signup")}>
-                    Create Account
-                  </button>
-                  <button type="button" style={styles.authGhostButton} onClick={() => setAuthMode("login")}>
-                    Login
-                  </button>
-                </div>
-              </div>
-            ) : null}
+            <div
+              ref={previewEditableRef}
+              onClick={handlePreviewLinkNavigation}
+              dangerouslySetInnerHTML={{ __html: generatedSite }}
+            />
           </div>
         </div>
       ) : (
