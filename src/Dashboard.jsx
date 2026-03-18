@@ -4494,7 +4494,7 @@ ${content || ""}
       } else {
         setPublishStatus("info");
         setPublishMessage(
-          String(payload?.message || "Account created. Awaiting super admin approval before dashboard access.")
+          String(payload?.message || "Account created.")
         );
         setAuthPasswordInput("");
       }
@@ -10663,25 +10663,24 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
           <span style={styles.eyebrow}>TITONOVA CLOUD  BUSINESS ENGINE</span>
           <h1 style={styles.title}>TitoNova Cloud Business &amp; Website Engine</h1>
           <p style={styles.subtitle}>
-            Dashboard access is locked. Create an account and wait for super admin approval.
+            Dashboard access is locked. Create an account or log in to continue.
           </p>
         </div>
         <div style={{ ...styles.card, maxWidth: 760, margin: "0 auto" }}>
           <h2 style={styles.sectionTitle}>Create Account</h2>
           <p style={styles.sectionIntro}>
-            New users are set to pending status until approved by super admin.
+            New users can access the dashboard immediately after signup.
           </p>
           {authUser ? (
             <div style={styles.authCard}>
               <div style={styles.authHeader}>
-                <strong style={styles.authTitle}>Approval Pending</strong>
+                <strong style={styles.authTitle}>Account Active</strong>
                 <button type="button" style={styles.authGhostButton} onClick={handleLogout}>
                   Logout
                 </button>
               </div>
               <small style={styles.authMeta}>
-                Account: {authUser?.email || "unknown"} · Status: {authUser?.approval_status || "pending"}.
-                You will gain dashboard access after super admin approval.
+                Account: {authUser?.email || "unknown"} · Status: {authUser?.approval_status || "approved"}.
               </small>
             </div>
           ) : (
@@ -10699,7 +10698,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
                   style={authMode === "login" ? styles.authModeButtonActive : styles.authModeButton}
                   onClick={() => setAuthMode("login")}
                 >
-                  Login (Approved Users)
+                  Login
                 </button>
               </div>
               {authMode === "signup" ? (

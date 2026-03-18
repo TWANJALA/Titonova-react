@@ -99,10 +99,8 @@ const SUPER_ADMIN_EMAILS = new Set(
     .filter(Boolean)
 );
 const isSuperAdminEmail = (email) => SUPER_ADMIN_EMAILS.has(sanitizeEmail(email));
-const isUserApproved = (user) =>
-  isSuperAdminEmail(user?.email) ||
-  String(user?.email_verify_token || "").trim() === ADMIN_APPROVAL_APPROVED;
-const userApprovalStatus = (user) => (isUserApproved(user) ? "approved" : "pending");
+const isUserApproved = () => true;
+const userApprovalStatus = () => "approved";
 
 const safeJsonParse = (value, fallback = {}) => {
   try {
@@ -840,11 +838,6 @@ const requireUser = async (req, payload = {}) => {
   if (!user) {
     const error = new Error("User session no longer valid");
     error.statusCode = 401;
-    throw error;
-  }
-  if (!isUserApproved(user)) {
-    const error = new Error("Account pending super admin approval.");
-    error.statusCode = 403;
     throw error;
   }
   return { user, claims, db, prisma, token };
@@ -2245,8 +2238,6 @@ const authActions = {
 
     const prisma = await getPrismaClient();
     let user;
-    const superAdmin = isSuperAdminEmail(email);
-    const approvalToken = superAdmin ? ADMIN_APPROVAL_APPROVED : ADMIN_APPROVAL_PENDING;
     if (prisma) {
       const existing = await prisma.user.findUnique({ where: { email } });
       if (existing) {
@@ -2259,8 +2250,9 @@ const authActions = {
           name,
           email,
           password_hash: hashPassword(password),
-          email_verified: Boolean(superAdmin),
-          email_verify_token: approvalToken,
+          email_verified: true,
+          email_verify_token: null,
+          email_verify_expires_at: null,
         },
       });
       const workspace = await prisma.workspace.create({
@@ -2300,8 +2292,9 @@ const authActions = {
         name,
         email,
         password_hash: hashPassword(password),
-        email_verified: Boolean(superAdmin),
-        email_verify_token: approvalToken,
+        email_verified: true,
+        email_verify_token: "",
+        email_verify_expires_at: "",
         active_workspace_id: "",
         created_at: nowIso(),
       };
@@ -2333,15 +2326,13 @@ const authActions = {
       await writeDb(db);
     }
 
-    const token = isUserApproved(user) ? signJwt({ user_id: user.id, email: user.email }) : "";
+    const token = signJwt({ user_id: user.id, email: user.email });
     return {
       ok: true,
       token,
       user: publicUser(user),
-      requires_approval: !isUserApproved(user),
-      message: isUserApproved(user)
-        ? "Account created."
-        : "Account created. Awaiting super admin approval before dashboard access.",
+      requires_approval: false,
+      message: "Account created.",
     };
   },
 
@@ -2366,11 +2357,6 @@ const authActions = {
     if (!user || !verifyPassword(password, user.password_hash)) {
       const error = new Error("Invalid login");
       error.statusCode = 401;
-      throw error;
-    }
-    if (!isUserApproved(user)) {
-      const error = new Error("Account pending super admin approval.");
-      error.statusCode = 403;
       throw error;
     }
     const token = signJwt({ user_id: user.id, email: user.email });
@@ -2429,11 +2415,12 @@ const authActions = {
       await prisma.user.update({
         where: { id: user.id },
         data: {
-          email_verify_token: ADMIN_APPROVAL_PENDING,
+          email_verified: true,
+          email_verify_token: null,
           email_verify_expires_at: null,
         },
       });
-      return { ok: true, message: "Email confirmed. Awaiting super admin approval." };
+      return { ok: true, message: "Email confirmed." };
     }
     const db = await readDb();
     const index = db.users.findIndex((item) => item.email_verify_token === token);
@@ -2442,11 +2429,12 @@ const authActions = {
     if (!expiresAt || expiresAt < Date.now()) throw new Error("Verification token expired");
     db.users[index] = {
       ...db.users[index],
-      email_verify_token: ADMIN_APPROVAL_PENDING,
+      email_verified: true,
+      email_verify_token: "",
       email_verify_expires_at: "",
     };
     await writeDb(db);
-    return { ok: true, message: "Email confirmed. Awaiting super admin approval." };
+    return { ok: true, message: "Email confirmed." };
   },
 
   "admin/list-pending-users": async (payload, context) => {
