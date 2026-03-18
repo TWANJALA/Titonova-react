@@ -72,6 +72,8 @@ export default function PreviewPane(props) {
     inlineCheckpoints,
     handleRestoreInlineCheckpoint,
     inlineAdvancedOpen,
+    simpleInlineMode,
+    setSimpleInlineMode,
     inlineSmartInputStyle,
     inlineSmartCommand,
     setInlineSmartCommand,
@@ -260,6 +262,8 @@ export default function PreviewPane(props) {
                   inlineCheckpoints={inlineCheckpoints}
                   handleRestoreInlineCheckpoint={handleRestoreInlineCheckpoint}
                   inlineAdvancedOpen={inlineAdvancedOpen}
+                  simpleInlineMode={simpleInlineMode}
+                  setSimpleInlineMode={setSimpleInlineMode}
                   stylesInput={inlineSmartInputStyle}
                   inlineSmartCommand={inlineSmartCommand}
                   setInlineSmartCommand={setInlineSmartCommand}

@@ -15,6 +15,8 @@ export default function InlineEditorOverlay({
   inlineCheckpoints,
   handleRestoreInlineCheckpoint,
   inlineAdvancedOpen,
+  simpleInlineMode,
+  setSimpleInlineMode,
   stylesInput,
   inlineSmartCommand,
   setInlineSmartCommand,
@@ -73,6 +75,7 @@ export default function InlineEditorOverlay({
       : String(sections?.[selectedEditableMeta.id] ?? selectedEditableMeta?.value ?? "")
     : "";
   const canInlineEditSelectedValue = selectedEditableType === "text" || selectedEditableType === "button" || selectedEditableType === "link";
+  const showAdvancedControls = !simpleInlineMode;
   const preserveInlineSelection = (event) => {
     event.preventDefault();
   };
@@ -88,9 +91,26 @@ export default function InlineEditorOverlay({
       <div style={inlineEditToolbarStyle}>
         <div style={inlineEditMetaStyle}>
           <strong style={styles.inlineEditTitle}>Inline edit mode</strong>
+          <div style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              style={simpleInlineMode ? styles.inlineModeButton : styles.inlineSmartChip}
+              onClick={() => setSimpleInlineMode(true)}
+            >
+              Simple
+            </button>
+            <button
+              style={!simpleInlineMode ? styles.inlineModeButton : styles.inlineSmartChip}
+              onClick={() => setSimpleInlineMode(false)}
+            >
+              Advanced
+            </button>
+          </div>
           <small style={styles.inlineEditHint}>
             Click any text and type. Save when you're done. Shortcuts: Cmd/Ctrl+S save, Cmd/Ctrl+Z undo, Cmd/Ctrl+Y redo.
           </small>
+          {simpleInlineMode ? (
+            <small style={styles.inlineSelectionMeta}>Quick steps: 1) Click text in preview 2) Type in the box 3) Click Save.</small>
+          ) : null}
           {inlineSmartStatus ? <small style={styles.inlineSmartStatus}>{inlineSmartStatus}</small> : null}
           <small style={styles.inlineSelectionMeta}>
             Synced editable elements: {Object.keys(inlineSiteModel).length}
@@ -118,7 +138,7 @@ export default function InlineEditorOverlay({
                 ))}
             </div>
           ) : null}
-          {inlineAdvancedOpen && (
+          {inlineAdvancedOpen && showAdvancedControls && (
             <>
               <div style={styles.inlineSmartRow}>
                 <input
@@ -191,7 +211,7 @@ export default function InlineEditorOverlay({
               {selectedSectionEditId ? (
                 <label style={styles.inlineSectionField}>
                   <small style={styles.inlineSectionLabel}>
-                    Selected Text Block ({selectedSectionEditId})
+                    Selected Text Block
                   </small>
                   <textarea
                     style={{ ...stylesInput, minHeight: 80, resize: "vertical" }}
@@ -200,47 +220,51 @@ export default function InlineEditorOverlay({
                   />
                 </label>
               ) : null}
-              <label style={styles.inlineSectionField}>
-                <small style={styles.inlineSectionLabel}>Title</small>
-                <input
-                  style={stylesInput}
-                  value={selectedSectionMeta.titleId ? String(sections?.[selectedSectionMeta.titleId] ?? selectedSectionMeta.title ?? "") : selectedSectionMeta.title || ""}
-                  onChange={(event) => handleSectionFieldChange("title", event.target.value)}
-                />
-              </label>
-              <label style={styles.inlineSectionField}>
-                <small style={styles.inlineSectionLabel}>Subtitle</small>
-                <textarea
-                  style={{ ...stylesInput, minHeight: 72, resize: "vertical" }}
-                  value={selectedSectionMeta.subtitleId ? String(sections?.[selectedSectionMeta.subtitleId] ?? selectedSectionMeta.subtitle ?? "") : selectedSectionMeta.subtitle || ""}
-                  onChange={(event) => handleSectionFieldChange("subtitle", event.target.value)}
-                />
-              </label>
-              <label style={styles.inlineSectionField}>
-                <small style={styles.inlineSectionLabel}>Button Text</small>
-                <input
-                  style={stylesInput}
-                  value={selectedSectionMeta.buttonTextId ? String(sections?.[selectedSectionMeta.buttonTextId] ?? selectedSectionMeta.buttonText ?? "") : selectedSectionMeta.buttonText || ""}
-                  onChange={(event) => handleSectionFieldChange("buttonText", event.target.value)}
-                />
-              </label>
-              <div style={styles.inlineSectionActions}>
-                <button style={styles.inlineAutoApplyButton} onMouseDown={preserveInlineSelection} onClick={handleImproveSelectedSection}>
-                  Improve
-                </button>
-                <button style={styles.inlineAutoApplyButton} onMouseDown={preserveInlineSelection} onClick={handleReplaceSelectedSection}>
-                  Replace
-                </button>
-                <button style={styles.inlineSmartChip} onMouseDown={preserveInlineSelection} onClick={() => handleMoveSelectedSection("up")}>
-                  Move Up
-                </button>
-                <button style={styles.inlineSmartChip} onMouseDown={preserveInlineSelection} onClick={() => handleMoveSelectedSection("down")}>
-                  Move Down
-                </button>
-                <button style={styles.cancelButton} onMouseDown={preserveInlineSelection} onClick={handleDeleteSelectedSection}>
-                  Delete
-                </button>
-              </div>
+              {showAdvancedControls ? (
+                <>
+                  <label style={styles.inlineSectionField}>
+                    <small style={styles.inlineSectionLabel}>Title</small>
+                    <input
+                      style={stylesInput}
+                      value={selectedSectionMeta.titleId ? String(sections?.[selectedSectionMeta.titleId] ?? selectedSectionMeta.title ?? "") : selectedSectionMeta.title || ""}
+                      onChange={(event) => handleSectionFieldChange("title", event.target.value)}
+                    />
+                  </label>
+                  <label style={styles.inlineSectionField}>
+                    <small style={styles.inlineSectionLabel}>Subtitle</small>
+                    <textarea
+                      style={{ ...stylesInput, minHeight: 72, resize: "vertical" }}
+                      value={selectedSectionMeta.subtitleId ? String(sections?.[selectedSectionMeta.subtitleId] ?? selectedSectionMeta.subtitle ?? "") : selectedSectionMeta.subtitle || ""}
+                      onChange={(event) => handleSectionFieldChange("subtitle", event.target.value)}
+                    />
+                  </label>
+                  <label style={styles.inlineSectionField}>
+                    <small style={styles.inlineSectionLabel}>Button Text</small>
+                    <input
+                      style={stylesInput}
+                      value={selectedSectionMeta.buttonTextId ? String(sections?.[selectedSectionMeta.buttonTextId] ?? selectedSectionMeta.buttonText ?? "") : selectedSectionMeta.buttonText || ""}
+                      onChange={(event) => handleSectionFieldChange("buttonText", event.target.value)}
+                    />
+                  </label>
+                  <div style={styles.inlineSectionActions}>
+                    <button style={styles.inlineAutoApplyButton} onMouseDown={preserveInlineSelection} onClick={handleImproveSelectedSection}>
+                      Improve
+                    </button>
+                    <button style={styles.inlineAutoApplyButton} onMouseDown={preserveInlineSelection} onClick={handleReplaceSelectedSection}>
+                      Replace
+                    </button>
+                    <button style={styles.inlineSmartChip} onMouseDown={preserveInlineSelection} onClick={() => handleMoveSelectedSection("up")}>
+                      Move Up
+                    </button>
+                    <button style={styles.inlineSmartChip} onMouseDown={preserveInlineSelection} onClick={() => handleMoveSelectedSection("down")}>
+                      Move Down
+                    </button>
+                    <button style={styles.cancelButton} onMouseDown={preserveInlineSelection} onClick={handleDeleteSelectedSection}>
+                      Delete
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -248,34 +272,6 @@ export default function InlineEditorOverlay({
           <span style={inlineDraftDirty ? styles.inlineDirtyBadge : styles.inlineCleanBadge}>
             {inlineDraftDirty ? "Unsaved changes" : "Saved"}
           </span>
-          {rewriteButtons.map((item) => (
-            <button
-              key={item.command}
-              style={styles.inlineAutoApplyButton}
-              disabled={!canRewriteSelection}
-              onMouseDown={preserveInlineSelection}
-              onClick={() => handleRunInlineSmartCommand(item.command)}
-            >
-              {item.label}
-            </button>
-          ))}
-          <button style={styles.inlineAutoApplyButton} onClick={handleImproveInlinePageCopy} disabled={inlineBulkImproving}>
-            {inlineBulkImproving ? "Improving..." : "Improve Page Copy"}
-          </button>
-          <button style={styles.inlineAutoApplyButton} onClick={handleImproveInlineSectionCopy} disabled={inlineBulkImproving || !canEditSection}>
-            Improve Section
-          </button>
-          <button style={styles.saveButton} onClick={handleImproveAndSaveInlinePageCopy} disabled={inlineBulkImproving}>
-            Improve + Save
-          </button>
-          <button style={styles.goLiveButton} onClick={handleImproveSavePublishInline} disabled={inlineBulkImproving || publishing}>
-            {publishing ? "Publishing..." : "Improve + Save + Publish"}
-          </button>
-          {inlineLastPublishSnapshot?.html ? (
-            <button style={styles.undoButton} onClick={handleRollbackInlinePublishSnapshot}>
-              Quick Rollback
-            </button>
-          ) : null}
           <button style={styles.undoButton} onClick={handleUndoInlineEdit} disabled={editHistory.length <= 1}>
             Undo
           </button>
@@ -288,17 +284,49 @@ export default function InlineEditorOverlay({
           <button style={styles.cancelButton} onClick={handleCancelInlineEdit}>
             Discard
           </button>
-          <button style={styles.inlineModeButton} onClick={() => setInlineAdvancedOpen((previous) => !previous)}>
-            {inlineAdvancedOpen ? "Hide Advanced" : "Advanced"}
-          </button>
-          {inlineAdvancedOpen && (
-            <button style={styles.inlineModeButton} onClick={() => setFieldLockMode((previous) => !previous)}>
-              {fieldLockMode ? "Text-only mode" : "Free layout mode"}
-            </button>
-          )}
+          {showAdvancedControls ? (
+            <>
+              {rewriteButtons.map((item) => (
+                <button
+                  key={item.command}
+                  style={styles.inlineAutoApplyButton}
+                  disabled={!canRewriteSelection}
+                  onMouseDown={preserveInlineSelection}
+                  onClick={() => handleRunInlineSmartCommand(item.command)}
+                >
+                  {item.label}
+                </button>
+              ))}
+              <button style={styles.inlineAutoApplyButton} onClick={handleImproveInlinePageCopy} disabled={inlineBulkImproving}>
+                {inlineBulkImproving ? "Improving..." : "Improve Page Copy"}
+              </button>
+              <button style={styles.inlineAutoApplyButton} onClick={handleImproveInlineSectionCopy} disabled={inlineBulkImproving || !canEditSection}>
+                Improve Section
+              </button>
+              <button style={styles.saveButton} onClick={handleImproveAndSaveInlinePageCopy} disabled={inlineBulkImproving}>
+                Improve + Save
+              </button>
+              <button style={styles.goLiveButton} onClick={handleImproveSavePublishInline} disabled={inlineBulkImproving || publishing}>
+                {publishing ? "Publishing..." : "Improve + Save + Publish"}
+              </button>
+              {inlineLastPublishSnapshot?.html ? (
+                <button style={styles.undoButton} onClick={handleRollbackInlinePublishSnapshot}>
+                  Quick Rollback
+                </button>
+              ) : null}
+              <button style={styles.inlineModeButton} onClick={() => setInlineAdvancedOpen((previous) => !previous)}>
+                {inlineAdvancedOpen ? "Hide Advanced" : "Advanced"}
+              </button>
+              {inlineAdvancedOpen ? (
+                <button style={styles.inlineModeButton} onClick={() => setFieldLockMode((previous) => !previous)}>
+                  {fieldLockMode ? "Text-only mode" : "Free layout mode"}
+                </button>
+              ) : null}
+            </>
+          ) : null}
         </div>
       </div>
-      {selectedEditableMeta ? (
+      {selectedEditableMeta && showAdvancedControls ? (
         <div
           style={{
             ...styles.inlineFloatingToolbar,
