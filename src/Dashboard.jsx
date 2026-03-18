@@ -62,7 +62,6 @@ import {
 const GenerationWorkflowPanels = React.lazy(() => import("./components/GenerationWorkflowPanels"));
 const AdvancedOperationsPanels = React.lazy(() => import("./components/AdvancedOperationsPanels"));
 const AUTH_ENABLED = false;
-const AUTH_DISABLED_MESSAGE = "Login and account creation are temporarily disabled.";
 
 export default function Dashboard() {
 
@@ -4224,8 +4223,8 @@ ${content || ""}
 
   const navigateToAuth = (path = "/signup") => {
     if (!AUTH_ENABLED) {
-      setPublishStatus("info");
-      setPublishMessage(AUTH_DISABLED_MESSAGE);
+      window.history.pushState({}, "", "/dashboard");
+      window.dispatchEvent(new PopStateEvent("popstate"));
       return;
     }
     const nextPath = path === "/login" ? "/login" : "/signup";
@@ -4346,8 +4345,6 @@ ${content || ""}
 
   const handleSignup = async () => {
     if (!AUTH_ENABLED) {
-      setPublishStatus("info");
-      setPublishMessage(AUTH_DISABLED_MESSAGE);
       return;
     }
     if (authLoading) return;
@@ -4387,8 +4384,6 @@ ${content || ""}
 
   const handleLogin = async () => {
     if (!AUTH_ENABLED) {
-      setPublishStatus("info");
-      setPublishMessage(AUTH_DISABLED_MESSAGE);
       return;
     }
     if (authLoading) return;
@@ -8285,11 +8280,7 @@ ${uiDesignClause}${buildUltraSmartPromptClause(ultraSmartPlan)}${buildSmartQaPro
       } else {
         setShowGuestAuthPrompt(AUTH_ENABLED);
         setPublishStatus("info");
-        setPublishMessage(
-          AUTH_ENABLED
-            ? "Website generated in guest mode. Editing is enabled. Create an account only if you want to save/publish/manage projects."
-            : "Website generated in guest mode. Login and account creation are temporarily disabled."
-        );
+        setPublishMessage("Website generated. Open mode is enabled.");
       }
       runDeferred(async () => {
         await runMarketingAutopilot({ source: "generation" });

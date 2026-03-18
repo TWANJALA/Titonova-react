@@ -19,6 +19,8 @@ export default function AuthProjectCard({
   userProjects,
   refreshUserProjects,
 }) {
+  if (!authEnabled) return null;
+
   return (
     <section style={styles.authCard}>
       <div style={styles.authHeader}>

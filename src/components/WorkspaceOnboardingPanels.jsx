@@ -203,24 +203,20 @@ export default function WorkspaceOnboardingPanels({
           )}
         </section>
       )}
-      {showGuestAuthPrompt && !authUser && (
+      {showGuestAuthPrompt && !authUser && authEnabled && (
         <section style={styles.guestPromptCard}>
           <strong style={styles.guestPromptTitle}>Website generated successfully</strong>
           <small style={styles.guestPromptMeta}>
             Create an account to save this project, publish it, and access it from your dashboard anytime.
           </small>
-          {authEnabled ? (
-            <div style={styles.guestPromptActions}>
-              <button type="button" style={styles.authPrimaryButton} onClick={() => navigateToAuth("/signup")}>
-                Create Account
-              </button>
-              <button type="button" style={styles.authGhostButton} onClick={() => navigateToAuth("/login")}>
-                Login
-              </button>
-            </div>
-          ) : (
-            <small style={styles.authMeta}>Login and account creation are temporarily disabled.</small>
-          )}
+          <div style={styles.guestPromptActions}>
+            <button type="button" style={styles.authPrimaryButton} onClick={() => navigateToAuth("/signup")}>
+              Create Account
+            </button>
+            <button type="button" style={styles.authGhostButton} onClick={() => navigateToAuth("/login")}>
+              Login
+            </button>
+          </div>
         </section>
       )}
       <section style={styles.quickStartCard}>
