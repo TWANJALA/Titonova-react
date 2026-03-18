@@ -30,6 +30,7 @@ The same gateway also provides platform hosting endpoints:
 Published sites are served at:
 
 - `GET /sites/:siteId/index.html`
+- `GET /api/hosting/site/:siteId/index.html` (Vercel direct fallback mode)
 
 Published files are stored locally in:
 

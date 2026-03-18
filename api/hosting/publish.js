@@ -1,7 +1,11 @@
-import { config, proxyToGateway } from "../_gatewayProxy.js";
+import { config, proxyToGateway, shouldProxyToGateway } from "../_gatewayProxy.js";
+import { handleDirectHostingAction } from "../_hostingDirect.js";
 
 export { config };
 
 export default async function handler(req, res) {
-  return proxyToGateway(req, res, "/api/hosting/publish");
+  if (shouldProxyToGateway(req, "/api/hosting/publish")) {
+    return proxyToGateway(req, res, "/api/hosting/publish");
+  }
+  return handleDirectHostingAction(req, res, "publish");
 }
