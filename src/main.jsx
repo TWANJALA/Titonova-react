@@ -4,7 +4,6 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 
 const Dashboard = React.lazy(() => import('./Dashboard.jsx'))
-const LoginPage = React.lazy(() => import('./LoginPage.jsx'))
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
@@ -67,6 +66,7 @@ createRoot(rootEl).render(
 )
 
 const AUTH_TOKEN_STORAGE_KEY = "titonova_auth_token_v1"
+const AUTH_ENABLED = false
 
 function AppRouter() {
   const [path, setPath] = React.useState(window.location.pathname || "/")
@@ -90,12 +90,13 @@ function AppRouter() {
     setPath(nextPath)
   }, [])
 
-  const onAuthed = React.useCallback(() => {
-    setIsAuthed(true)
-    navigate("/dashboard", true)
-  }, [navigate])
-
   React.useEffect(() => {
+    if (!AUTH_ENABLED) {
+      if (path !== "/dashboard") {
+        navigate("/dashboard", true)
+      }
+      return
+    }
     if (isAuthed && ["/login", "/signup", "/"].includes(path)) {
       navigate("/dashboard", true)
       return
@@ -105,12 +106,13 @@ function AppRouter() {
     }
   }, [isAuthed, path, navigate])
 
+  if (!AUTH_ENABLED) {
+    if (path !== "/dashboard") return null
+    return <Dashboard />
+  }
+
   if (isAuthed && ["/login", "/signup", "/"].includes(path)) return null
   if (!isAuthed && path === "/") return null
-
-  if (path === "/login" || path === "/signup") {
-    return <LoginPage mode={path === "/signup" ? "signup" : "login"} onAuthed={onAuthed} />
-  }
 
   return <Dashboard />
 }

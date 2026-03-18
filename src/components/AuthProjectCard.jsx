@@ -2,6 +2,7 @@ import React from "react";
 
 export default function AuthProjectCard({
   styles,
+  authEnabled = true,
   authUser,
   authMode,
   setAuthMode,
@@ -28,7 +29,7 @@ export default function AuthProjectCard({
           <button type="button" style={styles.authGhostButton} onClick={handleLogout}>
             Logout
           </button>
-        ) : (
+        ) : authEnabled ? (
           <div style={styles.authModeRow}>
             <button
               type="button"
@@ -45,9 +46,11 @@ export default function AuthProjectCard({
               Sign Up
             </button>
           </div>
+        ) : (
+          <small style={styles.authMeta}>Login and account creation are temporarily disabled.</small>
         )}
       </div>
-      {!authUser ? (
+      {!authUser && authEnabled ? (
         <div style={styles.authFormGrid}>
           {authMode === "signup" && (
             <input
@@ -80,15 +83,17 @@ export default function AuthProjectCard({
             {authLoading ? "Please wait..." : authMode === "signup" ? "Create Account" : "Login"}
           </button>
         </div>
-      ) : (
+      ) : authUser ? (
         <div style={styles.authProjectWrap}>
           <small style={styles.authMeta}>Saved projects: {userProjects.length}</small>
           <button type="button" style={styles.authGhostButton} onClick={() => refreshUserProjects()}>
             Refresh Projects
           </button>
         </div>
+      ) : (
+        <small style={styles.authMeta}>Guest mode is active. Auth flows will be re-enabled later.</small>
       )}
-      {!authUser && (
+      {!authUser && authEnabled && (
         <small style={styles.authMeta}>
           Guest mode is enabled. You can generate first, then create an account to save and publish.
         </small>

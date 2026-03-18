@@ -2,6 +2,7 @@ import React from "react";
 
 export default function WorkspaceOnboardingPanels({
   styles,
+  authEnabled = true,
   authUser,
   showAdvancedTools,
   billingLoading,
@@ -208,14 +209,18 @@ export default function WorkspaceOnboardingPanels({
           <small style={styles.guestPromptMeta}>
             Create an account to save this project, publish it, and access it from your dashboard anytime.
           </small>
-          <div style={styles.guestPromptActions}>
-            <button type="button" style={styles.authPrimaryButton} onClick={() => navigateToAuth("/signup")}>
-              Create Account
-            </button>
-            <button type="button" style={styles.authGhostButton} onClick={() => navigateToAuth("/login")}>
-              Login
-            </button>
-          </div>
+          {authEnabled ? (
+            <div style={styles.guestPromptActions}>
+              <button type="button" style={styles.authPrimaryButton} onClick={() => navigateToAuth("/signup")}>
+                Create Account
+              </button>
+              <button type="button" style={styles.authGhostButton} onClick={() => navigateToAuth("/login")}>
+                Login
+              </button>
+            </div>
+          ) : (
+            <small style={styles.authMeta}>Login and account creation are temporarily disabled.</small>
+          )}
         </section>
       )}
       <section style={styles.quickStartCard}>
