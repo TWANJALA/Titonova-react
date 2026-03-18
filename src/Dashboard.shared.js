@@ -433,13 +433,155 @@ export const SMART_CONTENT_TYPE_OPTIONS = [
   { key: "faqs", label: "FAQs" },
   { key: "product-descriptions", label: "Product Descriptions" },
 ];
+export const BLUEPRINT_QUICK_PROMPT_LABEL = "TitoNova Health Tech Blueprint";
+export const TITONOVA_HEALTH_TECH_BLUEPRINT = {
+  brand: {
+    name: "TitoNova",
+    tone: "professional, modern, trustworthy",
+    industry: "health tech",
+    primaryGoals: ["book appointments", "generate leads", "build trust"],
+    voiceRules: ["clear", "benefit-driven", "non-hype"],
+  },
+  designSystem: {
+    colors: ["primary", "secondary", "accent"],
+    typography: {
+      heading: "consistent",
+      body: "readable",
+    },
+    spacingScale: [4, 8, 12, 16, 24, 32, 48],
+    buttonStyle: "rounded-soft",
+  },
+  siteStructure: {
+    pages: ["home", "about", "services", "pricing", "contact"],
+    globalSections: ["header", "footer", "navigation"],
+  },
+  seoRules: {
+    oneH1PerPage: true,
+    minInternalLinks: 3,
+    altTextRequired: true,
+    ctaRequired: true,
+  },
+  editingPolicy: {
+    requirePreviewBeforePublish: true,
+    autoSave: true,
+    highRiskChangesNeedConfirmation: true,
+  },
+};
 export const QUICK_PROMPT_CHIPS = [
+  BLUEPRINT_QUICK_PROMPT_LABEL,
   "Cleaning company",
   "Home care agency",
   "Restaurant website",
   "SaaS landing page",
   "Portfolio site",
 ];
+const looksLikeBlueprintObject = (value) =>
+  Boolean(
+    value &&
+    typeof value === "object" &&
+    value.brand &&
+    value.siteStructure &&
+    value.designSystem &&
+    typeof value.brand === "object" &&
+    typeof value.siteStructure === "object" &&
+    typeof value.designSystem === "object"
+  );
+const asNonEmptyString = (value, fallback = "") => {
+  const safe = String(value || "").trim();
+  return safe || fallback;
+};
+const asStringList = (value, max = 20) =>
+  (Array.isArray(value) ? value : [])
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .slice(0, max);
+const prettifyLabel = (value) =>
+  String(value || "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+export const buildPromptFromSiteBlueprint = (blueprintInput) => {
+  if (!looksLikeBlueprintObject(blueprintInput)) return "";
+  const blueprint = blueprintInput;
+  const brand = blueprint.brand || {};
+  const design = blueprint.designSystem || {};
+  const siteStructure = blueprint.siteStructure || {};
+  const seo = blueprint.seoRules || {};
+  const editing = blueprint.editingPolicy || {};
+
+  const brandName = asNonEmptyString(brand.name, "Your Business");
+  const industry = asNonEmptyString(brand.industry, "Professional Services");
+  const tone = asNonEmptyString(brand.tone, "professional");
+  const voiceRules = asStringList(brand.voiceRules, 8);
+  const goals = asStringList(brand.primaryGoals, 8).map(prettifyLabel);
+  const pages = asStringList(siteStructure.pages, 12).map(prettifyLabel);
+  const sections = asStringList(siteStructure.globalSections, 8).map(prettifyLabel);
+  const colorSystem = asStringList(design.colors, 8);
+  const spacingScale = (Array.isArray(design.spacingScale) ? design.spacingScale : [])
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item))
+    .slice(0, 12);
+
+  const lines = [
+    `Business Name: ${brandName}`,
+    `Industry: ${industry}`,
+    `Style: ${tone}`,
+    colorSystem.length > 0 ? `Colors: ${colorSystem.join(", ")}` : "",
+    `Typography: heading ${asNonEmptyString(design?.typography?.heading, "consistent")}, body ${asNonEmptyString(design?.typography?.body, "readable")}`,
+    spacingScale.length > 0 ? `Spacing Scale: ${spacingScale.join(", ")}` : "",
+    design.buttonStyle ? `Button Style: ${asNonEmptyString(design.buttonStyle)}` : "",
+  ].filter(Boolean);
+
+  if (goals.length > 0) {
+    lines.push("Features:");
+    goals.forEach((goal) => lines.push(`- ${goal}`));
+  }
+  if (pages.length > 0) {
+    lines.push("Pages:");
+    pages.forEach((page) => lines.push(`- ${page}`));
+  }
+  if (sections.length > 0) {
+    lines.push("Sections:");
+    sections.forEach((section) => lines.push(`- ${section}`));
+  }
+  if (voiceRules.length > 0) {
+    lines.push("Voice Rules:");
+    voiceRules.forEach((rule) => lines.push(`- ${rule}`));
+  }
+
+  lines.push("SEO Rules:");
+  lines.push(`- One H1 per page: ${seo.oneH1PerPage ? "required" : "optional"}`);
+  lines.push(`- Minimum internal links per page: ${Math.max(0, Number(seo.minInternalLinks || 0))}`);
+  lines.push(`- Alt text required: ${seo.altTextRequired ? "yes" : "no"}`);
+  lines.push(`- CTA required: ${seo.ctaRequired ? "yes" : "no"}`);
+
+  lines.push("Editing Policy:");
+  lines.push(`- Preview before publish: ${editing.requirePreviewBeforePublish ? "required" : "optional"}`);
+  lines.push(`- Auto-save: ${editing.autoSave ? "enabled" : "disabled"}`);
+  lines.push(`- High-risk changes need confirmation: ${editing.highRiskChangesNeedConfirmation ? "yes" : "no"}`);
+
+  return lines.join("\n").slice(0, 5000);
+};
+export const resolveQuickPromptChipValue = (chip) => {
+  const label = String(chip || "").trim();
+  if (!label) return "";
+  if (label === BLUEPRINT_QUICK_PROMPT_LABEL) {
+    return buildPromptFromSiteBlueprint(TITONOVA_HEALTH_TECH_BLUEPRINT);
+  }
+  return label;
+};
+export const maybeConvertSiteBlueprintJsonToPrompt = (rawValue) => {
+  const text = String(rawValue || "").trim();
+  if (!text || !text.startsWith("{")) return "";
+  try {
+    const parsed = JSON.parse(text);
+    if (!looksLikeBlueprintObject(parsed)) return "";
+    return buildPromptFromSiteBlueprint(parsed);
+  } catch {
+    return "";
+  }
+};
 export const AI_LAYOUT_VARIANT_OPTIONS = [
   { key: "corporate", label: "Version A: Corporate" },
   { key: "minimal", label: "Version B: Minimal" },

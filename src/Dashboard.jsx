@@ -63,7 +63,9 @@ import {
   parseInlineSmartAction,
   detectInlineSectionType,
   buildInlineSuggestions,
-  getInlineCommandOptions
+  getInlineCommandOptions,
+  resolveQuickPromptChipValue,
+  maybeConvertSiteBlueprintJsonToPrompt
 } from "./Dashboard.shared";
 import useDebouncedSectionsAutosave from "./hooks/useDebouncedSectionsAutosave";
 
@@ -8037,10 +8039,11 @@ ${JSON.stringify(sourceTexts)}`,
   };
 
   const handleQuickPromptChip = (chip) => {
-    const value = String(chip || "").trim();
+    const value = resolveQuickPromptChipValue(chip);
     if (!value) return;
     setBusinessOsPrompt(value);
     setUiDesignPrompt(value);
+    syncPromptDerivedFields(value);
     requestAnimationFrame(() => {
       const node = promptTextareaRef.current;
       if (!node) return;
@@ -8048,8 +8051,13 @@ ${JSON.stringify(sourceTexts)}`,
       node.style.height = `${node.scrollHeight}px`;
     });
     if (!projectName.trim()) {
-      const base = value.replace(/\s+(website|company|agency|site)$/i, "").trim();
-      if (base) setProjectName(base.replace(/\b\w/g, (m) => m.toUpperCase()));
+      const parsed = parseStructuredBusinessPrompt(value);
+      if (parsed?.businessName) {
+        setProjectName(parsed.businessName);
+      } else {
+        const base = value.replace(/\s+(website|company|agency|site)$/i, "").trim();
+        if (base) setProjectName(base.replace(/\b\w/g, (m) => m.toUpperCase()));
+      }
     }
   };
 
@@ -8144,14 +8152,20 @@ ${JSON.stringify(sourceTexts)}`,
     event.preventDefault();
     const pastedText = event.clipboardData?.getData("text") || "";
     const cleaned = normalizePromptText(pastedText);
+    const converted = maybeConvertSiteBlueprintJsonToPrompt(cleaned);
+    const effectivePaste = converted || cleaned;
     const target = event.currentTarget;
     const current = String(businessOsPrompt || "");
     const start = Number(target.selectionStart ?? current.length);
     const end = Number(target.selectionEnd ?? current.length);
-    const next = `${current.slice(0, start)}${cleaned}${current.slice(end)}`.slice(0, 5000);
+    const next = `${current.slice(0, start)}${effectivePaste}${current.slice(end)}`.slice(0, 5000);
     setBusinessOsPrompt(next);
     setUiDesignPrompt(next);
     syncPromptDerivedFields(next);
+    if (converted) {
+      setPublishStatus("success");
+      setPublishMessage("Blueprint JSON converted into a structured TitoNova prompt.");
+    }
     requestAnimationFrame(() => resizePromptTextarea(target));
   };
 
