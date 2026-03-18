@@ -55,8 +55,8 @@ export default function usePageGraphAutosave({
     if (timerRef.current) {
       window.clearTimeout(timerRef.current);
     }
-    setStatus("saving");
     timerRef.current = window.setTimeout(async () => {
+      setStatus("saving");
       try {
         await postGraphSnapshot({ pageId, graph, endpoint });
         payloadRef.current = nextPayload;

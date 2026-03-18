@@ -323,11 +323,15 @@ export default function PreviewPane(props) {
                   if (!isInlineEditing) return;
                   setInlineDraftDirty(true);
                   if (event.target instanceof Element) {
-                    const editableTarget = event.target.closest("[data-edit-id], [data-id]");
+                    const editableTarget = event.target.closest("[data-editable][data-edit-id], [data-editable][data-id]");
                     if (editableTarget instanceof HTMLElement) {
                       const editableId = String(editableTarget.dataset.editId || editableTarget.dataset.id || "").trim();
                       if (editableId) {
-                        const nextValue = String(editableTarget.textContent || "").replace(/\s+/g, " ").trim();
+                        const editableType = String(editableTarget.dataset.editable || "").trim();
+                        const nextValue =
+                          editableType === "image"
+                            ? String(editableTarget.getAttribute("src") || "").trim()
+                            : String(editableTarget.textContent || "").replace(/\s+/g, " ").trim();
                         updateSection(editableId, nextValue, { syncDraft: false });
                       }
                     }

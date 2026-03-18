@@ -7,3 +7,4 @@ export { default as PropertyEditorPanel } from "./components/PropertyEditorPanel
 export { default as VisualBuilderStudio } from "./components/VisualBuilderStudio";
 export { default as usePageGraphAutosave } from "./autosave/usePageGraphAutosave";
 export { mergeAiComponentsIntoGraph, createMockAiGraphFromPrompt } from "./ai/aiGraphIntegration";
+export * from "./layout-healing/index";

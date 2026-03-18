@@ -66,6 +66,13 @@ export default function InlineEditorOverlay({
   const selectedSectionValue = selectedSectionEditId
     ? String(sections?.[selectedSectionEditId] ?? "")
     : "";
+  const selectedEditableType = String(selectedEditableMeta?.type || "").toLowerCase();
+  const selectedEditableValue = selectedEditableMeta?.id
+    ? selectedEditableType === "image"
+      ? String(selectedEditableMeta?.value || "")
+      : String(sections?.[selectedEditableMeta.id] ?? selectedEditableMeta?.value ?? "")
+    : "";
+  const canInlineEditSelectedValue = selectedEditableType === "text" || selectedEditableType === "button" || selectedEditableType === "link";
   const preserveInlineSelection = (event) => {
     event.preventDefault();
   };
@@ -178,7 +185,7 @@ export default function InlineEditorOverlay({
               <div style={styles.inlineSectionHeader}>
                 <strong style={styles.inlineSectionTitle}>Section Editor</strong>
                 <small style={styles.inlineSectionMeta}>
-                  {selectedSectionMeta.component || "section"} • {selectedSectionMeta.sectionType || "general"}
+                  {selectedSectionMeta.sectionName || selectedSectionMeta.component || "section"} • {selectedSectionMeta.sectionType || "general"}
                 </small>
               </div>
               {selectedSectionEditId ? (
@@ -307,10 +314,33 @@ export default function InlineEditorOverlay({
           <small style={styles.inlineFloatingValue}>
             {String(selectedEditableMeta.value || "").slice(0, 140) || "No value"}
           </small>
+          {canInlineEditSelectedValue ? (
+            <label style={styles.inlineSectionField}>
+              <small style={styles.inlineSectionLabel}>
+                {selectedEditableType === "button" ? "Button Label" : selectedEditableType === "link" ? "Link Label" : "Text Value"}
+              </small>
+              <textarea
+                style={{ ...stylesInput, minHeight: 70, resize: "vertical" }}
+                value={selectedEditableValue}
+                onChange={(event) => updateSection(selectedEditableMeta.id, event.target.value)}
+              />
+            </label>
+          ) : null}
+          {selectedEditableType === "image" ? (
+            <label style={styles.inlineSectionField}>
+              <small style={styles.inlineSectionLabel}>Image URL</small>
+              <input
+                style={stylesInput}
+                value={selectedEditableValue}
+                onChange={(event) => updateSection(selectedEditableMeta.id, event.target.value)}
+                placeholder="https://..."
+              />
+            </label>
+          ) : null}
           <div style={styles.inlineFloatingActions}>
-            {selectedEditableMeta.type === "text" ? (
+            {selectedEditableMeta.type === "text" || selectedEditableMeta.type === "button" || selectedEditableMeta.type === "link" ? (
               <button style={styles.inlineSuggestionApply} onClick={() => focusInlineEditableNode(selectedEditableNodeRef.current)}>
-                Edit Text
+                {selectedEditableMeta.type === "button" ? "Edit Button" : selectedEditableMeta.type === "link" ? "Edit Link" : "Edit Text"}
               </button>
             ) : null}
             {selectedEditableMeta.type === "image" ? (

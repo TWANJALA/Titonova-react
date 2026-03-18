@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { createMockAiGraphFromPrompt } from "../ai/aiGraphIntegration";
 import usePageGraphAutosave from "../autosave/usePageGraphAutosave";
 import { EditorProvider, useEditor } from "../editor/EditorContext";
+import { selfHealWithAiFallback } from "../layout-healing/selfHealingEngine";
 import { componentDefinitionRegistry } from "../registry/componentRegistry";
 import { DEFAULT_PAGE_GRAPH, normalizePageGraph } from "../schema/pageGraph";
 import PageRenderer from "./PageRenderer";
@@ -51,6 +52,7 @@ function VisualBuilderWorkspace() {
     canRedo,
     editMode,
     setEditMode,
+    selfHealReport,
   } = useEditor();
 
   const [aiPrompt, setAiPrompt] = useState("");
@@ -58,6 +60,7 @@ function VisualBuilderWorkspace() {
   const [allowOverwriteManual, setAllowOverwriteManual] = useState(false);
   const [aiStatus, setAiStatus] = useState("");
   const [loadingSavedGraph, setLoadingSavedGraph] = useState(false);
+  const [aiRepairBusy, setAiRepairBusy] = useState(false);
 
   const autosave = usePageGraphAutosave({
     pageId: pageGraph?.id || "homepage",
@@ -116,6 +119,25 @@ function VisualBuilderWorkspace() {
     }
   };
 
+  const handleRunAiLayoutRepair = async () => {
+    if (aiRepairBusy) return;
+    setAiRepairBusy(true);
+    setAiStatus("Running AI layout fallback...");
+    try {
+      const healed = await selfHealWithAiFallback(pageGraph);
+      replaceGraph(healed.graph);
+      setAiStatus(
+        healed.report.aiRepairs?.length
+          ? `AI layout fallback applied to ${healed.report.aiRepairs.length} issue(s).`
+          : "No AI fallback repairs were needed."
+      );
+    } catch (error) {
+      setAiStatus(`AI layout fallback failed: ${String(error?.message || "unknown error")}`);
+    } finally {
+      setAiRepairBusy(false);
+    }
+  };
+
   return (
     <div className="ve-root">
       <header className="ve-topbar">
@@ -133,6 +155,9 @@ function VisualBuilderWorkspace() {
         </button>
         <button type="button" onClick={handleLoadSavedGraph} disabled={loadingSavedGraph}>
           {loadingSavedGraph ? "Loading..." : "Load Saved"}
+        </button>
+        <button type="button" onClick={handleRunAiLayoutRepair} disabled={aiRepairBusy}>
+          {aiRepairBusy ? "Repairing..." : "AI Layout Repair"}
         </button>
         <input
           value={aiPrompt}
@@ -154,6 +179,10 @@ function VisualBuilderWorkspace() {
         <small>
           Autosave: {autosave.status}
           {autosave.lastSavedAt ? ` (${new Date(autosave.lastSavedAt).toLocaleTimeString()})` : ""}
+        </small>
+        <small>
+          Self-heal: {selfHealReport?.initialIssueCount || 0} detected / {selfHealReport?.fixedByRules || 0} fixed /{" "}
+          {selfHealReport?.unresolvedCount || 0} unresolved
         </small>
         {autosave.lastError ? <small style={{ color: "#fca5a5" }}>{autosave.lastError}</small> : null}
         {aiStatus ? <small>{aiStatus}</small> : null}

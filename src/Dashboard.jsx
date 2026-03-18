@@ -3299,7 +3299,7 @@ ${(audit.directives || []).map((line) => `  - ${line}`).join("\n")}
             caret-color: var(--tn-link);
           }
           [data-tn-theme-root="true"] [data-editable]:hover {
-            outline: 2px solid rgba(79, 70, 229, 0.82);
+            outline: 2px solid rgba(59, 130, 246, 0.9);
             cursor: text;
           }
           [data-tn-theme-root="true"] [data-editable]::after {
@@ -3336,11 +3336,11 @@ ${(audit.directives || []).map((line) => `  - ${line}`).join("\n")}
             position: relative;
           }
           [data-tn-theme-root="true"] [data-component][data-id]:hover {
-            outline: 2px dashed rgba(59, 130, 246, 0.62);
-            outline-offset: 6px;
+            outline: 2px solid rgba(59, 130, 246, 0.9);
+            outline-offset: 4px;
           }
           [data-tn-theme-root="true"] [data-component][data-id]::before {
-            content: "Section controls";
+            content: "Section: " attr(data-section-name);
             position: absolute;
             left: 8px;
             top: -12px;
@@ -3389,6 +3389,11 @@ ${(audit.directives || []).map((line) => `  - ${line}`).join("\n")}
             pointer-events: none !important;
           }
           [data-tn-theme-root="true"][data-tn-editing="true"] [data-editable="text"] {
+            pointer-events: auto !important;
+          }
+          [data-tn-theme-root="true"][data-tn-editing="true"] [data-editable="image"],
+          [data-tn-theme-root="true"][data-tn-editing="true"] [data-editable="button"],
+          [data-tn-theme-root="true"][data-tn-editing="true"] [data-editable="link"] {
             pointer-events: auto !important;
           }
           [data-tn-theme-root="true"] [data-tn-reveal] {
@@ -5989,9 +5994,15 @@ Return strict JSON:
   };
 
   const handlePreviewLinkNavigation = (event) => {
-    if (isInlineEditing) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
+    if (isInlineEditing) {
+      const editAnchor = target.closest("a[href]");
+      if (editAnchor) {
+        event.preventDefault();
+      }
+      return;
+    }
     const anchor = target.closest("a[href]");
     if (!anchor) return;
     const href = String(anchor.getAttribute("href") || "").trim();
@@ -8182,15 +8193,33 @@ ${JSON.stringify(sourceTexts)}`,
     return () => window.removeEventListener("resize", handleViewportResize);
   }, []);
 
-  const INLINE_EDITABLE_QUERY = "h1, h2, h3, h4, p, li, blockquote";
+  const INLINE_TEXT_EDITABLE_QUERY = "h1, h2, h3, h4, p, li, blockquote";
+  const INLINE_EDITABLE_QUERY = `${INLINE_TEXT_EDITABLE_QUERY}, a, button, img`;
+
+  const humanizeSectionName = (value) =>
+    String(value || "")
+      .replace(/[-_]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/\b\w/g, (char) => char.toUpperCase()) || "Section";
 
   const getInlineEditableType = (node) => {
     if (!(node instanceof HTMLElement)) return "";
     const tag = String(node.tagName || "").toLowerCase();
+    if (tag === "img") return "image";
+    if (tag === "button") return "button";
+    if (tag === "a") {
+      const classBlob = `${String(node.className || "")} ${String(node.getAttribute("role") || "")}`.toLowerCase();
+      return /(btn|button|cta|action)/.test(classBlob) ? "button" : "link";
+    }
     if (!/^(h1|h2|h3|h4|p|li|blockquote)$/.test(tag)) return "";
     const text = String(node.textContent || "").replace(/\s+/g, " ").trim();
     if (!text) return "";
-    if (Array.from(node.children).some((child) => child instanceof HTMLElement && child.matches(INLINE_EDITABLE_QUERY))) {
+    if (
+      Array.from(node.children).some(
+        (child) => child instanceof HTMLElement && child.matches(INLINE_TEXT_EDITABLE_QUERY)
+      )
+    ) {
       return "";
     }
     return "text";
@@ -8211,7 +8240,7 @@ ${JSON.stringify(sourceTexts)}`,
   const readInlineEditableValue = (node) => {
     if (!(node instanceof HTMLElement)) return "";
     if (String(node.tagName || "").toLowerCase() === "img") {
-      return String(node.getAttribute("alt") || node.getAttribute("src") || "").trim();
+      return String(node.getAttribute("src") || "").trim();
     }
     return String(node.textContent || "").replace(/\s+/g, " ").trim();
   };
@@ -8257,9 +8286,15 @@ ${JSON.stringify(sourceTexts)}`,
     const buttonValue = buttonTextId && Object.prototype.hasOwnProperty.call(sections, buttonTextId)
       ? String(sections[buttonTextId] || "")
       : String(buttonNode?.textContent || "").replace(/\s+/g, " ").trim();
+    const headingFallback = String(titleValue || "").trim();
+    const sectionName =
+      String(sectionNode.dataset.sectionName || "").trim() ||
+      headingFallback ||
+      humanizeSectionName(component);
     return {
       id: sectionId || component,
       component,
+      sectionName,
       sectionType: detectInlineSectionType(sectionNode, root),
       titleId,
       subtitleId,
@@ -8352,11 +8387,31 @@ ${JSON.stringify(sourceTexts)}`,
     const root = previewEditableRef.current;
     if (!(root instanceof HTMLElement)) return;
     const pagePrefix = makeProjectSlug(activePage || "page");
+    const sectionNodes = Array.from(
+      root.querySelectorAll("[data-component][data-id], [data-component], [data-tn-section], section, article, header, footer, nav, aside, main")
+    );
+    let sectionSequence = 0;
+    sectionNodes.forEach((sectionNode) => {
+      if (!(sectionNode instanceof HTMLElement)) return;
+      const component =
+        String(sectionNode.dataset.component || "").trim() || getInlineComponentName(sectionNode, root);
+      const sectionId =
+        String(sectionNode.dataset.id || "").trim() || `${pagePrefix}-${component || "section"}-${sectionSequence += 1}`;
+      const headingText = String(
+        sectionNode.querySelector("h1, h2, h3, h4")?.textContent || ""
+      ).replace(/\s+/g, " ").trim();
+      sectionNode.dataset.component = component || `section-${sectionSequence}`;
+      sectionNode.dataset.id = sectionId;
+      sectionNode.dataset.sectionName = headingText || humanizeSectionName(component || sectionId);
+    });
+
     let sequence = 0;
-    const editableNodes = Array.from(root.querySelectorAll(INLINE_EDITABLE_QUERY));
+    const editableNodes = Array.from(root.querySelectorAll("[data-editable], " + INLINE_EDITABLE_QUERY));
     editableNodes.forEach((node) => {
       if (!(node instanceof HTMLElement)) return;
-      const type = getInlineEditableType(node);
+      const currentType = String(node.dataset.editable || "").trim();
+      const detectedType = getInlineEditableType(node);
+      const type = currentType || detectedType;
       if (!type) return;
       const component = getInlineComponentName(node, root);
       const existingId = String(node.dataset.editId || node.dataset.id || "").trim();
@@ -8365,11 +8420,18 @@ ${JSON.stringify(sourceTexts)}`,
       node.dataset.id = id;
       node.dataset.editId = id;
       node.dataset.component = component;
-      node.dataset.binding = "content";
+      node.dataset.binding =
+        type === "image" ? "src" : type === "link" ? "href" : type === "button" ? "content" : "content";
       node.dataset.editRole = "content";
-      node.setAttribute("contenteditable", "true");
-      node.setAttribute("tabindex", "0");
-      node.setAttribute("spellcheck", "true");
+      if (type === "image") {
+        node.removeAttribute("contenteditable");
+        node.setAttribute("tabindex", "0");
+        node.removeAttribute("spellcheck");
+      } else {
+        node.setAttribute("contenteditable", "true");
+        node.setAttribute("tabindex", "0");
+        node.setAttribute("spellcheck", "true");
+      }
     });
     syncInlineSiteModelFromDom();
   }, [activePage, syncInlineSiteModelFromDom]);
@@ -8993,7 +9055,8 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
   const focusInlineEditableNode = useCallback((targetNode = null, { placeCursorAtEnd = true } = {}) => {
     const root = previewEditableRef.current;
     if (!root || typeof window === "undefined") return null;
-    const editableSelector = "[data-editable='text'][data-edit-id], [data-editable='text'][data-id]";
+    const editableSelector =
+      "[data-editable='text'][data-edit-id], [data-editable='text'][data-id], [data-editable='button'][data-edit-id], [data-editable='button'][data-id], [data-editable='link'][data-edit-id], [data-editable='link'][data-id]";
     const selectedTarget =
       targetNode instanceof Element ? targetNode.closest(editableSelector) : null;
     const fallbackTarget = root.querySelector(editableSelector);
@@ -9212,12 +9275,17 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       const escapedId = escapeEditableIdForSelector(sectionId);
       const targetNode =
         escapedId
-          ? root.querySelector(`[data-edit-id="${escapedId}"], [data-id="${escapedId}"]`)
+          ? root.querySelector(`[data-editable][data-edit-id="${escapedId}"], [data-editable][data-id="${escapedId}"]`)
           : null;
       if (targetNode instanceof HTMLElement) {
+        const targetType = String(targetNode.dataset.editable || "").trim();
         targetNode.dataset.id = targetNode.dataset.id || sectionId;
         targetNode.dataset.editId = sectionId;
-        targetNode.textContent = nextValue;
+        if (targetType === "image") {
+          targetNode.setAttribute("src", nextValue);
+        } else {
+          targetNode.textContent = nextValue;
+        }
       }
       if (shouldSyncDraft) {
         setDraftHtml(root.innerHTML || "");
@@ -9228,11 +9296,13 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     setInlineSiteModel((previous) => {
       const entry = previous?.[sectionId];
       if (!entry || typeof entry !== "object") return previous;
-      const nextEntry = entry.type === "button"
-        ? { ...entry, text: nextValue }
-        : entry.type === "link"
-          ? { ...entry, content: nextValue }
-          : { ...entry, content: nextValue };
+      const nextEntry = entry.type === "image"
+        ? { ...entry, src: nextValue }
+        : entry.type === "button"
+          ? { ...entry, text: nextValue }
+          : entry.type === "link"
+            ? { ...entry, content: nextValue }
+            : { ...entry, content: nextValue };
       if (JSON.stringify(nextEntry) === JSON.stringify(entry)) return previous;
       return { ...previous, [sectionId]: nextEntry };
     });
@@ -9314,7 +9384,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       const autoId = `${sectionId}-${fieldSlug}-text`;
       fieldNode.dataset.id = autoId;
       fieldNode.dataset.editId = autoId;
-      fieldNode.dataset.editable = "text";
+      fieldNode.dataset.editable = field === "buttonText" ? "button" : "text";
       fieldNode.dataset.component = String(sectionRoot.dataset.component || "section");
       fieldNode.dataset.binding = "content";
     } else {
@@ -9606,7 +9676,7 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
     const node = target.closest(
-      "[data-editable='text'][data-edit-id], [data-editable='text'][data-id], [data-editable='image'][data-edit-id], [data-editable='image'][data-id]"
+      "[data-editable][data-edit-id], [data-editable][data-id]"
     );
     if (!(node instanceof HTMLElement)) {
       clearInlineHoverNode();
@@ -9621,7 +9691,8 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     node.style.transition = node.style.transition || "box-shadow 120ms ease, background-color 120ms ease";
     node.style.boxShadow = "inset 0 0 0 2px rgba(59,130,246,0.78)";
     node.style.backgroundColor = "rgba(59,130,246,0.09)";
-    node.style.cursor = String(node.dataset.editable || "") === "image" ? "pointer" : "text";
+    const nodeType = String(node.dataset.editable || "");
+    node.style.cursor = nodeType === "image" ? "pointer" : nodeType === "button" || nodeType === "link" ? "text" : "text";
     inlineHoverNodeRef.current = node;
   };
 
@@ -9634,15 +9705,9 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
     selectInlineSection(target);
-    const imageTarget = target.closest("[data-editable='image'][data-edit-id], [data-editable='image'][data-id], img[data-image-id]");
-    if (imageTarget instanceof HTMLElement) {
-      event.preventDefault();
-      selectInlineEditableNode(imageTarget);
-      handleInlineImageReplace(imageTarget);
-      return;
-    }
-    const editableTarget = target.closest("[data-editable='text'][data-edit-id], [data-editable='text'][data-id]");
+    const editableTarget = target.closest("[data-editable][data-edit-id], [data-editable][data-id]");
     if (!(editableTarget instanceof HTMLElement)) return;
+    event.preventDefault();
     selectInlineEditableNode(editableTarget);
   };
 
@@ -10157,25 +10222,43 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
   useEffect(() => {
     const root = previewEditableRef.current;
     if (!root) return;
-    const selector = "[data-editable='text'][data-edit-id], [data-editable='text'][data-id]";
-    const editableNodes = Array.from(root.querySelectorAll(selector));
+    const selector =
+      "[data-editable='text'][data-edit-id], [data-editable='text'][data-id], [data-editable='button'][data-edit-id], [data-editable='button'][data-id], [data-editable='link'][data-edit-id], [data-editable='link'][data-id]";
 
     if (isInlineEditing) {
       annotateInlineEditableDom();
+      const editableNodes = Array.from(root.querySelectorAll(selector));
       editableNodes.forEach((node) => {
         if (!(node instanceof HTMLElement)) return;
         node.setAttribute("contenteditable", "true");
         node.setAttribute("tabindex", "0");
         node.setAttribute("spellcheck", "true");
       });
+      const imageNodes = Array.from(
+        root.querySelectorAll("[data-editable='image'][data-edit-id], [data-editable='image'][data-id]")
+      );
+      imageNodes.forEach((node) => {
+        if (!(node instanceof HTMLElement)) return;
+        node.removeAttribute("contenteditable");
+        node.setAttribute("tabindex", "0");
+        node.removeAttribute("spellcheck");
+      });
       return;
     }
 
+    const editableNodes = Array.from(root.querySelectorAll(selector));
     editableNodes.forEach((node) => {
       if (!(node instanceof HTMLElement)) return;
       node.removeAttribute("contenteditable");
       node.removeAttribute("tabindex");
       node.removeAttribute("spellcheck");
+    });
+    const imageNodes = Array.from(
+      root.querySelectorAll("[data-editable='image'][data-edit-id], [data-editable='image'][data-id]")
+    );
+    imageNodes.forEach((node) => {
+      if (!(node instanceof HTMLElement)) return;
+      node.removeAttribute("tabindex");
     });
   }, [isInlineEditing, draftHtml, annotateInlineEditableDom]);
 

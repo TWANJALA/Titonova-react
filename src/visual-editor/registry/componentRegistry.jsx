@@ -1,4 +1,6 @@
+/* eslint-disable react-refresh/only-export-components */
 import React from "react";
+import { withLayoutDefaults } from "../layout-healing/designTokens";
 
 const cardStyle = {
   background: "#ffffff",
@@ -8,15 +10,33 @@ const cardStyle = {
   boxShadow: "0 8px 24px rgba(15,23,42,0.08)",
 };
 
+const layoutStyle = (props = {}, overrides = {}) => {
+  const layout = withLayoutDefaults(props);
+  const base = {
+    ...cardStyle,
+    padding: layout.padding,
+    color: layout.textColor || undefined,
+    background: layout.backgroundColor || cardStyle.background,
+    display: "grid",
+    gap: layout.spacing,
+  };
+  return {
+    ...base,
+    ...overrides,
+  };
+};
+
 function Hero({
   title = "AI Home Care",
   subtitle = "Dallas Healthcare",
   cta = "Schedule a Tour",
   buttonUrl = "#contact",
   backgroundImageUrl = "",
+  ...layoutProps
 }) {
+  const layout = withLayoutDefaults(layoutProps);
   return (
-    <section style={{ ...cardStyle, background: "linear-gradient(135deg,#eff6ff,#ffffff)" }}>
+    <section style={layoutStyle(layout, { background: layout.backgroundColor || "linear-gradient(135deg,#eff6ff,#ffffff)" })}>
       {backgroundImageUrl ? (
         <img
           src={backgroundImageUrl}
@@ -24,8 +44,20 @@ function Hero({
           style={{ width: "100%", height: 220, objectFit: "cover", borderRadius: 10, marginBottom: 16 }}
         />
       ) : null}
-      <h1 style={{ margin: "0 0 8px", fontSize: 36, lineHeight: 1.1 }}>{title}</h1>
-      <p style={{ margin: "0 0 16px", color: "#334155", fontSize: 18 }}>{subtitle}</p>
+      <h1
+        style={{
+          margin: "0 0 8px",
+          fontSize: Math.max(24, layout.fontSize + 20),
+          lineHeight: 1.1,
+          display: "-webkit-box",
+          WebkitLineClamp: layout.lineClamp > 0 ? layout.lineClamp : "unset",
+          WebkitBoxOrient: "vertical",
+          overflow: layout.lineClamp > 0 ? "hidden" : "visible",
+        }}
+      >
+        {title}
+      </h1>
+      <p style={{ margin: "0 0 16px", color: "#334155", fontSize: Math.max(14, layout.fontSize + 2) }}>{subtitle}</p>
       <a
         href={buttonUrl}
         style={{
@@ -44,21 +76,42 @@ function Hero({
   );
 }
 
-function TextBlock({ title = "Section Title", body = "Section body copy." }) {
+function TextBlock({ title = "Section Title", body = "Section body copy.", ...layoutProps }) {
+  const layout = withLayoutDefaults(layoutProps);
   return (
-    <section style={cardStyle}>
-      <h2 style={{ margin: "0 0 8px", fontSize: 28, lineHeight: 1.2 }}>{title}</h2>
-      <p style={{ margin: 0, color: "#334155" }}>{body}</p>
+    <section style={layoutStyle(layout)}>
+      <h2 style={{ margin: "0 0 8px", fontSize: Math.max(20, layout.fontSize + 10), lineHeight: 1.2 }}>{title}</h2>
+      <p
+        style={{
+          margin: 0,
+          color: "#334155",
+          fontSize: layout.fontSize,
+          display: "-webkit-box",
+          WebkitLineClamp: layout.lineClamp > 0 ? layout.lineClamp : "unset",
+          WebkitBoxOrient: "vertical",
+          overflow: layout.lineClamp > 0 ? "hidden" : "visible",
+        }}
+      >
+        {body}
+      </p>
     </section>
   );
 }
 
-function Services({ title = "Services", items = [] }) {
+function Services({ title = "Services", items = [], ...layoutProps }) {
+  const layout = withLayoutDefaults(layoutProps);
+  const activeColumns = layout.mobileStack ? 1 : Math.max(1, layout.gridColumns);
   const safeItems = Array.isArray(items) ? items : [];
   return (
-    <section style={cardStyle}>
-      <h2 style={{ margin: "0 0 12px", fontSize: 28 }}>{title}</h2>
-      <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))" }}>
+    <section style={layoutStyle(layout)}>
+      <h2 style={{ margin: "0 0 12px", fontSize: Math.max(20, layout.fontSize + 10) }}>{title}</h2>
+      <div
+        style={{
+          display: "grid",
+          gap: layout.spacing,
+          gridTemplateColumns: `repeat(${activeColumns}, minmax(0, 1fr))`,
+        }}
+      >
         {safeItems.map((item, index) => (
           <article key={`${item}-${index}`} style={{ border: "1px solid #dbe3ef", borderRadius: 10, padding: 12 }}>
             <strong>{item}</strong>
@@ -69,10 +122,11 @@ function Services({ title = "Services", items = [] }) {
   );
 }
 
-function Testimonials({ title = "Testimonials", quote = "Excellent service.", author = "Happy Client" }) {
+function Testimonials({ title = "Testimonials", quote = "Excellent service.", author = "Happy Client", ...layoutProps }) {
+  const layout = withLayoutDefaults(layoutProps);
   return (
-    <section style={cardStyle}>
-      <h2 style={{ margin: "0 0 10px", fontSize: 28 }}>{title}</h2>
+    <section style={layoutStyle(layout)}>
+      <h2 style={{ margin: "0 0 10px", fontSize: Math.max(20, layout.fontSize + 10) }}>{title}</h2>
       <blockquote style={{ margin: "0 0 8px", color: "#1e293b", fontStyle: "italic" }}>
         "{quote}"
       </blockquote>
@@ -81,10 +135,11 @@ function Testimonials({ title = "Testimonials", quote = "Excellent service.", au
   );
 }
 
-function CTA({ title = "Ready to get started?", buttonText = "Book a Call", buttonUrl = "#contact" }) {
+function CTA({ title = "Ready to get started?", buttonText = "Book a Call", buttonUrl = "#contact", ...layoutProps }) {
+  const layout = withLayoutDefaults(layoutProps);
   return (
-    <section style={{ ...cardStyle, textAlign: "center", background: "#f8fafc" }}>
-      <h2 style={{ margin: "0 0 12px", fontSize: 30 }}>{title}</h2>
+    <section style={layoutStyle(layout, { textAlign: "center", background: layout.backgroundColor || "#f8fafc" })}>
+      <h2 style={{ margin: "0 0 12px", fontSize: Math.max(20, layout.fontSize + 12) }}>{title}</h2>
       <a
         href={buttonUrl}
         style={{
@@ -109,11 +164,13 @@ function Pricing({
   price = "$99/mo",
   features = [],
   buttonText = "Choose Plan",
+  ...layoutProps
 }) {
+  const layout = withLayoutDefaults(layoutProps);
   const safeFeatures = Array.isArray(features) ? features : [];
   return (
-    <section style={cardStyle}>
-      <h2 style={{ margin: "0 0 12px", fontSize: 28 }}>{title}</h2>
+    <section style={layoutStyle(layout)}>
+      <h2 style={{ margin: "0 0 12px", fontSize: Math.max(20, layout.fontSize + 10) }}>{title}</h2>
       <article style={{ border: "1px solid #dbe3ef", borderRadius: 12, padding: 14 }}>
         <strong style={{ display: "block", fontSize: 20 }}>{planName}</strong>
         <p style={{ margin: "6px 0 10px", fontSize: 24, fontWeight: 800 }}>{price}</p>
@@ -142,6 +199,32 @@ export const componentRegistry = {
   Pricing,
 };
 
+const COMMON_LAYOUT_DEFAULTS = {
+  layout: "stack",
+  spacing: 16,
+  padding: 24,
+  fontSize: 16,
+  gridColumns: 2,
+  mobileColumns: 1,
+  mobileStack: false,
+  lineClamp: 0,
+  textColor: "",
+  backgroundColor: "",
+};
+
+const COMMON_LAYOUT_FIELDS = [
+  { key: "layout", label: "Layout (stack/grid)", type: "text" },
+  { key: "spacing", label: "Spacing", type: "text" },
+  { key: "padding", label: "Padding", type: "text" },
+  { key: "fontSize", label: "Font Size", type: "text" },
+  { key: "gridColumns", label: "Grid Columns", type: "text" },
+  { key: "mobileColumns", label: "Mobile Columns", type: "text" },
+  { key: "mobileStack", label: "Mobile Stack", type: "checkbox" },
+  { key: "lineClamp", label: "Line Clamp", type: "text" },
+  { key: "textColor", label: "Text Color (#hex)", type: "text" },
+  { key: "backgroundColor", label: "Background Color (#hex)", type: "text" },
+];
+
 export const componentDefinitionRegistry = {
   Hero: {
     label: "Hero",
@@ -151,6 +234,7 @@ export const componentDefinitionRegistry = {
       cta: "Schedule a Tour",
       buttonUrl: "#contact",
       backgroundImageUrl: "",
+      ...COMMON_LAYOUT_DEFAULTS,
     },
     fields: [
       { key: "title", label: "Title", type: "text" },
@@ -158,6 +242,7 @@ export const componentDefinitionRegistry = {
       { key: "cta", label: "CTA Label", type: "text" },
       { key: "buttonUrl", label: "CTA URL", type: "url" },
       { key: "backgroundImageUrl", label: "Background Image URL", type: "url" },
+      ...COMMON_LAYOUT_FIELDS,
     ],
   },
   TextBlock: {
@@ -165,10 +250,12 @@ export const componentDefinitionRegistry = {
     defaultProps: {
       title: "Our Heartfelt Commitment",
       body: "Clean Website",
+      ...COMMON_LAYOUT_DEFAULTS,
     },
     fields: [
       { key: "title", label: "Title", type: "text" },
       { key: "body", label: "Body", type: "textarea" },
+      ...COMMON_LAYOUT_FIELDS,
     ],
   },
   Services: {
@@ -176,10 +263,13 @@ export const componentDefinitionRegistry = {
     defaultProps: {
       title: "Services",
       items: ["Service 1", "Service 2", "Service 3"],
+      ...COMMON_LAYOUT_DEFAULTS,
+      layout: "grid",
     },
     fields: [
       { key: "title", label: "Title", type: "text" },
       { key: "items", label: "Items (one per line)", type: "list" },
+      ...COMMON_LAYOUT_FIELDS,
     ],
   },
   Testimonials: {
@@ -188,11 +278,13 @@ export const componentDefinitionRegistry = {
       title: "Testimonials",
       quote: "Excellent service.",
       author: "Happy Client",
+      ...COMMON_LAYOUT_DEFAULTS,
     },
     fields: [
       { key: "title", label: "Title", type: "text" },
       { key: "quote", label: "Quote", type: "textarea" },
       { key: "author", label: "Author", type: "text" },
+      ...COMMON_LAYOUT_FIELDS,
     ],
   },
   CTA: {
@@ -201,11 +293,13 @@ export const componentDefinitionRegistry = {
       title: "Ready to get started?",
       buttonText: "Book a Call",
       buttonUrl: "#contact",
+      ...COMMON_LAYOUT_DEFAULTS,
     },
     fields: [
       { key: "title", label: "Title", type: "text" },
       { key: "buttonText", label: "Button Text", type: "text" },
       { key: "buttonUrl", label: "Button URL", type: "url" },
+      ...COMMON_LAYOUT_FIELDS,
     ],
   },
   Pricing: {
@@ -216,6 +310,8 @@ export const componentDefinitionRegistry = {
       price: "$99/mo",
       features: ["Feature A", "Feature B", "Feature C"],
       buttonText: "Choose Plan",
+      ...COMMON_LAYOUT_DEFAULTS,
+      layout: "grid",
     },
     fields: [
       { key: "title", label: "Title", type: "text" },
@@ -223,6 +319,7 @@ export const componentDefinitionRegistry = {
       { key: "price", label: "Price", type: "text" },
       { key: "features", label: "Features (one per line)", type: "list" },
       { key: "buttonText", label: "Button Text", type: "text" },
+      ...COMMON_LAYOUT_FIELDS,
     ],
   },
 };

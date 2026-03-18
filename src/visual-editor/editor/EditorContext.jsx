@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import React, { createContext, useContext, useMemo, useReducer } from "react";
 import { mergeAiComponentsIntoGraph } from "../ai/aiGraphIntegration";
 import {
@@ -15,6 +16,7 @@ import {
   normalizePageGraph,
 } from "../schema/pageGraph";
 import { componentDefinitionRegistry } from "../registry/componentRegistry";
+import { selfHeal } from "../layout-healing/selfHealingEngine";
 
 const EditorContext = createContext(null);
 
@@ -41,17 +43,20 @@ const lockManualProps = (state, componentId, propKeys) => {
 
 const applyGraphWithHistory = (state, nextGraph, options = {}) => {
   const normalizedNext = normalizePageGraph(nextGraph);
-  const nextHistory = commitHistory(state.history, normalizedNext);
+  const healed = selfHeal(normalizedNext, options.layoutOptions || {});
+  const healedGraph = normalizePageGraph(healed.graph);
+  const nextHistory = commitHistory(state.history, healedGraph);
   const selectedId = String(state.selectedComponentId || "");
   const selectedStillExists = selectedId
-    ? Boolean(findComponentById(normalizedNext, selectedId))
+    ? Boolean(findComponentById(healedGraph, selectedId))
     : false;
   return {
     ...state,
     history: nextHistory,
+    selfHealReport: healed.report,
     selectedComponentId: selectedStillExists
       ? selectedId
-      : normalizedNext.components[0]?.id || null,
+      : healedGraph.components[0]?.id || null,
     manualLocks:
       options.source === SOURCE_MANUAL && options.componentId
         ? lockManualProps(state, options.componentId, options.propKeys || [])
@@ -61,11 +66,13 @@ const applyGraphWithHistory = (state, nextGraph, options = {}) => {
 
 const initialEditorState = (initialGraph) => {
   const normalized = normalizePageGraph(initialGraph || DEFAULT_PAGE_GRAPH);
+  const healed = selfHeal(normalized);
   return {
-    selectedComponentId: normalized.components[0]?.id || null,
-    pageGraph: normalized,
+    selectedComponentId: healed.graph.components[0]?.id || null,
+    pageGraph: healed.graph,
     editMode: "visual",
-    history: createHistoryState(normalized),
+    history: createHistoryState(healed.graph),
+    selfHealReport: healed.report,
     manualLocks: {},
   };
 };
@@ -211,6 +218,7 @@ const editorReducer = (state, action) => {
       return {
         ...state,
         history: nextHistory,
+        selfHealReport: state.selfHealReport,
         selectedComponentId: selectedExists
           ? state.selectedComponentId
           : nextHistory.present.components[0]?.id || null,
@@ -223,6 +231,7 @@ const editorReducer = (state, action) => {
       return {
         ...state,
         history: nextHistory,
+        selfHealReport: state.selfHealReport,
         selectedComponentId: selectedExists
           ? state.selectedComponentId
           : nextHistory.present.components[0]?.id || null,
@@ -230,10 +239,12 @@ const editorReducer = (state, action) => {
     }
     case "REPLACE_GRAPH": {
       const nextGraph = normalizePageGraph(action.payload || DEFAULT_PAGE_GRAPH);
+      const healed = selfHeal(nextGraph);
       return {
         ...state,
-        history: createHistoryState(nextGraph),
-        selectedComponentId: nextGraph.components[0]?.id || null,
+        history: createHistoryState(healed.graph),
+        selectedComponentId: healed.graph.components[0]?.id || null,
+        selfHealReport: healed.report,
         manualLocks: {},
       };
     }
@@ -254,6 +265,7 @@ export function EditorProvider({ children, initialGraph }) {
       pageGraph,
       editMode: state.editMode,
       history: state.history,
+      selfHealReport: state.selfHealReport,
       canUndo: state.history.past.length > 0,
       canRedo: state.history.future.length > 0,
       selectComponent: (id) => dispatch({ type: "SELECT_COMPONENT", payload: id }),

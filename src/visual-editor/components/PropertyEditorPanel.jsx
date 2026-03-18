@@ -71,6 +71,18 @@ export default function PropertyEditorPanel() {
               </label>
             );
           }
+          if (field.type === "checkbox") {
+            return (
+              <label key={key}>
+                <span>{field.label}</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(value)}
+                  onChange={(event) => updateComponent(selectedComponent.id, { [key]: event.target.checked })}
+                />
+              </label>
+            );
+          }
           return (
             <label key={key}>
               <span>{field.label}</span>
