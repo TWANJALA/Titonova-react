@@ -1807,6 +1807,18 @@ const buildHostedEditRuntime = ({ siteId, filePath }) => {
         }
       };
 
+      var editLinkHref = function (node) {
+        if (!(node instanceof HTMLElement) || !node.matches('[data-editable="link"]')) return;
+        var currentHref = String(node.getAttribute("href") || "");
+        var nextHref = window.prompt("Edit link URL", currentHref);
+        if (nextHref === null) return;
+        var normalizedHref = String(nextHref).trim();
+        if (!normalizedHref || normalizedHref === currentHref) return;
+        node.setAttribute("href", normalizedHref);
+        markDirty();
+        setStatus("Link URL updated. Save to persist.", "#93c5fd");
+      };
+
       var editableNodes = document.querySelectorAll(selector);
       for (var i = 0; i < editableNodes.length; i += 1) {
         var node = editableNodes[i];
@@ -1824,6 +1836,13 @@ const buildHostedEditRuntime = ({ siteId, filePath }) => {
         if (node.matches('[data-editable="link"], [data-editable="button"]')) {
           node.addEventListener("click", function (event) {
             event.preventDefault();
+          });
+        }
+        if (node.matches('[data-editable="link"]')) {
+          node.title = "Double-click to edit URL. Type to edit label.";
+          node.addEventListener("dblclick", function (event) {
+            event.preventDefault();
+            editLinkHref(this);
           });
         }
       }
@@ -1899,6 +1918,14 @@ const buildHostedEditRuntime = ({ siteId, filePath }) => {
       }
 
       window.addEventListener("keydown", function (event) {
+        if ((event.metaKey || event.ctrlKey) && String(event.key || "").toLowerCase() === "k") {
+          var focused = document.activeElement;
+          if (focused instanceof HTMLElement && focused.matches('[data-editable="link"]')) {
+            event.preventDefault();
+            editLinkHref(focused);
+            return;
+          }
+        }
         if ((event.metaKey || event.ctrlKey) && String(event.key || "").toLowerCase() === "s") {
           event.preventDefault();
           void saveHostedPage();
