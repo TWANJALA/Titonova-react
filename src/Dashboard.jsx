@@ -9751,6 +9751,10 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
       const editableType = String(editableTarget.dataset.editable || "").trim().toLowerCase();
       if (editableType === "image") {
         event.preventDefault();
+      } else if (typeof window !== "undefined") {
+        window.requestAnimationFrame(() => {
+          focusInlineEditableNode(editableTarget);
+        });
       }
       return;
     }
@@ -9761,6 +9765,12 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
         : null;
     if (fallbackEditable instanceof HTMLElement) {
       selectInlineEditableNode(fallbackEditable);
+      const fallbackType = String(fallbackEditable.dataset.editable || "").trim().toLowerCase();
+      if (fallbackType !== "image" && typeof window !== "undefined") {
+        window.requestAnimationFrame(() => {
+          focusInlineEditableNode(fallbackEditable);
+        });
+      }
       return;
     }
     if (selectedEditableNodeRef.current instanceof HTMLElement) {
