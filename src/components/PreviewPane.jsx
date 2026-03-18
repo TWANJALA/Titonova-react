@@ -64,6 +64,9 @@ export default function PreviewPane(props) {
     inlineEditMetaStyle,
     inlineSmartStatus,
     inlineSiteModel,
+    sections,
+    selectedSectionEditId,
+    updateSection,
     inlineSelectionText,
     inlineSelectionSection,
     inlineCheckpoints,
@@ -249,6 +252,9 @@ export default function PreviewPane(props) {
                   inlineEditMetaStyle={inlineEditMetaStyle}
                   inlineSmartStatus={inlineSmartStatus}
                   inlineSiteModel={inlineSiteModel}
+                  sections={sections}
+                  selectedSectionEditId={selectedSectionEditId}
+                  updateSection={updateSection}
                   inlineSelectionText={inlineSelectionText}
                   inlineSelectionSection={inlineSelectionSection}
                   inlineCheckpoints={inlineCheckpoints}
@@ -316,11 +322,19 @@ export default function PreviewPane(props) {
                 onInput={(event) => {
                   if (!isInlineEditing) return;
                   setInlineDraftDirty(true);
-                  syncInlineSiteModelFromDom();
                   if (event.target instanceof Element) {
+                    const editableTarget = event.target.closest("[data-edit-id], [data-id]");
+                    if (editableTarget instanceof HTMLElement) {
+                      const editableId = String(editableTarget.dataset.editId || editableTarget.dataset.id || "").trim();
+                      if (editableId) {
+                        const nextValue = String(editableTarget.textContent || "").replace(/\s+/g, " ").trim();
+                        updateSection(editableId, nextValue, { syncDraft: false });
+                      }
+                    }
                     selectInlineSection(event.target);
                     selectInlineEditableNode(event.target);
                   }
+                  syncInlineSiteModelFromDom();
                 }}
                 onBlurCapture={(event) => {
                   if (!isInlineEditing) return;

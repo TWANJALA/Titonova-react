@@ -961,6 +961,7 @@ export const injectEditableLayerIntoHtml = (html, pageKey = "index.html", makePr
       node.dataset.binding =
         type === "image" ? "src" : type === "link" ? "href" : type === "button" ? "content" : "content";
       node.dataset.id = node.dataset.id || `${pageSlug}-${component}-${type}-${sequence}`;
+      node.dataset.editId = node.dataset.id;
     });
 
     return doc.body.innerHTML || String(html || "");
@@ -974,10 +975,10 @@ export const buildInlineSiteModelFromHtml = (html) => {
     const parser = new DOMParser();
     const doc = parser.parseFromString(`<body>${String(html || "")}</body>`, "text/html");
     const model = {};
-    const nodes = Array.from(doc.body.querySelectorAll("[data-editable][data-id]"));
+    const nodes = Array.from(doc.body.querySelectorAll("[data-editable][data-id], [data-editable][data-edit-id]"));
     nodes.forEach((node) => {
       if (!(node instanceof HTMLElement)) return;
-      const id = String(node.dataset.id || "").trim();
+      const id = String(node.dataset.editId || node.dataset.id || "").trim();
       const type = String(node.dataset.editable || "").trim();
       if (!id || !type) return;
       const component = String(node.dataset.component || "").trim();
@@ -1030,21 +1031,26 @@ export const buildInlineSiteModelFromHtml = (html) => {
 };
 
 export const parseInlineSmartAction = (rawValue) => {
-  const value = String(rawValue || "")
-    .trim()
-    .toLowerCase()
-    .replace(/^\//, "");
-  if (!value) return "";
-  if (/(smart|improve|best|premium|convert|conversion|optimize)/.test(value)) return "smart";
-  if (value.includes("short")) return "shorten";
-  if (value.includes("expand")) return "expand";
-  if (/(persuasive|persuade|convince|sales)/.test(value)) return "persuasive";
-  if (value.includes("seo")) return "seo";
-  if (value.includes("cta")) return "cta";
-  if (value.includes("professional")) return "professional";
-  if (value.includes("friendly")) return "friendly";
-  if (value.includes("fix") || value.includes("clean")) return "fix";
-  return "";
+  const raw = String(rawValue || "").trim().toLowerCase();
+  if (!raw) return "";
+  const normalized = raw.replace(/^\//, "");
+  const commandMap = {
+    smart: "smart",
+    improve: "smart",
+    shorten: "shorten",
+    short: "shorten",
+    expand: "expand",
+    persuasive: "persuasive",
+    seo: "seo",
+    cta: "cta",
+    professional: "professional",
+    friendly: "friendly",
+    fix: "fix",
+  };
+  if (raw.startsWith("/")) {
+    return commandMap[normalized] || "";
+  }
+  return commandMap[normalized] || "";
 };
 
 export const detectInlineSectionType = (node, root) => {

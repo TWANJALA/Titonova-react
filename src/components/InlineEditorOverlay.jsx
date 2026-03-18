@@ -7,6 +7,9 @@ export default function InlineEditorOverlay({
   inlineEditMetaStyle,
   inlineSmartStatus,
   inlineSiteModel,
+  sections,
+  selectedSectionEditId,
+  updateSection,
   inlineSelectionText,
   inlineSelectionSection,
   inlineCheckpoints,
@@ -60,6 +63,9 @@ export default function InlineEditorOverlay({
 
   const canRewriteSelection = Boolean(inlineSelectionText || selectedEditableMeta?.type === "text");
   const canEditSection = Boolean(selectedSectionMeta?.id);
+  const selectedSectionValue = selectedSectionEditId
+    ? String(sections?.[selectedSectionEditId] ?? "")
+    : "";
   const preserveInlineSelection = (event) => {
     event.preventDefault();
   };
@@ -175,11 +181,23 @@ export default function InlineEditorOverlay({
                   {selectedSectionMeta.component || "section"} • {selectedSectionMeta.sectionType || "general"}
                 </small>
               </div>
+              {selectedSectionEditId ? (
+                <label style={styles.inlineSectionField}>
+                  <small style={styles.inlineSectionLabel}>
+                    Selected Text Block ({selectedSectionEditId})
+                  </small>
+                  <textarea
+                    style={{ ...stylesInput, minHeight: 80, resize: "vertical" }}
+                    value={selectedSectionValue}
+                    onChange={(event) => updateSection(selectedSectionEditId, event.target.value)}
+                  />
+                </label>
+              ) : null}
               <label style={styles.inlineSectionField}>
                 <small style={styles.inlineSectionLabel}>Title</small>
                 <input
                   style={stylesInput}
-                  value={selectedSectionMeta.title || ""}
+                  value={selectedSectionMeta.titleId ? String(sections?.[selectedSectionMeta.titleId] ?? selectedSectionMeta.title ?? "") : selectedSectionMeta.title || ""}
                   onChange={(event) => handleSectionFieldChange("title", event.target.value)}
                 />
               </label>
@@ -187,7 +205,7 @@ export default function InlineEditorOverlay({
                 <small style={styles.inlineSectionLabel}>Subtitle</small>
                 <textarea
                   style={{ ...stylesInput, minHeight: 72, resize: "vertical" }}
-                  value={selectedSectionMeta.subtitle || ""}
+                  value={selectedSectionMeta.subtitleId ? String(sections?.[selectedSectionMeta.subtitleId] ?? selectedSectionMeta.subtitle ?? "") : selectedSectionMeta.subtitle || ""}
                   onChange={(event) => handleSectionFieldChange("subtitle", event.target.value)}
                 />
               </label>
@@ -195,7 +213,7 @@ export default function InlineEditorOverlay({
                 <small style={styles.inlineSectionLabel}>Button Text</small>
                 <input
                   style={stylesInput}
-                  value={selectedSectionMeta.buttonText || ""}
+                  value={selectedSectionMeta.buttonTextId ? String(sections?.[selectedSectionMeta.buttonTextId] ?? selectedSectionMeta.buttonText ?? "") : selectedSectionMeta.buttonText || ""}
                   onChange={(event) => handleSectionFieldChange("buttonText", event.target.value)}
                 />
               </label>
