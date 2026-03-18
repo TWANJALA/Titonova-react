@@ -6156,7 +6156,7 @@ Return strict JSON:
   const redesignInsights = deriveRedesignInsights(sourceWebsiteUrl);
   const hasDashboardAccess = true;
   const hasGeneratedContent = Object.keys(generatedPages).length > 0 || Boolean(generatedSite);
-  const shouldShowGuestPreviewPrompt = Boolean(showGuestAuthPrompt && !authUser && hasGeneratedContent && !isInlineEditing);
+  const shouldShowGuestPreviewPrompt = false;
   const currentPageHtml = generatedPages[activePage] || generatedSite || "";
   const seoChecklist = computeSeoChecklist(currentPageHtml);
   const currentMapQuery = extractMapQueryFromHtml(currentPageHtml);
@@ -8775,7 +8775,7 @@ ${uiDesignClause}${buildUltraSmartPromptClause(ultraSmartPlan)}${buildSmartQaPro
       } else {
         setShowGuestAuthPrompt(true);
         setPublishStatus("info");
-        setPublishMessage("Website generated in guest mode. Create an account to save, publish, and manage projects.");
+        setPublishMessage("Website generated in guest mode. Editing is enabled. Create an account only if you want to save/publish/manage projects.");
       }
       runDeferred(async () => {
         await runMarketingAutopilot({ source: "generation" });
