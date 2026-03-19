@@ -495,20 +495,77 @@ const asStringList = (value, max = 20) =>
     .map((item) => String(item || "").trim())
     .filter(Boolean)
     .slice(0, max);
+const asObject = (value) =>
+  value && typeof value === "object" && !Array.isArray(value) ? value : {};
 const prettifyLabel = (value) =>
   String(value || "")
     .replace(/[-_]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/\b\w/g, (char) => char.toUpperCase());
+const normalizeSiteBlueprintInput = (rawBlueprint) => {
+  if (looksLikeBlueprintObject(rawBlueprint)) return rawBlueprint;
+  const site = asObject(rawBlueprint?.site);
+  if (!site || Object.keys(site).length === 0) return null;
+
+  const nestedSiteStructure = asObject(site.siteStructure);
+  const rawPages = Array.isArray(site.pages) ? site.pages : [];
+  const pageIds = rawPages
+    .map((page) => asNonEmptyString(asObject(page).id || asObject(page).name))
+    .filter(Boolean);
+  const rawSectionTypes = rawPages.flatMap((page) => {
+    const sections = Array.isArray(asObject(page).sections) ? asObject(page).sections : [];
+    return sections
+      .map((section) => asNonEmptyString(asObject(section).type || asObject(section).id))
+      .filter(Boolean);
+  });
+  const dedupedSections = Array.from(new Set(rawSectionTypes));
+  const sectionList =
+    asStringList(nestedSiteStructure.globalSections, 12).length > 0
+      ? asStringList(nestedSiteStructure.globalSections, 12)
+      : dedupedSections.slice(0, 12);
+
+  const firstHeroSection = rawPages
+    .flatMap((page) => (Array.isArray(asObject(page).sections) ? asObject(page).sections : []))
+    .find((section) => {
+      const sectionType = asNonEmptyString(asObject(section).type || asObject(section).id).toLowerCase();
+      return sectionType.includes("hero");
+    });
+  const heroContent = asObject(firstHeroSection?.content);
+  const heroStyle = asObject(firstHeroSection?.style);
+
+  return {
+    brand: asObject(site.brand),
+    designSystem: asObject(site.designSystem),
+    siteStructure: {
+      pages:
+        pageIds.length > 0
+          ? pageIds
+          : asStringList(nestedSiteStructure.pages, 12),
+      globalSections: sectionList,
+    },
+    seoRules: asObject(site.seoRules),
+    editingPolicy: asObject(site.editingPolicy),
+    goal: asNonEmptyString(site.goal),
+    hero: {
+      headline: asNonEmptyString(heroContent.headline),
+      subheadline: asNonEmptyString(heroContent.subheadline),
+      cta: asNonEmptyString(heroContent.cta),
+      layout: asNonEmptyString(heroStyle.layout),
+      density: asNonEmptyString(heroStyle.density),
+    },
+  };
+};
 export const buildPromptFromSiteBlueprint = (blueprintInput) => {
-  if (!looksLikeBlueprintObject(blueprintInput)) return "";
-  const blueprint = blueprintInput;
+  const blueprint = normalizeSiteBlueprintInput(blueprintInput);
+  if (!blueprint) return "";
   const brand = blueprint.brand || {};
   const design = blueprint.designSystem || {};
   const siteStructure = blueprint.siteStructure || {};
   const seo = blueprint.seoRules || {};
   const editing = blueprint.editingPolicy || {};
+  const hero = asObject(blueprint.hero);
+  const siteGoal = asNonEmptyString(blueprint.goal);
 
   const brandName = asNonEmptyString(brand.name, "Your Business");
   const industry = asNonEmptyString(brand.industry, "Professional Services");
@@ -527,6 +584,7 @@ export const buildPromptFromSiteBlueprint = (blueprintInput) => {
     `Business Name: ${brandName}`,
     `Industry: ${industry}`,
     `Style: ${tone}`,
+    siteGoal ? `Primary Goal: ${siteGoal}` : "",
     colorSystem.length > 0 ? `Colors: ${colorSystem.join(", ")}` : "",
     `Typography: heading ${asNonEmptyString(design?.typography?.heading, "consistent")}, body ${asNonEmptyString(design?.typography?.body, "readable")}`,
     spacingScale.length > 0 ? `Spacing Scale: ${spacingScale.join(", ")}` : "",
@@ -548,6 +606,14 @@ export const buildPromptFromSiteBlueprint = (blueprintInput) => {
   if (voiceRules.length > 0) {
     lines.push("Voice Rules:");
     voiceRules.forEach((rule) => lines.push(`- ${rule}`));
+  }
+  if (hero.headline || hero.subheadline || hero.cta || hero.layout || hero.density) {
+    lines.push("Hero Section:");
+    if (hero.headline) lines.push(`- Headline: ${hero.headline}`);
+    if (hero.subheadline) lines.push(`- Subheadline: ${hero.subheadline}`);
+    if (hero.cta) lines.push(`- Primary CTA: ${hero.cta}`);
+    if (hero.layout) lines.push(`- Layout: ${prettifyLabel(hero.layout)}`);
+    if (hero.density) lines.push(`- Density: ${prettifyLabel(hero.density)}`);
   }
 
   lines.push("SEO Rules:");
@@ -576,8 +642,9 @@ export const maybeConvertSiteBlueprintJsonToPrompt = (rawValue) => {
   if (!text || !text.startsWith("{")) return "";
   try {
     const parsed = JSON.parse(text);
-    if (!looksLikeBlueprintObject(parsed)) return "";
-    return buildPromptFromSiteBlueprint(parsed);
+    const normalized = normalizeSiteBlueprintInput(parsed);
+    if (!normalized) return "";
+    return buildPromptFromSiteBlueprint(normalized);
   } catch {
     return "";
   }

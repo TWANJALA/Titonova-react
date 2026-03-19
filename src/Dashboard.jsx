@@ -62,6 +62,420 @@ import {
 const GenerationWorkflowPanels = React.lazy(() => import("./components/GenerationWorkflowPanels"));
 const AdvancedOperationsPanels = React.lazy(() => import("./components/AdvancedOperationsPanels"));
 const AUTH_ENABLED = false;
+const EDIT_LAYER_KEYS = ["content", "layout", "design", "conversion"];
+const EDIT_LAYER_LABELS = {
+  content: "Content",
+  layout: "Layout",
+  design: "Design",
+  conversion: "Conversion",
+};
+const EDITOR_POLICY_BY_LAYER = {
+  content: {
+    mode: "copy-only",
+    summary: "Rewrite copy only. Keep structure and styling unchanged.",
+  },
+  layout: {
+    mode: "structure-safe",
+    summary: "Adjust section order/spacing only. Do not rewrite brand voice.",
+  },
+  design: {
+    mode: "token-safe",
+    summary: "Adjust visual style tokens only. Keep copy and IA intact.",
+  },
+  conversion: {
+    mode: "funnel-safe",
+    summary: "Improve CTA/proof/form flow while preserving trust and navigation clarity.",
+  },
+};
+const EDIT_PRIORITY_ORDER = [
+  "broken_usability",
+  "prompt_alignment",
+  "conversion",
+  "accessibility",
+  "visual_consistency",
+  "microcopy",
+];
+const EDIT_PRIORITY_LABELS = {
+  broken_usability: "Broken/Usability",
+  prompt_alignment: "Prompt Alignment",
+  conversion: "Conversion",
+  accessibility: "Accessibility",
+  visual_consistency: "Visual Consistency",
+  microcopy: "Microcopy",
+};
+const EDIT_PRIORITY_RANK = EDIT_PRIORITY_ORDER.reduce((acc, key, index) => ({ ...acc, [key]: index }), {});
+const DEFAULT_EDIT_BUDGET = {
+  maxStructuralPerRound: 1,
+  maxCopyChangesPerSection: 3,
+  maxStyleChangesPerPage: 2,
+  maxIssuesPerRound: 5,
+  maxRounds: 5,
+  minImprovement: 2,
+};
+const QUALITY_TARGET_SCORE = 88;
+const clampScore = (value) => Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+const weightSeverity = (severity) => {
+  const key = String(severity || "").toLowerCase();
+  if (key === "high") return 3;
+  if (key === "low") return 1;
+  return 2;
+};
+const extractPromptKeywords = (text) =>
+  String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 4 && !["with", "from", "that", "this", "your", "have", "into", "page", "pages", "website", "landing"].includes(token))
+    .slice(0, 24);
+const classifyIssuePriority = (insight = {}) => {
+  const text = `${insight?.id || ""} ${insight?.issue || ""} ${insight?.recommendation || ""}`.toLowerCase();
+  if (/(broken|crash|overlap|unusable|inaccessible nav|cannot|missing critical|empty section|blank|non-functional)/i.test(text)) {
+    return "broken_usability";
+  }
+  if (/(tone|prompt|intent|alignment|off-brand|brand voice|playful|premium|fintech|industry mismatch)/i.test(text)) {
+    return "prompt_alignment";
+  }
+  if (/(cta|lead|conversion|form|funnel|social proof|testimonial|pricing clarity|value proposition)/i.test(text)) {
+    return "conversion";
+  }
+  if (/(accessibility|alt|aria|contrast|semantic|h1|keyboard|screen reader|label)/i.test(text)) {
+    return "accessibility";
+  }
+  if (/(visual|spacing|typography|button style|consistency|alignment|hierarchy|color imbalance|layout)/i.test(text)) {
+    return "visual_consistency";
+  }
+  return "microcopy";
+};
+const computeWebsiteScores = ({ html, prompt, projectName, pageKeys = [] }) => {
+  const dom = buildDomTreeSummary(html);
+  const text = String(html || "");
+  const plain = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const plainLower = plain.toLowerCase();
+  const tokens = extractPromptKeywords(prompt);
+  const matchedTokens = tokens.filter((token) => plainLower.includes(token)).length;
+  const promptRatio = tokens.length > 0 ? matchedTokens / tokens.length : 0.6;
+  const promptAlignment = clampScore(42 + promptRatio * 58);
+
+  const hasBrandName = String(projectName || "").trim()
+    ? new RegExp(String(projectName).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(plain)
+    : false;
+  const usesTokenVars = /var\(--tn-/i.test(text);
+  const brandConsistency = clampScore(48 + (hasBrandName ? 18 : 0) + (usesTokenVars ? 20 : 0) + Math.min(14, dom.sectionCount * 2));
+
+  const hierarchyBase =
+    (dom.headingCount.h1 === 1 ? 36 : 10) +
+    Math.min(24, dom.headingCount.h2 * 6) +
+    Math.min(20, dom.sectionCount * 4) +
+    (dom.ctaCount > 0 ? 12 : 0);
+  const visualHierarchy = clampScore(hierarchyBase);
+
+  const avgSentenceLength = (() => {
+    const sentences = plain.split(/[.!?]+/).map((line) => line.trim()).filter(Boolean);
+    if (sentences.length === 0) return 0;
+    const words = sentences.reduce((sum, sentence) => sum + sentence.split(/\s+/).filter(Boolean).length, 0);
+    return words / Math.max(1, sentences.length);
+  })();
+  const readability = clampScore(
+    40 +
+      Math.min(30, dom.wordCount / 7) +
+      (avgSentenceLength >= 9 && avgSentenceLength <= 22 ? 18 : 6) +
+      (dom.headingCount.h2 >= 2 ? 10 : 0)
+  );
+
+  const accessibility = clampScore(
+    (dom.headingCount.h1 === 1 ? 22 : 8) +
+      (dom.imagesTotal === 0 ? 18 : Math.max(0, 24 - dom.imagesWithoutAlt * 8)) +
+      (dom.internalLinks >= 3 ? 18 : dom.internalLinks * 6) +
+      (dom.ctaCount >= 2 ? 14 : dom.ctaCount * 6) +
+      (/<form[\s>]/i.test(text) ? 12 : 8) +
+      (/\baria-|role=|alt=/i.test(text) ? 10 : 4)
+  );
+
+  const hasPricingCue = /(pricing|plan|package|\$[0-9]+)/i.test(text);
+  const conversionClarity = clampScore(
+    26 +
+      Math.min(30, dom.ctaCount * 10) +
+      (dom.testimonialCount >= 2 ? 18 : dom.testimonialCount * 8) +
+      (dom.formCount > 0 ? 14 : 4) +
+      (hasPricingCue ? 10 : 0)
+  );
+
+  const mobileResponsiveness = clampScore(46 + (/@media\s*\(/i.test(text) ? 28 : 8) + (/width=device-width/i.test(text) ? 16 : 6));
+
+  const hasCorePages =
+    pageKeys.length > 0 &&
+    ["index.html", "about.html", "services.html", "pricing.html", "contact.html"].filter((key) => pageKeys.includes(key)).length >= 3;
+  const contentCompleteness = clampScore(
+    34 + Math.min(30, dom.sectionCount * 5) + Math.min(22, dom.wordCount / 14) + (hasCorePages ? 14 : 4)
+  );
+
+  const hasTrustDetails = /(verified|licensed|insured|testimonials|review|case study|trusted)/i.test(text);
+  const hasContactDetails = /(\(\d{3}\)|\+?\d[\d\s().-]{7,}|@|contact\.html)/i.test(text);
+  const trustCredibility = clampScore(34 + (hasTrustDetails ? 30 : 8) + (hasContactDetails ? 24 : 10) + (dom.testimonialCount >= 2 ? 12 : 0));
+
+  const buttonStyleMatches = text.match(/border-radius:\s*[^;]+/gi) || [];
+  const styleVariants = new Set(buttonStyleMatches.map((line) => String(line || "").toLowerCase().trim())).size;
+  const designConsistency = clampScore(42 + (usesTokenVars ? 24 : 8) + (styleVariants <= 3 ? 20 : 6) + (dom.sectionCount >= 4 ? 10 : 4));
+
+  const scores = {
+    prompt_alignment: promptAlignment,
+    brand_consistency: brandConsistency,
+    visual_hierarchy: visualHierarchy,
+    readability,
+    accessibility,
+    conversion_clarity: conversionClarity,
+    mobile_responsiveness: mobileResponsiveness,
+    content_completeness: contentCompleteness,
+    trust_credibility: trustCredibility,
+    design_consistency: designConsistency,
+  };
+  const overall = clampScore(
+    Object.values(scores).reduce((sum, value) => sum + Number(value || 0), 0) / Math.max(1, Object.keys(scores).length)
+  );
+  return { scores, overall };
+};
+const buildHtmlFingerprint = (html) => {
+  const text = String(html || "");
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = (hash * 31 + text.charCodeAt(index)) >>> 0;
+  }
+  return `${text.length}:${hash}`;
+};
+const classifyEditLayer = (insight = {}) => {
+  const text = `${insight?.id || ""} ${insight?.issue || ""} ${insight?.recommendation || ""}`.toLowerCase();
+  if (/(cta|conversion|lead|proof|testimonial|social|form|funnel|navigation|value proposition)/i.test(text)) {
+    return "conversion";
+  }
+  if (/(layout|hierarchy|spacing|fold|section order|ordering|hero too tall|placement)/i.test(text)) {
+    return "layout";
+  }
+  if (/(contrast|typography|button style|alignment|color|visual|design)/i.test(text)) {
+    return "design";
+  }
+  return "content";
+};
+const withEditLayerPolicy = (insight = {}) => {
+  const layer = classifyEditLayer(insight);
+  const policy = EDITOR_POLICY_BY_LAYER[layer] || EDITOR_POLICY_BY_LAYER.content;
+  return {
+    ...insight,
+    layer,
+    layerLabel: EDIT_LAYER_LABELS[layer] || "Content",
+    policyMode: policy.mode,
+    policySummary: policy.summary,
+  };
+};
+const buildDomTreeSummary = (html) => {
+  const empty = {
+    nodeCount: 0,
+    sectionCount: 0,
+    headingCount: { h1: 0, h2: 0, h3: 0 },
+    ctaCount: 0,
+    internalLinks: 0,
+    wordCount: 0,
+    formCount: 0,
+    testimonialCount: 0,
+    imagesTotal: 0,
+    imagesWithoutAlt: 0,
+  };
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<body>${html || ""}</body>`, "text/html");
+    const root = doc.body;
+    const text = String(root.textContent || "").replace(/\s+/g, " ").trim();
+    const links = Array.from(root.querySelectorAll("a[href]"));
+    const images = Array.from(root.querySelectorAll("img"));
+    const ctaCount = Array.from(root.querySelectorAll("a,button")).filter((node) =>
+      /(contact|book|start|get|learn|reserve|order|request|sign|call|quote)/i.test(String(node.textContent || ""))
+    ).length;
+    return {
+      nodeCount: root.querySelectorAll("*").length,
+      sectionCount: root.querySelectorAll("section").length,
+      headingCount: {
+        h1: root.querySelectorAll("h1").length,
+        h2: root.querySelectorAll("h2").length,
+        h3: root.querySelectorAll("h3").length,
+      },
+      ctaCount,
+      internalLinks: links.filter((link) => /\.html(?:[#?].*)?$/i.test(String(link.getAttribute("href") || ""))).length,
+      wordCount: text ? text.split(" ").length : 0,
+      formCount: root.querySelectorAll("form").length,
+      testimonialCount: root.querySelectorAll("[data-tn-testimonial], blockquote").length,
+      imagesTotal: images.length,
+      imagesWithoutAlt: images.filter((img) => String(img.getAttribute("alt") || "").trim().length === 0).length,
+    };
+  } catch {
+    return empty;
+  }
+};
+const resolveHeroSection = (root) => root.querySelector("section") || root;
+const resolveTestimonialsSection = (root) =>
+  root.querySelector("[data-tn-testimonials='true']") ||
+  Array.from(root.querySelectorAll("section")).find((section) =>
+    /testimonial|review|what clients say|social proof/i.test(String(section.textContent || ""))
+  ) ||
+  null;
+const resolveFeaturesSection = (root) =>
+  Array.from(root.querySelectorAll("section")).find((section) =>
+    /feature|service|solution|capabilit/i.test(String(section.textContent || ""))
+  ) ||
+  null;
+const resolveTargetNode = (root, target) => {
+  const key = String(target || "").toLowerCase();
+  const hero = resolveHeroSection(root);
+  if (key === "home.hero.content.headline") return hero.querySelector("h1") || root.querySelector("h1");
+  if (key === "home.hero.content.subheadline") return hero.querySelector("p") || root.querySelector("p");
+  if (key === "home.hero.content.cta" || key === "home.cta.primary.text") {
+    return hero.querySelector("a,button") || root.querySelector("a,button");
+  }
+  if (key === "home.features.content.summary") {
+    const features = resolveFeaturesSection(root);
+    return features?.querySelector("p,li,small") || root.querySelector("section p");
+  }
+  if (key.startsWith("selector:")) {
+    const selector = key.replace(/^selector:/, "").trim();
+    if (selector) return root.querySelector(selector);
+  }
+  return null;
+};
+const resolveSectionTarget = (root, target) => {
+  const key = String(target || "").toLowerCase();
+  if (key === "home.hero") return resolveHeroSection(root);
+  if (key === "home.testimonials") return resolveTestimonialsSection(root);
+  if (key === "home.features") return resolveFeaturesSection(root);
+  if (key.startsWith("selector:")) {
+    const selector = key.replace(/^selector:/, "").trim();
+    if (selector) return root.querySelector(selector);
+  }
+  return null;
+};
+const resolveStyleTargets = (root, target) => {
+  const key = String(target || "").toLowerCase();
+  if (key === "home.features.cards") {
+    const features = resolveFeaturesSection(root);
+    if (!features) return [];
+    const cards = Array.from(features.querySelectorAll("article,.card,[data-card]"));
+    return cards.length > 0 ? cards : [features];
+  }
+  if (key === "home.hero") {
+    const hero = resolveHeroSection(root);
+    return hero ? [hero] : [];
+  }
+  if (key.startsWith("selector:")) {
+    const selector = key.replace(/^selector:/, "").trim();
+    return selector ? Array.from(root.querySelectorAll(selector)) : [];
+  }
+  return [];
+};
+const applyStructuredPatchesToHtml = (html, patches = []) => {
+  const input = String(html || "");
+  if (!input) return { html: input, applied: [], skipped: patches };
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<body>${input}</body>`, "text/html");
+    const root = doc.body;
+    const applied = [];
+    const skipped = [];
+
+    patches.forEach((patch, index) => {
+      const op = String(patch?.op || "").trim();
+      const target = String(patch?.target || "").trim();
+      const patchId = String(patch?.patchId || `${op}-${target}-${index}`);
+      if (!op || !target) {
+        skipped.push({ ...patch, patchId, reason: "missing-op-or-target" });
+        return;
+      }
+
+      if (op === "replace_content") {
+        const node = resolveTargetNode(root, target);
+        const value = String(patch?.value || "").trim();
+        if (!node || !value) {
+          skipped.push({ ...patch, patchId, reason: "target-or-value-missing" });
+          return;
+        }
+        node.textContent = value;
+        applied.push({ ...patch, patchId });
+        return;
+      }
+
+      if (op === "set_attribute") {
+        const selectorTarget = String(target || "").toLowerCase().startsWith("selector:")
+          ? String(target).replace(/^selector:/i, "").trim()
+          : "";
+        const nodes = selectorTarget ? Array.from(root.querySelectorAll(selectorTarget)) : [resolveTargetNode(root, target)].filter(Boolean);
+        const attr = String(patch?.attribute || "").trim();
+        const value = String(patch?.value || "").trim();
+        if (!nodes.length || !attr || !value) {
+          skipped.push({ ...patch, patchId, reason: "attribute-patch-invalid" });
+          return;
+        }
+        nodes.forEach((node) => node.setAttribute(attr, value));
+        applied.push({ ...patch, patchId });
+        return;
+      }
+
+      if (op === "update_style") {
+        const targets = resolveStyleTargets(root, target);
+        const styleMap = patch?.value && typeof patch.value === "object" ? patch.value : null;
+        if (!targets.length || !styleMap) {
+          skipped.push({ ...patch, patchId, reason: "style-patch-invalid" });
+          return;
+        }
+        targets.forEach((node) => {
+          Object.entries(styleMap).forEach(([key, rawValue]) => {
+            if (!key) return;
+            const cssValue =
+              typeof rawValue === "number" && !["opacity", "zIndex", "fontWeight", "lineHeight", "flex", "order"].includes(key)
+                ? `${rawValue}px`
+                : String(rawValue);
+            node.style[key] = cssValue;
+          });
+        });
+        applied.push({ ...patch, patchId });
+        return;
+      }
+
+      if (op === "move_section") {
+        const section = resolveSectionTarget(root, target);
+        const after = resolveSectionTarget(root, patch?.after);
+        if (!section || !after || section === after) {
+          skipped.push({ ...patch, patchId, reason: "move-target-missing" });
+          return;
+        }
+        after.insertAdjacentElement("afterend", section);
+        applied.push({ ...patch, patchId });
+        return;
+      }
+
+      if (op === "insert_section") {
+        const anchor = resolveSectionTarget(root, patch?.after) || resolveHeroSection(root);
+        const htmlValue = String(patch?.value || "").trim();
+        if (!anchor || !htmlValue) {
+          skipped.push({ ...patch, patchId, reason: "insert-invalid" });
+          return;
+        }
+        const fragment = doc.createElement("section");
+        fragment.innerHTML = htmlValue;
+        const node = fragment.firstElementChild;
+        if (!node) {
+          skipped.push({ ...patch, patchId, reason: "insert-empty" });
+          return;
+        }
+        anchor.insertAdjacentElement("afterend", node);
+        applied.push({ ...patch, patchId });
+        return;
+      }
+
+      skipped.push({ ...patch, patchId, reason: "unsupported-op" });
+    });
+
+    return { html: root.innerHTML || input, applied, skipped };
+  } catch {
+    return { html: input, applied: [], skipped: patches.map((patch) => ({ ...patch, reason: "patch-parse-failed" })) };
+  }
+};
 
 export default function Dashboard() {
 
@@ -89,6 +503,12 @@ export default function Dashboard() {
   const [marketingEngineLoading, setMarketingEngineLoading] = useState(false);
   const [growthCoachLoading, setGrowthCoachLoading] = useState(false);
   const [growthCoachInsights, setGrowthCoachInsights] = useState([]);
+  const [editAuditRunning, setEditAuditRunning] = useState(false);
+  const [editAuditReport, setEditAuditReport] = useState(null);
+  const [siteQualityScore, setSiteQualityScore] = useState(null);
+  const [siteScoreHistory, setSiteScoreHistory] = useState([]);
+  const [patchRoundHistory, setPatchRoundHistory] = useState([]);
+  const [lockedEditTargets, setLockedEditTargets] = useState({});
   const [businessCoachLoading, setBusinessCoachLoading] = useState(false);
   const [businessCoachInsights, setBusinessCoachInsights] = useState([]);
   const [analyticsSnapshot, setAnalyticsSnapshot] = useState(null);
@@ -254,6 +674,8 @@ export default function Dashboard() {
   const previewEditableRef = useRef(null);
   const appShellRef = useRef(null);
   const promptTextareaRef = useRef(null);
+  const lastScoredFingerprintRef = useRef("");
+  const selfOptimizationRunnerRef = useRef(() => {});
 
   useEffect(() => {
     setMounted(true);
@@ -1905,6 +2327,367 @@ ${(audit.directives || []).map((line) => `  - ${line}`).join("\n")}
     } catch {
       return empty;
     }
+  };
+
+  const buildSpecialistInsights = ({ html }) => {
+    const domSummary = buildDomTreeSummary(html);
+    const insights = [];
+    if (domSummary.sectionCount < 4) {
+      insights.push({
+        id: "ux.section-order",
+        severity: "medium",
+        issue: "Section flow is shallow and may weaken narrative progression.",
+        recommendation: "Increase section structure and place social proof near the hero-to-CTA path.",
+        actionLabel: "Apply UX patch",
+      });
+    }
+    if (domSummary.wordCount < 220) {
+      insights.push({
+        id: "copy.value-clarity",
+        severity: "medium",
+        issue: "Copy depth is thin for a persuasive landing experience.",
+        recommendation: "Strengthen value proposition and concrete outcomes in hero and feature copy.",
+        actionLabel: "Apply copy patch",
+      });
+    }
+    if (domSummary.ctaCount < 2 || domSummary.formCount === 0) {
+      insights.push({
+        id: "cro.cta-flow",
+        severity: "high",
+        issue: "Conversion journey lacks enough visible actions or form capture.",
+        recommendation: "Improve CTA clarity and ensure at least one direct lead capture path.",
+        actionLabel: "Apply CRO patch",
+      });
+    }
+    if (domSummary.imagesWithoutAlt > 0 || domSummary.headingCount.h1 !== 1) {
+      insights.push({
+        id: "a11y.semantic-hints",
+        severity: "medium",
+        issue: "Accessibility baseline is incomplete (heading/alt semantics).",
+        recommendation: "Fix missing alt text and heading semantics.",
+        actionLabel: "Apply accessibility patch",
+      });
+    }
+    const buttonRadiusHints = (String(html || "").match(/border-radius:\s*[^;]+/gi) || []).length;
+    if (buttonRadiusHints > 6) {
+      insights.push({
+        id: "ui.visual-consistency",
+        severity: "low",
+        issue: "Visual style signals are fragmented across sections.",
+        recommendation: "Normalize card/button spacing and radius tokens for consistency.",
+        actionLabel: "Apply UI patch",
+      });
+    }
+    return insights;
+  };
+
+  const buildIssuePatchPlan = (insight, domSummary) => {
+    const id = String(insight?.id || "").toLowerCase();
+    const layer = String(insight?.layer || classifyEditLayer(insight));
+    const safeName = projectName || "Your Team";
+    const testimonialPlaceholder = `
+      <section data-tn-testimonials="true" style="padding:18px 20px 0">
+        <h2 style="margin:0 0 10px;color:var(--tn-text-primary);font-family:var(--tn-font-heading);font-weight:var(--tn-heading-weight);letter-spacing:var(--tn-heading-spacing)">Client Testimonials</h2>
+        <p style="margin:0;color:var(--tn-text-secondary)">Add verified client testimonials before publishing. Avoid unverified claims.</p>
+      </section>
+    `;
+
+    if (id.includes("headline") || id.includes("value-clarity")) {
+      return [
+        {
+          op: "replace_content",
+          target: "home.hero.content.headline",
+          value: `${safeName} helps teams automate operations without adding complexity`,
+        },
+      ];
+    }
+    if (id.includes("testimonial")) {
+      const patches = [];
+      if (domSummary.testimonialCount < 1) {
+        patches.push({
+          op: "insert_section",
+          target: "home.testimonials",
+          after: "home.hero",
+          value: testimonialPlaceholder,
+        });
+      }
+      patches.push({
+        op: "move_section",
+        target: "home.testimonials",
+        after: "home.hero",
+      });
+      return patches;
+    }
+    if (id.includes("cta") || id.includes("cro")) {
+      return [
+        {
+          op: "replace_content",
+          target: "home.hero.content.cta",
+          value: "Start free",
+        },
+        {
+          op: "update_style",
+          target: "home.features.cards",
+          value: { gap: 24, padding: 24, borderRadius: 16 },
+        },
+      ];
+    }
+    if (id.includes("a11y") || layer === "design") {
+      return [
+        {
+          op: "set_attribute",
+          target: "selector:img:not([alt])",
+          attribute: "alt",
+          value: "Decorative brand image",
+        },
+      ];
+    }
+    if (layer === "layout") {
+      return [
+        {
+          op: "move_section",
+          target: "home.testimonials",
+          after: "home.hero",
+        },
+      ];
+    }
+    if (layer === "conversion") {
+      return [
+        {
+          op: "replace_content",
+          target: "home.cta.primary.text",
+          value: "Book a strategy call",
+        },
+      ];
+    }
+    return [
+      {
+        op: "replace_content",
+        target: "home.features.content.summary",
+        value: "Clear outcomes, faster delivery cycles, and measurable operational impact.",
+      },
+    ];
+  };
+
+  const rankInsightsForEditing = (insights = []) =>
+    [...insights].sort((a, b) => {
+      const priorityA = Number(EDIT_PRIORITY_RANK[a.priority] ?? 999);
+      const priorityB = Number(EDIT_PRIORITY_RANK[b.priority] ?? 999);
+      if (priorityA !== priorityB) return priorityA - priorityB;
+      const severityDiff = weightSeverity(b.severity) - weightSeverity(a.severity);
+      if (severityDiff !== 0) return severityDiff;
+      return Number(b.expectedImpact || 0) - Number(a.expectedImpact || 0);
+    });
+
+  const selectIssuesWithBudget = ({ issues = [], lockedTargets = {}, budget = DEFAULT_EDIT_BUDGET }) => {
+    const selected = [];
+    const usage = {
+      structural: 0,
+      style: 0,
+      copyBySection: {},
+    };
+
+    for (const issue of issues) {
+      if (selected.length >= Number(budget.maxIssuesPerRound || 5)) break;
+      const patches = Array.isArray(issue?.patches) ? issue.patches : [];
+      if (patches.length === 0) continue;
+
+      const hasLockedTarget =
+        patches.some((patch) => Boolean(lockedTargets[String(patch?.target || "").trim()])) &&
+        String(issue?.severity || "").toLowerCase() !== "high";
+      if (hasLockedTarget) continue;
+
+      let structuralAdds = 0;
+      let styleAdds = 0;
+      const copyAdds = {};
+      let budgetExceeded = false;
+
+      for (const patch of patches) {
+        const op = String(patch?.op || "");
+        const target = String(patch?.target || "");
+        const sectionKey = target.split(".").slice(0, 2).join(".") || "global";
+        if (op === "move_section" || op === "insert_section") structuralAdds += 1;
+        if (op === "update_style") styleAdds += 1;
+        if (op === "replace_content" || op === "set_attribute") {
+          copyAdds[sectionKey] = Number(copyAdds[sectionKey] || 0) + 1;
+        }
+      }
+
+      if (usage.structural + structuralAdds > Number(budget.maxStructuralPerRound || 1)) {
+        budgetExceeded = true;
+      }
+      if (usage.style + styleAdds > Number(budget.maxStyleChangesPerPage || 2)) {
+        budgetExceeded = true;
+      }
+      Object.entries(copyAdds).forEach(([sectionKey, value]) => {
+        if (budgetExceeded) return;
+        const nextCount = Number(usage.copyBySection[sectionKey] || 0) + Number(value || 0);
+        if (nextCount > Number(budget.maxCopyChangesPerSection || 3)) budgetExceeded = true;
+      });
+      if (budgetExceeded) continue;
+
+      usage.structural += structuralAdds;
+      usage.style += styleAdds;
+      Object.entries(copyAdds).forEach(([sectionKey, value]) => {
+        usage.copyBySection[sectionKey] = Number(usage.copyBySection[sectionKey] || 0) + Number(value || 0);
+      });
+      selected.push(issue);
+    }
+
+    return { selected, usage };
+  };
+
+  const validatePatchPlan = (patches = []) => {
+    const allowedOps = new Set(["replace_content", "move_section", "update_style", "insert_section", "set_attribute"]);
+    return (Array.isArray(patches) ? patches : []).filter((patch) => {
+      const op = String(patch?.op || "").trim();
+      const target = String(patch?.target || "").trim().toLowerCase();
+      if (!allowedOps.has(op) || !target) return false;
+      if (/(privacy|terms|legal|compliance)/i.test(target) && op !== "set_attribute") return false;
+      const rawValue = typeof patch?.value === "string" ? patch.value : "";
+      if (/(#1|award-winning|guaranteed results|10x|million users|certified by|best in the world)/i.test(rawValue)) return false;
+      if (/(only \d+ left|limited time|act now or lose)/i.test(rawValue)) return false;
+      return true;
+    });
+  };
+
+  const deriveStableLocksFromScores = (scorePayload) => {
+    const next = {};
+    const scores = scorePayload?.scores || {};
+    if (Number(scores.prompt_alignment || 0) >= 90) next["home.hero.content.headline"] = true;
+    if (Number(scores.brand_consistency || 0) >= 90) next["brand.palette.approved"] = true;
+    if (Number(scores.conversion_clarity || 0) >= 90) next["home.cta.primary.text"] = true;
+    if (Number(scores.trust_credibility || 0) >= 90) next["home.testimonials"] = true;
+    if (Number(scores.design_consistency || 0) >= 90) next["home.features.cards"] = true;
+    return next;
+  };
+
+  const buildPreEditAuditReport = ({ html, pageKey = activePage, insights = [] }) => {
+    const domSummary = buildDomTreeSummary(html);
+    const seoAudit = computeSeoChecklist(html);
+    const scorePayload = computeWebsiteScores({
+      html,
+      prompt: businessOsPrompt,
+      projectName,
+      pageKeys: orderPageKeys(Object.keys(generatedPages || {})),
+    });
+    const specialistInsights = buildSpecialistInsights({ html });
+    const merged = [...(Array.isArray(insights) ? insights : []), ...specialistInsights]
+      .map((item) => withEditLayerPolicy(item))
+      .filter((item) => item.issue && item.recommendation)
+      .reduce((acc, item) => {
+        const key = String(item.id || item.issue || "").toLowerCase();
+        if (!key || acc.some((entry) => String(entry.id || entry.issue || "").toLowerCase() === key)) return acc;
+        acc.push(item);
+        return acc;
+      }, []);
+
+    const enriched = merged.map((item) => {
+      const priority = classifyIssuePriority(item);
+      const severityWeight = weightSeverity(item.severity);
+      const confidence = Math.min(0.98, 0.62 + severityWeight * 0.1 + (item.layer === "conversion" ? 0.08 : 0));
+      const expectedImpact = Math.min(15, 5 + severityWeight * 3 + (priority === "conversion" ? 2 : 0));
+      const patches = buildIssuePatchPlan(item, domSummary).map((patch, index) => ({
+        ...patch,
+        issueId: String(item.id || `issue-${index}`),
+        patchId: `${String(item.id || "issue").replace(/[^a-z0-9._-]+/gi, "-")}-${index + 1}`,
+      }));
+      return {
+        ...item,
+        priority,
+        priorityLabel: EDIT_PRIORITY_LABELS[priority] || "Microcopy",
+        confidence: Number(confidence.toFixed(2)),
+        expectedImpact,
+        patches,
+        patchCount: patches.length,
+      };
+    });
+    const ranked = rankInsightsForEditing(enriched);
+    const selection = selectIssuesWithBudget({
+      issues: ranked,
+      lockedTargets: lockedEditTargets,
+      budget: DEFAULT_EDIT_BUDGET,
+    });
+    const selected = selection.selected;
+
+    const layerCounts = EDIT_LAYER_KEYS.reduce((acc, key) => ({ ...acc, [key]: 0 }), {});
+    selected.forEach((item) => {
+      const key = String(item?.layer || "content");
+      if (Object.prototype.hasOwnProperty.call(layerCounts, key)) layerCounts[key] += 1;
+    });
+
+    const layerFindings = {
+      content: [],
+      layout: [],
+      design: [],
+      conversion: [],
+    };
+    if (domSummary.wordCount < 180) layerFindings.content.push("Copy depth is thin for intent coverage.");
+    if (domSummary.headingCount.h1 !== 1) layerFindings.content.push("Primary heading structure should use one H1.");
+    if (domSummary.sectionCount < 4) layerFindings.layout.push("Section depth is shallow; hierarchy is weak.");
+    if (domSummary.headingCount.h2 < 2) layerFindings.layout.push("Not enough H2 anchors for scanability.");
+    if (domSummary.imagesWithoutAlt > 0) layerFindings.design.push("Missing image alt text lowers accessibility quality.");
+    if (domSummary.ctaCount < 2) layerFindings.conversion.push("CTA coverage is low for conversion flow.");
+    if (domSummary.testimonialCount < 2) layerFindings.conversion.push("Trust/social proof is limited.");
+    if (domSummary.formCount === 0) layerFindings.conversion.push("No form detected for direct lead capture.");
+
+    const inferredScreenshotSignals = deriveRedesignInsights(sourceWebsiteUrl);
+    const screenshotHints =
+      inferredScreenshotSignals && Array.isArray(inferredScreenshotSignals.layoutFindings) && inferredScreenshotSignals.layoutFindings.length > 0
+        ? inferredScreenshotSignals.layoutFindings.slice(0, 3)
+        : ["Screenshot analysis not available in current session."];
+
+    const layerSummaries = EDIT_LAYER_KEYS.map((layer) => ({
+      layer,
+      label: EDIT_LAYER_LABELS[layer],
+      count: Number(layerCounts[layer] || 0),
+      policyMode: EDITOR_POLICY_BY_LAYER[layer]?.mode || "copy-only",
+      policySummary: EDITOR_POLICY_BY_LAYER[layer]?.summary || "",
+      findings: layerFindings[layer].slice(0, 3),
+    }));
+
+    return {
+      createdAt: new Date().toISOString(),
+      pageKey,
+      fingerprint: buildHtmlFingerprint(html),
+      scoring: scorePayload,
+      inputs: {
+        userPrompt: String(businessOsPrompt || "").trim().slice(0, 4000),
+        brandProfile: {
+          projectName: String(projectName || "").trim(),
+          brandKitName: String(brandKit?.name || "").trim(),
+          tone: String(brandKit?.tone || "").trim(),
+          palette: brandKit?.palette || themeColors,
+          typography: textStyle,
+        },
+        generatedSiteJson: {
+          pageCount: Object.keys(generatedPages || {}).length,
+          activePage: pageKey,
+          pageKeys: orderPageKeys(Object.keys(generatedPages || {})).slice(0, 24),
+          aiSchemaPages: Array.isArray(aiProjectSchema?.pages) ? aiProjectSchema.pages.length : 0,
+        },
+        screenshots: {
+          available: !/not available/i.test(screenshotHints[0] || ""),
+          hints: screenshotHints,
+        },
+        domTreeSummary: domSummary,
+        performanceAccessibilityHints: {
+          score: seoAudit.score,
+          failedChecks: (seoAudit.items || []).filter((item) => !item.passed).map((item) => `${item.label}: ${item.detail}`),
+        },
+      },
+      outputs: {
+        sequence: ["audit", "classify", "rank", "patch", "validate", "rescore"],
+        rankedIssues: ranked,
+        actionableEdits: selected,
+        layerSummaries,
+        editBudget: DEFAULT_EDIT_BUDGET,
+        budgetUsage: selection.usage,
+        expectedScoreDelta: {
+          overall: selected.reduce((sum, issue) => sum + Number(issue.expectedImpact || 0), 0),
+        },
+      },
+    };
   };
 
   const buildGrowthCoachFallbackInsights = (html) => {
@@ -5083,6 +5866,7 @@ Return strict JSON only:
     const currentHtml = generatedPages[activePage] || generatedSite || "";
     if (!currentHtml) return;
     setGrowthCoachLoading(true);
+    setEditAuditRunning(true);
     try {
       let insights = [];
       try {
@@ -5121,13 +5905,38 @@ ${currentHtml.slice(0, 14000)}`,
         insights = [];
       }
       if (insights.length === 0) insights = buildGrowthCoachFallbackInsights(currentHtml);
-      setGrowthCoachInsights(insights);
+      const auditReport = buildPreEditAuditReport({
+        html: currentHtml,
+        pageKey: activePage,
+        insights,
+      });
+      const actionable = Array.isArray(auditReport?.outputs?.actionableEdits) ? auditReport.outputs.actionableEdits : [];
+      setGrowthCoachInsights(actionable);
+      setEditAuditReport(auditReport);
+      setSiteQualityScore(auditReport.scoring || null);
+      setSiteScoreHistory((previous) => {
+        const nextEntry = {
+          at: new Date().toISOString(),
+          pageKey: activePage,
+          fingerprint: auditReport.fingerprint,
+          overall: Number(auditReport?.scoring?.overall || 0),
+          scores: auditReport?.scoring?.scores || {},
+          source: "audit",
+        };
+        const deduped = [nextEntry, ...previous.filter((item) => item.fingerprint !== nextEntry.fingerprint)];
+        return deduped.slice(0, 50);
+      });
+      setLockedEditTargets((previous) => ({ ...previous, ...deriveStableLocksFromScores(auditReport.scoring) }));
       if (!silent) {
         setPublishStatus("success");
-      setPublishMessage("TitoNova Cloud Engine Growth Coach generated actionable recommendations.");
+        setPublishMessage(
+          `Pre-edit audit complete: ${actionable.length} actionable issue${actionable.length === 1 ? "" : "s"} selected (overall score ${auditReport?.scoring?.overall || 0}/100).`
+        );
       }
+      return auditReport;
     } finally {
       setGrowthCoachLoading(false);
+      setEditAuditRunning(false);
     }
   };
 
@@ -5161,69 +5970,130 @@ ${currentHtml.slice(0, 14000)}`,
     setPublishMessage("Analytics dashboard refreshed.");
   };
 
-  const handleApplyGrowthCoachFix = (insightId) => {
+  const handleApplyGrowthCoachFix = async (insightId) => {
     const currentHtml = generatedPages[activePage] || generatedSite || "";
     if (!currentHtml) return;
-    let nextHtml = currentHtml;
-    try {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(`<body>${currentHtml}</body>`, "text/html");
-      const root = doc.body;
-
-      if (insightId === "headline") {
-        const heading = root.querySelector("h1");
-        const nextHeadline = `${projectName || "Your Business"} delivers trusted, fast-response service with measurable results`;
-        if (heading) {
-          heading.textContent = nextHeadline;
-        }
-      }
-
-      if (insightId === "testimonials" && !root.querySelector("[data-tn-testimonials='true']")) {
-        const section = doc.createElement("section");
-        section.setAttribute("data-tn-testimonials", "true");
-        section.style.cssText = "padding:18px 20px 0";
-        section.innerHTML = `
-          <h2 style="margin:0 0 10px;color:var(--tn-text-primary);font-family:var(--tn-font-heading);font-weight:var(--tn-heading-weight);letter-spacing:var(--tn-heading-spacing)">Client Testimonials</h2>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px">
-            <blockquote data-tn-testimonial="true" style="margin:0;background:#fff;border:1px solid var(--tn-border);border-radius:10px;padding:12px;color:var(--tn-text-secondary)">
-              "Excellent service and clear communication from day one."
-              <footer style="margin-top:8px;color:var(--tn-text-primary);font-weight:700">- Verified Client</footer>
-            </blockquote>
-            <blockquote data-tn-testimonial="true" style="margin:0;background:#fff;border:1px solid var(--tn-border);border-radius:10px;padding:12px;color:var(--tn-text-secondary)">
-              "Fast response, professional team, and measurable results."
-              <footer style="margin-top:8px;color:var(--tn-text-primary);font-weight:700">- Local Business Owner</footer>
-            </blockquote>
-          </div>
-        `;
-        const ctaPanel = Array.from(root.querySelectorAll("section")).find((node) =>
-          /Ready to take the next step\?/i.test(String(node.textContent || ""))
-        );
-        if (ctaPanel?.parentNode) {
-          ctaPanel.parentNode.insertBefore(section, ctaPanel);
-        } else {
-          root.appendChild(section);
-        }
-      }
-
-      if (insightId === "cta") {
-        const ctaHost = root.querySelector("section");
-        if (ctaHost && !root.querySelector("[data-tn-growth-cta='true']")) {
-          const wrapper = doc.createElement("div");
-          wrapper.style.cssText = "padding:8px 20px 0";
-          wrapper.innerHTML = `<a data-tn-growth-cta="true" href="contact.html" style="display:inline-block;padding:10px 16px;background:var(--tn-accent-strong);color:var(--tn-cta-text);text-decoration:none;border-radius:8px;font-weight:700">Get Your Free Consultation</a>`;
-          ctaHost.insertAdjacentElement("afterend", wrapper);
-        }
-      }
-
-      nextHtml = root.innerHTML || currentHtml;
-    } catch {
-      nextHtml = currentHtml;
+    const selectedInsight =
+      growthCoachInsights.find((item) => String(item?.id || "") === String(insightId || "")) || null;
+    if (!selectedInsight) {
+      setPublishStatus("error");
+      setPublishMessage("Selected issue is not available in the current patch plan.");
+      return;
+    }
+    const selectedLayer = selectedInsight?.layer || classifyEditLayer(selectedInsight || { id: insightId });
+    const selectedPolicy = EDITOR_POLICY_BY_LAYER[selectedLayer] || EDITOR_POLICY_BY_LAYER.content;
+    const currentFingerprint = buildHtmlFingerprint(currentHtml);
+    if (!editAuditReport || editAuditReport.pageKey !== activePage || editAuditReport.fingerprint !== currentFingerprint) {
+      await runGrowthCoach({ silent: true });
+      setPublishStatus("info");
+      setPublishMessage("Pre-edit audit was required and has been refreshed. Review insights, then apply the fix.");
+      return;
+    }
+    const auditedInsightIds = new Set(
+      (editAuditReport.outputs?.actionableEdits || []).map((item) => String(item?.id || "").trim()).filter(Boolean)
+    );
+    if (auditedInsightIds.size > 0 && !auditedInsightIds.has(String(insightId || "").trim())) {
+      setPublishStatus("info");
+      setPublishMessage("Selected edit is outside the current audit output. Re-run Growth Coach before applying.");
+      return;
+    }
+    const patchPlan = validatePatchPlan(Array.isArray(selectedInsight?.patches) ? selectedInsight.patches : []);
+    if (patchPlan.length === 0) {
+      setPublishStatus("info");
+      setPublishMessage("No minimal patch plan was generated for this issue.");
+      return;
+    }
+    const nonHighSeverity = String(selectedInsight?.severity || "").toLowerCase() !== "high";
+    const lockedTarget = patchPlan.find((patch) => Boolean(lockedEditTargets[String(patch?.target || "").trim()]));
+    if (lockedTarget && nonHighSeverity) {
+      setPublishStatus("info");
+      setPublishMessage(`Patch skipped because target is locked: ${lockedTarget.target}`);
+      return;
+    }
+    const beforeScores =
+      editAuditReport?.scoring ||
+      computeWebsiteScores({
+        html: currentHtml,
+        prompt: businessOsPrompt,
+        projectName,
+        pageKeys: orderPageKeys(Object.keys(generatedPages || {})),
+      });
+    const patchResult = applyStructuredPatchesToHtml(currentHtml, patchPlan);
+    if (!patchResult.applied || patchResult.applied.length === 0) {
+      setPublishStatus("info");
+      setPublishMessage("Patch plan produced no safe atomic changes on this page.");
+      return;
+    }
+    const nextHtml = patchResult.html || currentHtml;
+    const afterScores = computeWebsiteScores({
+      html: nextHtml,
+      prompt: businessOsPrompt,
+      projectName,
+      pageKeys: orderPageKeys(Object.keys(generatedPages || {})),
+    });
+    const delta = Number(afterScores.overall || 0) - Number(beforeScores?.overall || 0);
+    if (delta <= 0) {
+      const lockTargets = patchResult.applied.reduce((acc, patch) => ({ ...acc, [String(patch.target || "").trim()]: true }), {});
+      setLockedEditTargets((previous) => ({ ...previous, ...lockTargets }));
+      setPublishStatus("info");
+      setPublishMessage("Patch did not improve score. Changes were skipped and targets were temporarily locked.");
+      return;
     }
 
     setGeneratedPages((previous) => ({ ...previous, [activePage]: nextHtml }));
     setGeneratedSite(nextHtml);
+    setSiteQualityScore(afterScores);
+    setSiteScoreHistory((previous) => [
+      {
+        at: new Date().toISOString(),
+        pageKey: activePage,
+        fingerprint: buildHtmlFingerprint(nextHtml),
+        overall: afterScores.overall,
+        scores: afterScores.scores,
+        source: "patch",
+      },
+      ...previous,
+    ].slice(0, 50));
+    setPatchRoundHistory((previous) => [
+      {
+        at: new Date().toISOString(),
+        pageKey: activePage,
+        issueId: String(insightId || ""),
+        layer: selectedLayer,
+        before: Number(beforeScores?.overall || 0),
+        after: Number(afterScores?.overall || 0),
+        delta: Number(delta.toFixed(1)),
+        patchesApplied: patchResult.applied.length,
+      },
+      ...previous,
+    ].slice(0, 40));
+    setLockedEditTargets((previous) => ({ ...previous, ...deriveStableLocksFromScores(afterScores) }));
+    setEditAuditReport((previous) => {
+      if (!previous || previous.pageKey !== activePage) return previous;
+      const applied = Array.isArray(previous.outputs?.appliedEdits) ? previous.outputs.appliedEdits : [];
+      return {
+        ...previous,
+        fingerprint: buildHtmlFingerprint(nextHtml),
+        scoring: afterScores,
+        outputs: {
+          ...previous.outputs,
+          appliedEdits: [
+            {
+              id: String(insightId || ""),
+              layer: selectedLayer,
+              priority: selectedInsight?.priority || "microcopy",
+              patches: patchResult.applied.map((patch) => patch.patchId),
+              appliedAt: new Date().toISOString(),
+            },
+            ...applied,
+          ].slice(0, 20),
+        },
+      };
+    });
     setPublishStatus("success");
-    setPublishMessage("Growth Coach fix applied.");
+    setPublishMessage(
+      `${EDIT_LAYER_LABELS[selectedLayer]} patches applied (${selectedPolicy.mode}). Score ${beforeScores?.overall || 0} -> ${afterScores.overall} (+${delta.toFixed(1)}).`
+    );
   };
 
   const ensureAdminDashboardPage = () => {
@@ -5947,6 +6817,36 @@ Return strict JSON:
       : publishedSiteId
         ? "Your site has been published. You can re-publish anytime after edits."
         : "Generate, review the preview, then publish when ready.";
+  const generatedPageKeysOrdered = useMemo(
+    () => orderPageKeys(Object.keys(generatedPages || {})),
+    [generatedPages]
+  );
+
+  useEffect(() => {
+    if (!currentPageHtml) return;
+    const fingerprint = buildHtmlFingerprint(currentPageHtml);
+    if (fingerprint === lastScoredFingerprintRef.current) return;
+    lastScoredFingerprintRef.current = fingerprint;
+    const scorePayload = computeWebsiteScores({
+      html: currentPageHtml,
+      prompt: businessOsPrompt,
+      projectName,
+      pageKeys: generatedPageKeysOrdered,
+    });
+    setSiteQualityScore(scorePayload);
+    setSiteScoreHistory((previous) => [
+      {
+        at: new Date().toISOString(),
+        pageKey: activePage,
+        fingerprint,
+        overall: scorePayload.overall,
+        scores: scorePayload.scores,
+        source: "render",
+      },
+      ...previous,
+    ].slice(0, 50));
+    setLockedEditTargets((previous) => ({ ...previous, ...deriveStableLocksFromScores(scorePayload) }));
+  }, [currentPageHtml, businessOsPrompt, projectName, generatedPageKeysOrdered, activePage]);
 
   const applyImageUpdate = (imageId, nextSrc, scope = imageApplyScope) => {
     if (!imageId || !nextSrc) return;
@@ -6351,112 +7251,139 @@ Keep each item unique, SEO-friendly, and conversion-oriented.`,
     applyTypographyToHtml,
   ]);
 
-  const runSelfOptimization = useCallback(async ({ silent = false } = {}) => {
+  const runSelfOptimization = async ({ silent = false } = {}) => {
     if (selfOptimizeRunning) return;
-    const working =
-      generatedPages && Object.keys(generatedPages).length > 0
-        ? generatedPages
-        : generatedSite
-          ? { [activePage]: generatedSite }
-          : {};
-    const keys = orderPageKeys(Object.keys(working));
-    if (keys.length === 0) return;
-
-    const headlineVariants = [
-      `${projectName || "Your Business"} Delivers Trusted Results Faster`,
-      `Get Reliable, High-Quality Support with ${projectName || "Your Team"}`,
-      `${projectName || "Your Business"} Helps You Grow with Confidence`,
-    ];
-    const ctaVariants = [
-      "Book a Free Consultation",
-      "Get Your Custom Plan",
-      "Talk to Our Team Today",
-    ];
-    const cycleIndex = selfOptimizationHistory.length % Math.min(headlineVariants.length, ctaVariants.length);
+    const currentHtml = generatedPages[activePage] || generatedSite || "";
+    if (!currentHtml) return;
 
     setSelfOptimizeRunning(true);
     try {
-      let optimizedImages = 0;
-      let optimizedCtas = 0;
+      const maxRounds = Math.max(3, Math.min(5, Number(DEFAULT_EDIT_BUDGET.maxRounds || 5)));
+      const minImprovement = Number(DEFAULT_EDIT_BUDGET.minImprovement || 2);
+      const pageKeys = orderPageKeys(Object.keys(generatedPages || {}));
+      let localLocks = { ...lockedEditTargets };
+      let workingHtml = currentHtml;
+      let beforeScores = computeWebsiteScores({
+        html: workingHtml,
+        prompt: businessOsPrompt,
+        projectName,
+        pageKeys,
+      });
+      const rounds = [];
       let optimizedHeadlines = 0;
+      let optimizedCtas = 0;
+      let optimizedImages = 0;
 
-      const nextPages = keys.reduce((acc, key) => {
-        const html = String(working[key] || "");
-        try {
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(`<body>${html}</body>`, "text/html");
-          const root = doc.body;
+      for (let round = 1; round <= maxRounds; round += 1) {
+        if (Number(beforeScores?.overall || 0) >= QUALITY_TARGET_SCORE) break;
+        const seedInsights = buildGrowthCoachFallbackInsights(workingHtml);
+        const audit = buildPreEditAuditReport({
+          html: workingHtml,
+          pageKey: activePage,
+          insights: seedInsights,
+        });
+        const ranked = Array.isArray(audit?.outputs?.rankedIssues) ? audit.outputs.rankedIssues : [];
+        const highSeverityRemaining = ranked.some((issue) => String(issue?.severity || "").toLowerCase() === "high");
+        const selection = selectIssuesWithBudget({
+          issues: ranked,
+          lockedTargets: localLocks,
+          budget: DEFAULT_EDIT_BUDGET,
+        });
+        const selectedIssues = selection.selected;
+        if (selectedIssues.length === 0) break;
+        const patches = validatePatchPlan(
+          selectedIssues.flatMap((issue) => (Array.isArray(issue?.patches) ? issue.patches : []))
+        );
+        if (patches.length === 0) break;
+        const patchResult = applyStructuredPatchesToHtml(workingHtml, patches);
+        if (!patchResult.applied.length) break;
 
-          const primaryHeading = root.querySelector("h1");
-          if (primaryHeading && key === "index.html") {
-            primaryHeading.textContent = headlineVariants[cycleIndex];
-            optimizedHeadlines += 1;
-          }
+        patchResult.applied.forEach((patch) => {
+          const target = String(patch?.target || "");
+          if (!target) return;
+          if (target.includes("headline")) optimizedHeadlines += 1;
+          if (target.includes("cta")) optimizedCtas += 1;
+          if (target.includes("img") || target.includes("image")) optimizedImages += 1;
+        });
 
-          const ctaNodes = Array.from(root.querySelectorAll("a,button")).filter((node) =>
-            /(contact|book|start|get|learn|reserve|order|request|sign|call|quote)/i.test(String(node.textContent || ""))
-          );
-          ctaNodes.slice(0, 2).forEach((node, index) => {
-            const nextText = index === 0 ? ctaVariants[cycleIndex] : "Learn Why Clients Choose Us";
-            node.textContent = nextText;
-            optimizedCtas += 1;
+        const afterScores = computeWebsiteScores({
+          html: patchResult.html,
+          prompt: businessOsPrompt,
+          projectName,
+          pageKeys,
+        });
+        const improvement = Number(afterScores?.overall || 0) - Number(beforeScores?.overall || 0);
+        rounds.push({
+          round,
+          before: Number(beforeScores?.overall || 0),
+          after: Number(afterScores?.overall || 0),
+          delta: Number(improvement.toFixed(1)),
+          patchesApplied: patchResult.applied.length,
+        });
+
+        if (improvement <= 0) {
+          patchResult.applied.forEach((patch) => {
+            const target = String(patch?.target || "").trim();
+            if (target) localLocks[target] = true;
           });
-
-          const images = Array.from(root.querySelectorAll("img"));
-          images.forEach((img) => {
-            const imageId = String(img.getAttribute("data-image-id") || "");
-            if (imageId !== "hero-image") {
-              img.setAttribute("loading", "lazy");
-              img.setAttribute("decoding", "async");
-              img.setAttribute("fetchpriority", "low");
-              optimizedImages += 1;
-            } else if (!img.getAttribute("fetchpriority")) {
-              img.setAttribute("fetchpriority", "high");
-            }
-            if (!img.getAttribute("width")) img.setAttribute("width", "1200");
-            if (!img.getAttribute("height")) img.setAttribute("height", "800");
-          });
-
-          acc[key] = root.innerHTML || html;
-        } catch {
-          acc[key] = html;
+          continue;
         }
-        return acc;
-      }, {});
+        workingHtml = patchResult.html;
+        beforeScores = afterScores;
+        localLocks = { ...localLocks, ...deriveStableLocksFromScores(afterScores) };
+        if (improvement < minImprovement && !highSeverityRemaining) break;
+      }
 
-      const active = nextPages[activePage] || nextPages[keys[0]] || "";
+      const finalScores = computeWebsiteScores({
+        html: workingHtml,
+        prompt: businessOsPrompt,
+        projectName,
+        pageKeys,
+      });
+      if (workingHtml !== currentHtml) {
+        setGeneratedPages((previous) => ({ ...previous, [activePage]: workingHtml }));
+        setGeneratedSite(workingHtml);
+      }
+      setLockedEditTargets((previous) => ({ ...previous, ...localLocks, ...deriveStableLocksFromScores(finalScores) }));
+      setSiteQualityScore(finalScores);
+      setPatchRoundHistory((previous) => [
+        ...rounds.map((item) => ({
+          at: new Date().toISOString(),
+          pageKey: activePage,
+          issueId: `auto-round-${item.round}`,
+          layer: "mixed",
+          before: item.before,
+          after: item.after,
+          delta: item.delta,
+          patchesApplied: item.patchesApplied,
+        })),
+        ...previous,
+      ].slice(0, 40));
       const timestamp = new Date().toISOString();
-      setGeneratedPages(nextPages);
-      setGeneratedSite(active);
       setLastSelfOptimizationAt(timestamp);
       setSelfOptimizationHistory((previous) => [
         {
           at: timestamp,
-          headline: headlineVariants[cycleIndex],
-          cta: ctaVariants[cycleIndex],
+          headline: `Patch rounds: ${rounds.length}`,
+          cta: `Overall score ${finalScores.overall}/100`,
           optimizedHeadlines,
           optimizedCtas,
           optimizedImages,
+          rounds,
         },
         ...previous.slice(0, 9),
       ]);
       if (!silent) {
         setPublishStatus("success");
         setPublishMessage(
-          `Self-optimization complete: ${optimizedHeadlines} headlines A/B tested, ${optimizedCtas} CTAs tuned, ${optimizedImages} images speed-optimized.`
+          `Self-optimization complete: ${rounds.length} round${rounds.length === 1 ? "" : "s"}, score ${finalScores.overall}/100, ${optimizedHeadlines} headline patches, ${optimizedCtas} CTA patches.`
         );
       }
     } finally {
       setSelfOptimizeRunning(false);
     }
-  }, [
-    selfOptimizeRunning,
-    generatedPages,
-    generatedSite,
-    activePage,
-    projectName,
-    selfOptimizationHistory,
-  ]);
+  };
+  selfOptimizationRunnerRef.current = runSelfOptimization;
 
   const applyWorkflowBookingsToCrm = useCallback((existingCustomers, workflowBookings) => {
     const next = Array.isArray(existingCustomers) ? [...existingCustomers] : [];
@@ -8697,10 +9624,10 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
     if (!Number.isFinite(days) || days < 1) return undefined;
     const intervalMs = days * 24 * 60 * 60 * 1000;
     const timer = window.setInterval(() => {
-      runSelfOptimization({ silent: true });
+      selfOptimizationRunnerRef.current?.({ silent: true });
     }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [selfOptimizeEnabled, selfOptimizeDays, runSelfOptimization]);
+  }, [selfOptimizeEnabled, selfOptimizeDays]);
 
   useEffect(() => {
     if (!autonomousModeEnabled) return undefined;
@@ -9249,6 +10176,12 @@ Ensure navigation labels and page intents stay close to the source blueprint whi
             mobileOwnerSnapshot,
             autonomousAppointments,
             growthCoachInsights,
+            editAuditRunning,
+            editAuditReport,
+            siteQualityScore,
+            siteScoreHistory,
+            patchRoundHistory,
+            lockedEditTargets,
             handleApplyGrowthCoachFix,
             businessCoachInsights,
             selfOptimizationHistory,

@@ -12,6 +12,12 @@ export default function PreviewInsightsSections(props) {
     mobileOwnerSnapshot,
     autonomousAppointments,
     growthCoachInsights,
+    editAuditRunning,
+    editAuditReport,
+    siteQualityScore,
+    siteScoreHistory,
+    patchRoundHistory,
+    lockedEditTargets,
     handleApplyGrowthCoachFix,
     businessCoachInsights,
     selfOptimizationHistory,
@@ -184,7 +190,9 @@ export default function PreviewInsightsSections(props) {
         <section style={styles.growthCoachCard}>
           <div style={styles.growthCoachHeader}>
             <strong style={styles.growthCoachTitle}>TitoNova Cloud Engine Growth Coach</strong>
-            <span style={styles.growthCoachMeta}>Actionable optimization plan</span>
+            <span style={styles.growthCoachMeta}>
+              {editAuditRunning ? "Running audit..." : "Actionable optimization plan"}
+            </span>
           </div>
           <div style={styles.growthCoachList}>
             {growthCoachInsights.map((item, index) => (
@@ -203,6 +211,16 @@ export default function PreviewInsightsSections(props) {
                 <div style={styles.growthCoachContent}>
                   <strong style={styles.growthCoachIssue}>{item.issue}</strong>
                   <small style={styles.growthCoachRecommendation}>{item.recommendation}</small>
+                  {item.layerLabel ? (
+                    <small style={styles.growthCoachRecommendation}>
+                      {item.layerLabel} edit policy: {item.policySummary || item.policyMode}
+                    </small>
+                  ) : null}
+                  {item.priorityLabel ? (
+                    <small style={styles.growthCoachRecommendation}>
+                      Priority: {item.priorityLabel} • Confidence: {Math.round(Number(item.confidence || 0) * 100)}% • Patches: {item.patchCount || 0}
+                    </small>
+                  ) : null}
                 </div>
                 <button style={styles.growthCoachAction} onClick={() => handleApplyGrowthCoachFix(item.id)}>
                   {item.actionLabel || "Apply Fix"}
@@ -210,6 +228,80 @@ export default function PreviewInsightsSections(props) {
               </article>
             ))}
           </div>
+        </section>
+      )}
+      {showAdvancedTools && editAuditReport && (
+        <section style={styles.growthCoachCard}>
+          <div style={styles.growthCoachHeader}>
+            <strong style={styles.growthCoachTitle}>Pre-Edit Audit</strong>
+            <span style={styles.growthCoachMeta}>
+              {new Date(editAuditReport.createdAt).toLocaleTimeString()} • {editAuditReport.pageKey}
+            </span>
+          </div>
+          <small style={styles.growthCoachRecommendation}>
+            Inputs audited: prompt, brand profile, generated site JSON, DOM/tree summary, screenshot hints, and performance/accessibility checks.
+          </small>
+          {editAuditReport.scoring ? (
+            <small style={styles.growthCoachRecommendation}>
+              Overall score: {editAuditReport.scoring.overall}/100
+            </small>
+          ) : null}
+          <div style={styles.growthCoachList}>
+            {(editAuditReport.outputs?.layerSummaries || []).map((layer) => (
+              <article key={layer.layer} style={styles.growthCoachItem}>
+                <span style={styles.growthCoachSeverityMedium}>{String(layer.label || "").toUpperCase()}</span>
+                <div style={styles.growthCoachContent}>
+                  <strong style={styles.growthCoachIssue}>{layer.count} classified edit(s)</strong>
+                  <small style={styles.growthCoachRecommendation}>{layer.policySummary}</small>
+                  <small style={styles.growthCoachRecommendation}>
+                    {(layer.findings || []).length > 0 ? layer.findings.join(" ") : "No critical issues detected in this layer."}
+                  </small>
+                </div>
+              </article>
+            ))}
+          </div>
+          {(editAuditReport.outputs?.rankedIssues || []).length > 0 ? (
+            <div style={styles.growthCoachList}>
+              {(editAuditReport.outputs.rankedIssues || []).slice(0, 5).map((issue) => (
+                <article key={`rank-${issue.id}`} style={styles.growthCoachItem}>
+                  <span style={styles.growthCoachSeverityLow}>{String(issue.priorityLabel || "Priority").toUpperCase()}</span>
+                  <div style={styles.growthCoachContent}>
+                    <strong style={styles.growthCoachIssue}>{issue.issue}</strong>
+                    <small style={styles.growthCoachRecommendation}>
+                      Severity: {String(issue.severity || "medium").toUpperCase()} • Expected impact: {issue.expectedImpact || 0}
+                    </small>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : null}
+          {siteQualityScore?.scores ? (
+            <div style={styles.growthCoachList}>
+              {Object.entries(siteQualityScore.scores).slice(0, 6).map(([key, value]) => (
+                <article key={`score-${key}`} style={styles.growthCoachItem}>
+                  <span style={styles.growthCoachSeverityMedium}>{String(value || 0)}</span>
+                  <div style={styles.growthCoachContent}>
+                    <strong style={styles.growthCoachIssue}>{String(key).replace(/_/g, " ")}</strong>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : null}
+          {(siteScoreHistory || []).length > 0 ? (
+            <small style={styles.growthCoachRecommendation}>
+              Score history points: {siteScoreHistory.length}
+            </small>
+          ) : null}
+          {(patchRoundHistory || []).length > 0 ? (
+            <small style={styles.growthCoachRecommendation}>
+              Patch rounds tracked: {patchRoundHistory.length}
+            </small>
+          ) : null}
+          {lockedEditTargets && Object.keys(lockedEditTargets).length > 0 ? (
+            <small style={styles.growthCoachRecommendation}>
+              Locked targets: {Object.keys(lockedEditTargets).slice(0, 4).join(", ")}
+            </small>
+          ) : null}
         </section>
       )}
       {showAdvancedTools && businessCoachInsights.length > 0 && (
